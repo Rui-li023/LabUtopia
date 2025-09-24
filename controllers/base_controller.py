@@ -136,6 +136,8 @@ class BaseController(ABC):
         self.check_success_counter = 0
         self.reset_needed = False
         self._last_success = False
+        if self.mode == "collect":
+            self.data_collector.clear_cache()
 
         
     def close(self) -> None:

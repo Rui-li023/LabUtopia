@@ -169,7 +169,7 @@ cameras:
     resolution: [256, 256]         # Resolution
     focal_length: 6                 # Focal length
     orientation: [0.61237, 0.35355, 0.35355, 0.61237]  # Orientation
-    image_type: "rgb"              # Image type
+    image_type: "rgb"              # Image type, rgb depth, point. You can use rgb+depth to get more than one type of image.
 
 # Robot configuration
 robot:
@@ -314,56 +314,6 @@ python main.py --config-name level3_PourLiquid
 ```
 
 Inference results will be saved in the `outputs/infer/date/time_taskname/` directory.
-
-### Configuration Parameters Details
-
-#### Task Types (task_type)
-- `pick` - Pick tasks
-- `place` - Place tasks
-- `open_door` - Open door tasks
-- `open_drawer` - Open drawer tasks
-- `close_door` - Close door tasks
-- `close_drawer` - Close drawer tasks
-- `pour` - Pour tasks
-- `press` - Press tasks
-- `shake` - Shake tasks
-- `stir` - Stir tasks
-- `pickpour` - Pick and pour tasks
-- `cleanbeaker` - Clean beaker tasks
-- `device_operate` - Device operation tasks
-
-#### Controller Types (controller_type)
-- `pick` - Pick controller
-- `place` - Place controller
-- `open_door` - Open door controller
-- `open_drawer` - Open drawer controller
-- `close_door` - Close door controller
-- `close_drawer` - Close drawer controller
-- `pour` - Pour controller
-- `press` - Press controller
-- `shake` - Shake controller
-- `stir` - Stir controller
-- `pickpour` - Pick and pour controller
-- `cleanbeaker` - Clean beaker controller
-- `device_operate` - Device operation controller
-
-#### Camera Configuration Parameters
-- `translation` - Camera position [x, y, z]
-- `resolution` - Image resolution [width, height]
-- `focal_length` - Focal length
-- `orientation` - Quaternion orientation [x, y, z, w]
-- `image_type` - Image type ("rgb", "depth", "segmentation")
-
-#### Robot Configuration Parameters
-- `type` - Robot type ("franka", "ur5")
-- `position` - Robot position [x, y, z]
-
-#### Object Configuration Parameters
-- `path` - Object path in the scene
-- `position_range` - Object random position range
-  - `x` - X-axis range [min, max]
-  - `y` - Y-axis range [min, max]  
-  - `z` - Z-axis range [min, max]
 
 ## Use OpenPI
 

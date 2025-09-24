@@ -170,7 +170,7 @@ cameras:
     resolution: [256, 256]         # 分辨率
     focal_length: 6                 # 焦距
     orientation: [0.61237, 0.35355, 0.35355, 0.61237]  # 方向
-    image_type: "rgb"              # 图像类型
+    image_type: "rgb"              # 图像类，rgb， 深度图和点云，可以使用"rgb+depth"同时获得RGB和点云图像
 
 # 机器人配置
 robot:
