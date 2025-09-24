@@ -384,4 +384,11 @@ OpenPI服务器应返回以下格式之一的动作：
 
 ## 📄 许可
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This repository contains both source code and data assets:
+
+- **Code**  
+  Released under the [MIT License](./LICENSE).  
+
+- **Data Assets**  
+  Released under the [CC BY-NC 4.0 License](https://creativecommons.org/licenses/by-nc/4.0/).  
+  Free to use and modify for research and educational purposes **only**.  
