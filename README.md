@@ -381,5 +381,11 @@ The OpenPI server should return actions in one of these formats:
 ```
 
 ## 📄 License
+This repository contains both source code and data assets:
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+- **Code**  
+  Released under the [MIT License](./LICENSE).  
+
+- **Data Assets**  
+  Released under the [CC BY-NC 4.0 License](https://creativecommons.org/licenses/by-nc/4.0/).  
+  Free to use and modify for research and educational purposes **only**.  
