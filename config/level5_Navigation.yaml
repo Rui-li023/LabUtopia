@@ -24,7 +24,7 @@ infer:
 task:
   max_steps: 4000
   navigation_config_path: "config/navigation/navigation_assets.yaml"
-  max_linear_speed: 0.04
+  max_linear_speed: 0.1
   max_angular_speed: 1.5
   position_threshold: 0.08
   angle_threshold: 0.1
