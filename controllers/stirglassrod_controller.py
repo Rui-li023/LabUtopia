@@ -61,7 +61,7 @@ class StirGlassrodTaskController(BaseController):
             
     def _step_collect(self, state):
         if not self.pick_controller.is_done():
-            action = self.pick_controller.forward(
+            action, record_array = self.pick_controller.forward(
                 picking_position=state['object_position'],
                 current_joint_positions=state['joint_positions'],
                 object_size=state['object_size'],
@@ -79,6 +79,7 @@ class StirGlassrodTaskController(BaseController):
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
                     joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
                     language_instruction=self.get_language_instruction()
                 )
             
@@ -87,7 +88,7 @@ class StirGlassrodTaskController(BaseController):
         
         elif not self.stir_controller.is_done():            
             target_position = state['target_position']
-            action = self.stir_controller.forward(
+            action, record_array = self.stir_controller.forward(
                 center_position=target_position,
                 current_joint_positions=state['joint_positions'],
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, -10])).as_quat(),
@@ -97,6 +98,7 @@ class StirGlassrodTaskController(BaseController):
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
                     joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
                     language_instruction=self.get_language_instruction()
                 )
             
@@ -110,11 +112,13 @@ class StirGlassrodTaskController(BaseController):
             self.gripper_control.release_object()
             if final_object_position[2] > 0.85 and np.linalg.norm(final_object_position[0:2] - target_position[0:2]) < 0.04:
                 # Task successful - save collected data
+                self._last_failure_reason = None
                 self.data_collector.write_cached_data(state['joint_positions'][:-1])
                 self._last_success = True
                 return None, True, True
             else:
                 # Task failed - discard collected data
+                self._last_failure_reason = "StirGlassrod task failed: glass rod final position (height > 0.85 or xy to target < 0.04) did not meet criteria"
                 self.data_collector.clear_cache()
                 self._last_success = False
                 return None, True, False

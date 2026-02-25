@@ -44,6 +44,8 @@ infer:
   timeout: 30
   max_retries: 3
 
+  is_test_material: False
+
 max_episodes: 100
 
 cameras:

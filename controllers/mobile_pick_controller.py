@@ -199,7 +199,7 @@ class MobilePickController(BaseController):
         )
         
         # Execute pick action
-        action = self.pick_controller.forward(
+        action, record_array = self.pick_controller.forward(
             picking_position=state['object_position'],
             current_joint_positions=joint_positions,
             object_name=state['object_name'],
@@ -217,6 +217,7 @@ class MobilePickController(BaseController):
             self.data_collector.cache_step(
                 camera_images=state['camera_data'],
                 joint_angles=current_joint_positions,
+                action=record_array,
                 language_instruction=self.get_language_instruction()
             )
         
@@ -236,12 +237,14 @@ class MobilePickController(BaseController):
             pick_success = (current_z - self.initial_object_z) > 0.1
             
             if pick_success:
+                self._last_failure_reason = None
                 print("Pick successful - object lifted!")
                 # Save complete episode trajectory data (navigation + pick)
                 if hasattr(self, 'data_collector'):
                     final_joint_positions = self.robot.get_joint_positions()[:-2]  # Exclude gripper joints
                     self.data_collector.write_cached_data(final_joint_positions)
             else:
+                self._last_failure_reason = "Pick failed: object not lifted enough (height diff <= 0.1)"
                 print("Pick failed - object not lifted enough")
                 self.data_collector.clear_cache()
             

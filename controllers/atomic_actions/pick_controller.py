@@ -53,6 +53,25 @@ class PickController(BaseController):
         self.object_size = None
         self._position_threshold = position_threshold
         self._robot_position = None
+        self._last_record_positions = None
+
+    def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
+        n = len(current_joint_positions)
+        jp = action.joint_positions
+        if jp is None:
+            if self._last_record_positions is not None:
+                return self._last_record_positions.copy()
+            return current_joint_positions.copy()
+        positions = current_joint_positions.copy().astype(np.float64)
+        for i in range(min(len(jp), n)):
+            if jp[i] is not None:
+                positions[i] = float(jp[i])
+            else:
+                positions[i] = current_joint_positions[i]
+        if len(jp) < n:
+            positions[len(jp):] = current_joint_positions[len(jp):]
+        self._last_record_positions = positions
+        return positions
 
     def set_robot_position(self, position: np.ndarray):
         self._robot_position = position
@@ -85,7 +104,7 @@ class PickController(BaseController):
         after_offset_z: float = 0.15,
         pre_offset_x: float = 0.1,
         gripper_distances: float = None
-    ) -> ArticulationAction:
+    ) -> typing.Tuple[ArticulationAction, np.ndarray]:
         """Computes the joint positions for the current picking phase.
 
         Args:
@@ -103,7 +122,8 @@ class PickController(BaseController):
         self.object_size = object_size
 
         if self._start:
-            return self._handle_start_state(current_joint_positions)
+            action = self._handle_start_state(current_joint_positions)
+            return action, self._build_record_array(action, current_joint_positions)
 
         if end_effector_orientation is None:
             end_effector_orientation = euler_angles_to_quat(np.array([0, np.pi, 0]))
@@ -127,8 +147,9 @@ class PickController(BaseController):
             if self._t >= 1.0:
                 self._event += 1
                 self._t = 0
-            
-        return target_joint_positions
+
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        return target_joint_positions, record_array
 
     def _handle_start_state(self, current_joint_positions):
         """Handles the initial state by opening the gripper.
@@ -260,6 +281,7 @@ class PickController(BaseController):
         self._start = True
         self.object_size = None
         self._robot_position = None
+        self._last_record_positions = None
 
     def is_done(self) -> bool:
         """Checks if the picking sequence is complete.

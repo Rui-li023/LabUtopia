@@ -56,6 +56,25 @@ class StirController(BaseController):
         self._stir_speed = stir_speed
         self._start = True
         self._current_stir_angle = 0.0
+        self._last_record_positions = None
+
+    def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
+        n = len(current_joint_positions)
+        jp = action.joint_positions
+        if jp is None:
+            if self._last_record_positions is not None:
+                return self._last_record_positions.copy()
+            return current_joint_positions.copy()
+        positions = current_joint_positions.copy().astype(np.float64)
+        for i in range(min(len(jp), n)):
+            if jp[i] is not None:
+                positions[i] = float(jp[i])
+            else:
+                positions[i] = current_joint_positions[i]
+        if len(jp) < n:
+            positions[len(jp):] = current_joint_positions[len(jp):]
+        self._last_record_positions = positions
+        return positions
 
     def forward(
         self,
@@ -63,7 +82,7 @@ class StirController(BaseController):
         current_joint_positions: np.ndarray,
         gripper_position: np.ndarray,
         end_effector_orientation: typing.Optional[np.ndarray] = None,
-    ) -> ArticulationAction:
+    ) -> typing.Tuple[ArticulationAction, np.ndarray]:
         """
         Execute current phase with position threshold and time-based backup.
 
@@ -85,7 +104,8 @@ class StirController(BaseController):
             end_effector_orientation = euler_angles_to_quat(np.array([0, np.pi, 0]))
 
         if self._event >= len(self._events_dt):
-            return ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
+            action = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
+            return action, self._build_record_array(action, current_joint_positions)
 
         target_joint_positions = self._execute_phase(
             center_position, gripper_position, end_effector_orientation, current_joint_positions
@@ -98,7 +118,8 @@ class StirController(BaseController):
                 self._event += 1
                 self._t = 0
 
-        return target_joint_positions
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        return target_joint_positions, record_array
 
     def _execute_phase(self, center_position, gripper_position, end_effector_orientation, current_joint_positions):
         """Execute current phase and handle transitions."""
@@ -199,6 +220,7 @@ class StirController(BaseController):
         self._t = 0
         self._start = True
         self._current_stir_angle = 0.0
+        self._last_record_positions = None
         
         if events_dt is not None:
             if not isinstance(events_dt, (np.ndarray, list)):

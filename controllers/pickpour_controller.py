@@ -198,6 +198,7 @@ class PickPourTaskController(BaseController):
                 return None, False, False
             elif self.current_phase == Phase.POURING:
                 print("Pour task success!")
+                self._last_failure_reason = None
                 self.data_collector.write_cached_data(state['joint_positions'][:-1])
                 self._last_success = True
                 self.current_phase = Phase.FINISHED
@@ -210,7 +211,7 @@ class PickPourTaskController(BaseController):
         if not self.active_controller.is_done():
             action = None
             if self.current_phase == Phase.PICKING:
-                action = self.pick_controller.forward(
+                action, record_array = self.pick_controller.forward(
                     picking_position=state['object_position'],
                     current_joint_positions=state['joint_positions'],
                     object_size=state['object_size'],
@@ -221,7 +222,7 @@ class PickPourTaskController(BaseController):
                     after_offset_z=0.3
                 )
             else:
-                action = self.pour_controller.forward(
+                action, record_array = self.pour_controller.forward(
                     articulation_controller=self.robot.get_articulation_controller(),
                     source_size=self.initial_size,
                     target_position=state['target_position'],
@@ -236,11 +237,13 @@ class PickPourTaskController(BaseController):
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
                     joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
                     language_instruction=self.get_language_instruction()
                 )
             
             return action, False, False
 
+        self._last_failure_reason = f"PickPour {self.current_phase.value} failed" + (f": {self.last_error_info}" if self.last_error_info else "")
         print(f"{self.current_phase.value} task failed!")
         if self.last_error_info is not None:
             print(f"Phase failure details: {self.last_error_info}")

@@ -113,7 +113,7 @@ class OpenCloseTaskController(BaseController):
         if self.current_phase == "open":
             if not self.open_controller.is_done():
                 if self.cfg.task.get("operate_type") == "door":
-                    action = self.open_controller.forward(
+                    action, record_array = self.open_controller.forward(
                         handle_position=state['object_position'],
                         current_joint_positions=state['joint_positions'],
                         revolute_joint_position=state['revolute_joint_position'],
@@ -121,7 +121,7 @@ class OpenCloseTaskController(BaseController):
                         end_effector_orientation=euler_angles_to_quats([0, 110, 0], degrees=True, extrinsic=False),
                     )
                 else:
-                    action = self.open_controller.forward(
+                    action, record_array = self.open_controller.forward(
                         handle_position=state['object_position'],
                         current_joint_positions=state['joint_positions'],
                         gripper_position=state['gripper_position'],
@@ -131,6 +131,7 @@ class OpenCloseTaskController(BaseController):
                     self.data_collector.cache_step(
                         camera_images=state['camera_data'],
                         joint_angles=state['joint_positions'][:-1],
+                        action=record_array,
                         language_instruction=self.get_language_instruction()
                     )
                 
@@ -143,6 +144,7 @@ class OpenCloseTaskController(BaseController):
 
             self.open_success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
             if self.open_success:
+                self._last_failure_reason = None
                 print("Open phase success! Starting close phase...")
                 self.current_phase = "close"
                 self.close_controller.reset()
@@ -150,6 +152,7 @@ class OpenCloseTaskController(BaseController):
                 self.initial_handle_position = state['object_position']
                 return None, False, False
             else:
+                self._last_failure_reason = "Open phase failed: success counter did not reach REQUIRED_SUCCESS_STEPS"
                 print("Open phase failed!")
                 self.data_collector.clear_cache()
                 self._last_success = False
@@ -159,7 +162,7 @@ class OpenCloseTaskController(BaseController):
         elif self.current_phase == "close":
             if not self.close_controller.is_done():
                 if self.cfg.task.get("operate_type") == "door":
-                    action = self.close_controller.forward(
+                    action, record_array = self.close_controller.forward(
                         handle_position=state['object_position'],
                         current_joint_positions=state['joint_positions'],
                         revolute_joint_position=state['revolute_joint_position'],
@@ -167,7 +170,7 @@ class OpenCloseTaskController(BaseController):
                         end_effector_orientation=euler_angles_to_quats([0, 110, 0], degrees=True, extrinsic=False),
                     )
                 else:
-                    action = self.close_controller.forward(
+                    action, record_array = self.close_controller.forward(
                         handle_position=state['object_position'],
                         current_joint_positions=state['joint_positions'],
                         gripper_position=state['gripper_position'],
@@ -178,6 +181,7 @@ class OpenCloseTaskController(BaseController):
                     self.data_collector.cache_step(
                         camera_images=state['camera_data'],
                         joint_angles=state['joint_positions'][:-1],
+                        action=record_array,
                         language_instruction=self.get_language_instruction()
                     )
                 
@@ -190,10 +194,12 @@ class OpenCloseTaskController(BaseController):
 
             close_success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
             if close_success:
+                self._last_failure_reason = None
                 print("Close phase success! Task completed!")
                 self.data_collector.write_cached_data(state['joint_positions'][:-1])
                 self._last_success = True
             else:
+                self._last_failure_reason = "Close phase failed: success counter did not reach REQUIRED_SUCCESS_STEPS"
                 print("Close phase failed!")
                 self.data_collector.clear_cache()
                 self._last_success = False
@@ -225,6 +231,7 @@ class OpenCloseTaskController(BaseController):
             
         success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if success:
+            self._last_failure_reason = None
             print("Task success!")
             self._last_success = True
             self.reset_needed = True

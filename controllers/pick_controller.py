@@ -94,7 +94,7 @@ class PickTaskController(BaseController):
             self.check_success_counter = 0
         
         if not self.pick_controller.is_done():
-            action = self.pick_controller.forward(
+            action, record_array = self.pick_controller.forward(
                 picking_position=state['object_position'],
                 current_joint_positions=state['joint_positions'],
                 object_size=state['object_size'],
@@ -110,6 +110,7 @@ class PickTaskController(BaseController):
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
                     joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
                     language_instruction=self.get_language_instruction()
                 )
             
@@ -117,10 +118,12 @@ class PickTaskController(BaseController):
         
         self._last_success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if self._last_success:
+            self._last_failure_reason = None
             self.data_collector.write_cached_data(state['joint_positions'][:-1])
             self.reset_needed = True
             return None, True, True
 
+        self._last_failure_reason = "Pick task failed: object height did not reach required (initial_z + 0.1) for REQUIRED_SUCCESS_STEPS"
         self.data_collector.clear_cache()
         self._last_success = False
         self.reset_needed = True
@@ -149,6 +152,7 @@ class PickTaskController(BaseController):
             
         self._last_success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if self._last_success:
+            self._last_failure_reason = None
             self.reset_needed = True
             return action, True, True
         return action, False, False

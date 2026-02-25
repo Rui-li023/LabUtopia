@@ -84,14 +84,8 @@ class ShakeBeakerTaskController(BaseController):
         Returns:
             tuple: (action, done, success) indicating control output and episode status
         """
-        if 'camera_data' in state:
-            self.data_collector.cache_step(
-                camera_images=state['camera_data'],
-                joint_angles=state['joint_positions'][:-1]
-            )
-            
         if not self.pick_controller.is_done():
-            action = self.pick_controller.forward(
+            action, record_array = self.pick_controller.forward(
                 picking_position=state['object_position'],
                 current_joint_positions=state['joint_positions'],
                 object_size=state['object_size'],
@@ -102,21 +96,34 @@ class ShakeBeakerTaskController(BaseController):
                 pre_offset_x=0.05,
                 pre_offset_z=0.05
             )
-                
+            if 'camera_data' in state:
+                self.data_collector.cache_step(
+                    camera_images=state['camera_data'],
+                    joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
+                )
             return action, False, False
             
         if not self.shake_controller.is_done():
-            action = self.shake_controller.forward(
+            action, record_array = self.shake_controller.forward(
                 current_joint_positions=self.robot.get_joint_positions(),
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat(),
             )
+            if 'camera_data' in state:
+                self.data_collector.cache_step(
+                    camera_images=state['camera_data'],
+                    joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
+                )
             return action, False, self.is_success()
         elif self.is_success():
+            self._last_failure_reason = None
             self.data_collector.write_cached_data(state['joint_positions'][:-1])
             self._last_success = True
             self.reset_needed = True
             return None, True, True
         else:
+            self._last_failure_reason = "ShakeBeaker task failed: shake success check (height, shake count, hold stability) did not pass"
             self.data_collector.clear_cache()
             self._last_success = False
             self.reset_needed = True

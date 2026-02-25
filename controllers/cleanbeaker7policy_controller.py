@@ -157,25 +157,18 @@ class CleanBeaker7PolicyTaskController(BaseController):
             Tuple[ArticulationAction, bool, bool]: Action, done flag, success flag
         """
         action = None
+        record_array = None
         done = False
         success = False
         self.current_beaker_pos = None
         self.target_pos = None
         
-        
         self._current_collector = self.collectors[self._current_step]
-        if 'camera_data' in state:
-            self._current_collector.cache_step(
-                camera_images=state['camera_data'],
-                joint_angles=state['joint_positions'][:-1],
-                language_instruction=self.get_language_instruction()
-            )
-
         self.frame_count += 1
         
         if self._current_step == 1:
             # 1. Pick beaker2
-            action = self.pick_beaker2.forward(
+            action, record_array = self.pick_beaker2.forward(
                 picking_position=state['beaker_2_position'],
                 current_joint_positions=state['joint_positions'],
                 object_size=state['object_size'],
@@ -198,7 +191,7 @@ class CleanBeaker7PolicyTaskController(BaseController):
             
         elif self._current_step == 2:
             # 2. Pour beaker2 to beaker1
-            action = self.pour_beaker2.forward(
+            action, record_array = self.pour_beaker2.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
                 target_name=state['beaker_1'],
                 current_joint_velocities=self.robot.get_joint_velocities(),
@@ -221,7 +214,7 @@ class CleanBeaker7PolicyTaskController(BaseController):
             
         elif self._current_step == 3:
             # 3. Place beaker2 to plat2
-            action = self.place_beaker2.forward(
+            action, record_array = self.place_beaker2.forward(
                 place_position=state['plat_2_position'],
                 current_joint_positions=state['joint_positions'],
                 gripper_control=self.gripper_control,
@@ -245,7 +238,7 @@ class CleanBeaker7PolicyTaskController(BaseController):
             
         elif self._current_step == 4:
             # 4. Pick beaker1
-            action = self.pick_beaker1.forward(
+            action, record_array = self.pick_beaker1.forward(
                 picking_position=state['beaker_1_position'],
                 current_joint_positions=state['joint_positions'],
                 object_size=state['object_size'],
@@ -267,7 +260,7 @@ class CleanBeaker7PolicyTaskController(BaseController):
             
         elif self._current_step == 5:
             # 5. Shake beaker1
-            action = self.shake_beaker1.forward(
+            action, record_array = self.shake_beaker1.forward(
                 current_joint_positions=self.robot.get_joint_positions(),
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat()
             )
@@ -284,7 +277,7 @@ class CleanBeaker7PolicyTaskController(BaseController):
             
         elif self._current_step == 6:
             # 6. Pour beaker1 to target_beaker
-            action = self.pour_beaker1.forward(
+            action, record_array = self.pour_beaker1.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
                 target_name=state['target_beaker'],
                 current_joint_velocities=self.robot.get_joint_velocities(),
@@ -307,7 +300,7 @@ class CleanBeaker7PolicyTaskController(BaseController):
             
         elif self._current_step == 7:
             # 7. Place beaker1 to plat1
-            action = self.place_beaker1.forward(
+            action, record_array = self.place_beaker1.forward(
                 place_position=state['plat_1_position'],
                 current_joint_positions=state['joint_positions'],
                 gripper_control=self.gripper_control,
@@ -331,6 +324,7 @@ class CleanBeaker7PolicyTaskController(BaseController):
                 )
                 if success:
                     # Task succeeded
+                    self._last_failure_reason = None
                     for step in range(1, 7):
                         if self._last_joint_data[step] is not None:
                             self.collectors[step].write_cached_data(self._last_joint_data[step])
@@ -339,12 +333,21 @@ class CleanBeaker7PolicyTaskController(BaseController):
                     self.reset_needed = True
                 else:
                     # Task failed
+                    self._last_failure_reason = "Final placement check failed: beaker1 or beaker2 not on target platforms"
                     for collector in self.collectors.values():
                         collector.clear_cache()
                     self._last_success = False
                     self.reset_needed = True
                 done = True
                 action = None
+
+        if not done and 'camera_data' in state and record_array is not None:
+            self._current_collector.cache_step(
+                camera_images=state['camera_data'],
+                joint_angles=state['joint_positions'][:-1],
+                action=record_array,
+                language_instruction=self.get_language_instruction()
+            )
             
         return action, done, success
   

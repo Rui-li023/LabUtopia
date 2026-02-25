@@ -8,14 +8,14 @@ from concurrent.futures import ProcessPoolExecutor, Future
 from typing import List, Optional
 from glob import glob
 
-def _write_episode_data(episode_path: str, episode_name: str, 
+def _write_episode_data(episode_dir: str, episode_name: str, 
                        camera_data: dict, agent_pose_data: np.ndarray, 
                        actions_data: np.ndarray, task_properties: dict = None,
                        language_instruction: Optional[str] = None, compression=None):
     """Helper function to write episode data in a separate process
     
     Args:
-        episode_path: Path to the individual episode HDF5 file
+        episode_dir: Path to the individual episode directory
         episode_name: Name of the episode
         camera_data: Dict of camera name to image data {name: [T, H, W, 3]}
         agent_pose_data: Robot joint angles [T, num_joints]
@@ -24,25 +24,13 @@ def _write_episode_data(episode_path: str, episode_name: str,
         language_instruction: Language instruction for the task
         compression: Compression method for image data, None for no compression
     """
+    os.makedirs(episode_dir, exist_ok=True)
+    episode_path = os.path.join(episode_dir, f"{episode_name}.h5")
+    print(f"[DataCollector] Writing episode {episode_name} to {episode_dir}")
     
     with h5py.File(episode_path, 'w') as h5_file:
-        print(f"Writing episode {episode_name} to {episode_path}")
         
-        # Store camera data with Blosc compression and dynamic chunking
-        for camera_name, image_data in camera_data.items():
-            chunk_size = (min(64, image_data.shape[0]),) + image_data.shape[1:]
-            kwargs = {
-                'data': image_data,
-                'dtype': 'uint8',
-                'chunks': chunk_size
-            }
-            if compression == "gzip":
-                kwargs.update({
-                    'compression': "gzip",
-                    'compression_opts': 5
-                })
-            h5_file.create_dataset(camera_name, **kwargs)
-        
+        # Image data is saved as high-quality MP4 only; not stored in HDF5
         # Store pose and action data without compression (small size, frequent access)
         h5_file.create_dataset(
             "agent_pose", 
@@ -73,8 +61,32 @@ def _write_episode_data(episode_path: str, episode_name: str,
                 data=task_properties_json,
                 dtype=h5py.special_dtype(vlen=str)
             )
-        
-        print(f"Finished writing episode {episode_name}")
+
+    # Save each camera stream as an MP4 video
+    for camera_name, image_data in camera_data.items():
+        if image_data.ndim != 4:
+            print(f"camera_data {camera_name} has wrong shape: {image_data.shape}")
+            continue
+        elif image_data.shape[-1] != 3 and image_data.shape[1] == 3:
+            image_data = image_data.transpose(0, 2, 3, 1)
+        T, H, W, _ = image_data.shape
+        video_path = os.path.join(episode_dir, f"{camera_name}.mp4")
+        try:
+            # Use mp4v (MPEG-4); H.264 often unavailable in OpenCV/FFmpeg builds
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            writer = cv2.VideoWriter(video_path, fourcc, 30, (W, H))
+            if not writer.isOpened():
+                print(f"[DataCollector] Failed to open VideoWriter for {video_path}", flush=True)
+                continue
+            writer.set(cv2.VIDEOWRITER_PROP_QUALITY, 95)
+            for frame in image_data:
+                writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+            writer.release()
+            print(f"[DataCollector] Saved video {video_path}", flush=True)
+        except Exception as e:
+            print(f"[DataCollector] Error saving video {video_path}: {e}")
+    
+    print(f"[DataCollector] Finished writing episode {episode_name}")
 
 class DataCollector:
     def __init__(self, camera_configs: List[dict], save_dir="output", 
@@ -128,12 +140,16 @@ class DataCollector:
         """
         self.temp_task_properties = properties
         
-    def cache_step(self, camera_images: dict, joint_angles: np.ndarray, language_instruction: Optional[str] = None):
+    def cache_step(self, camera_images: dict, joint_angles: np.ndarray, 
+                   action: Optional[np.ndarray] = None,
+                   language_instruction: Optional[str] = None):
         """Cache each step's data in temporary lists
         
         Args:
             camera_images: Dict of camera name to RGB image {name: np.ndarray}
             joint_angles: Robot joint angles
+            action: Action taken at this step; if None, action is derived from
+                    next step's joint angles when writing the episode
             language_instruction: Language instruction for the task
         """
         if self.task_instructions is None and language_instruction is not None:
@@ -141,34 +157,49 @@ class DataCollector:
         for camera_name, image in camera_images.items():
             self.temp_cameras[camera_name].append(image)
         self.temp_agent_pose.append(joint_angles)
+        if action is not None:
+            self.temp_actions.append(action)
         if language_instruction is not None:
             self.temp_language_instruction = language_instruction
         
-    def write_cached_data(self, final_joint_positions):
-        """Write cached data asynchronously using process pool"""
+    def write_cached_data(self, final_joint_positions=None):
+        """Write cached data asynchronously using process pool
+        
+        Args:
+            final_joint_positions: Final joint positions used to derive the last
+                action when actions were not supplied via cache_step. Ignored
+                when actions were already provided through cache_step.
+        """
         if self.episode_count >= self.max_episodes:
             self.close()
             return
-            
-        # Add the final action
-        self.temp_actions = self.temp_agent_pose[1:] + [final_joint_positions]
-        
+
+        # Determine actions_data
+        if len(self.temp_actions) == len(self.temp_agent_pose):
+            # Actions were provided explicitly at every step
+            actions_data = np.array(self.temp_actions)
+        else:
+            # Fall back to deriving actions from next pose
+            if final_joint_positions is None:
+                final_joint_positions = self.temp_agent_pose[-1]
+            derived_actions = self.temp_agent_pose[1:] + [final_joint_positions]
+            actions_data = np.array(derived_actions)
+
         # Convert lists to numpy arrays
         camera_data = {
             name: np.array(images) 
             for name, images in self.temp_cameras.items()
         }
         agent_pose_data = np.array(self.temp_agent_pose)
-        actions_data = np.array(self.temp_actions)
         
-        # Create individual episode file path
+        # Create per-episode directory (use absolute path so worker process writes to correct location)
         episode_name = f"episode_{self.episode_count:04d}"
-        episode_path = os.path.join(self.session_dir, f"{episode_name}.h5")
+        episode_dir = os.path.abspath(os.path.join(self.session_dir, episode_name))
         
         # Submit writing task to process pool
         future = self.process_pool.submit(
             _write_episode_data,
-            episode_path,
+            episode_dir,
             episode_name,
             camera_data,
             agent_pose_data,
@@ -221,7 +252,7 @@ class DataCollector:
         
         if merge:
             merged_path = os.path.join(self.session_dir, "merged_episodes.hdf5")
-            episode_files = sorted(glob(os.path.join(self.session_dir, "episode_*.h5")))
+            episode_files = sorted(glob(os.path.join(self.session_dir, "episode_*", "episode_*.h5")))
             
             if not episode_files:
                 print("No episodes to merge")

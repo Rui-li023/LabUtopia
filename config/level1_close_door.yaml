@@ -20,7 +20,7 @@ infer:
   max_retries: 3
 
 task:
-  max_steps: 1000
+  max_steps: 1200
   operate_type: "door"
   obj_paths:
     - path: "/World/DryingBox_03"
@@ -54,6 +54,7 @@ cameras:
 robot:
   type: "franka"
   position: [-0.4, -0, 0.71]
+  default_joint_positions: [0.0, -0.785398, 0.0, -2.356194, 0.0, 1.570796, 0.785398, 0.04, 0.04]
 
 collector:
   type: "default"

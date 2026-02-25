@@ -46,7 +46,7 @@ class PressTaskController(BaseController):
             self.check_success_counter = 0
         
         if not self.press_controller.is_done():
-            action = self.press_controller.forward(
+            action, record_array = self.press_controller.forward(
                 target_position=state['object_position'],
                 current_joint_positions=state['joint_positions'],
                 gripper_control=self.gripper_control,
@@ -57,6 +57,7 @@ class PressTaskController(BaseController):
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
                     joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
                     language_instruction=self.get_language_instruction()
                 )
             
@@ -64,10 +65,12 @@ class PressTaskController(BaseController):
         
         self._last_success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if self._last_success:
+            self._last_failure_reason = None
             self.data_collector.write_cached_data(state['joint_positions'][:-1])
             self.reset_needed = True
             return None, True, True
         else:
+            self._last_failure_reason = "Press task failed: button position check (x > 0.405) did not hold for REQUIRED_SUCCESS_STEPS"
             self.data_collector.clear_cache()
             self._last_success = False
             self.reset_needed = True
@@ -86,6 +89,7 @@ class PressTaskController(BaseController):
             
         self._last_success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if self._last_success:
+            self._last_failure_reason = None
             self.reset_needed = True
             return action, True, True
         return action, False, False

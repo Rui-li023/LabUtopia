@@ -28,14 +28,33 @@ class ShakeController(BaseController):
             raise Exception("events_dt length is not 10")
         self._cspace_controller = cspace_controller 
         self._shake_distance = shake_distance / get_stage_units() 
-        self._initial_position = np.array([0.25, 0, 1.0])  
+        self._initial_position = np.array([0.25, 0, 1.0])
+        self._last_record_positions = None
         return
+
+    def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
+        n = len(current_joint_positions)
+        jp = action.joint_positions
+        if jp is None:
+            if self._last_record_positions is not None:
+                return self._last_record_positions.copy()
+            return current_joint_positions.copy()
+        positions = current_joint_positions.copy().astype(np.float64)
+        for i in range(min(len(jp), n)):
+            if jp[i] is not None:
+                positions[i] = float(jp[i])
+            else:
+                positions[i] = current_joint_positions[i]
+        if len(jp) < n:
+            positions[len(jp):] = current_joint_positions[len(jp):]
+        self._last_record_positions = positions
+        return positions
 
     def forward(
         self,
         current_joint_positions: np.ndarray,
         end_effector_orientation: typing.Optional[np.ndarray] = None,
-    ) -> ArticulationAction:
+    ) -> typing.Tuple[ArticulationAction, np.ndarray]:
         
         if end_effector_orientation is None:
             end_effector_orientation = euler_angles_to_quat(np.array([0, np.pi, 0]))
@@ -112,13 +131,15 @@ class ShakeController(BaseController):
                 self._event += 1
                 self._t = 0
 
-        return target_joint_positions  
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        return target_joint_positions, record_array
 
     def reset(self, events_dt: typing.Optional[typing.List[float]] = None) -> None:
         BaseController.reset(self)  
         self._cspace_controller.reset()  
         self._event = 0  
-        self._t = 0  
+        self._t = 0
+        self._last_record_positions = None
         if events_dt is not None:  
             self._events_dt = events_dt
             if not isinstance(self._events_dt, (np.ndarray, list)):

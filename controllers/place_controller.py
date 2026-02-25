@@ -105,7 +105,7 @@ class PlaceTaskController(BaseController):
         if not self.active_controller.is_done():
             action = None
             if self.current_phase == Phase.PICKING:
-                action = self.pick_controller.forward(
+                action, _ = self.pick_controller.forward(
                     picking_position=state['object_position'],
                     current_joint_positions=state['joint_positions'],
                     object_size=state['object_size'],
@@ -115,7 +115,7 @@ class PlaceTaskController(BaseController):
                     end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
                 )
             else:
-                action = self.place_controller.forward(
+                action, record_array = self.place_controller.forward(
                     place_position = state['target_position'],
                     current_joint_positions=state['joint_positions'],
                     gripper_control=self.gripper_control,
@@ -126,6 +126,7 @@ class PlaceTaskController(BaseController):
                     self.data_collector.cache_step(
                         camera_images=state['camera_data'],
                         joint_angles=state['joint_positions'][:-1],
+                        action=record_array,
                         language_instruction=self.get_language_instruction()
                     )
             
@@ -139,11 +140,13 @@ class PlaceTaskController(BaseController):
                 return None, False, False
             elif self.current_phase == Phase.PLACING:
                 print("Pour task success!")
+                self._last_failure_reason = None
                 self.data_collector.write_cached_data(state['joint_positions'][:-1])
                 self._last_success = True
                 self.current_phase = Phase.FINISHED
                 return None, True, True
             else:
+                self._last_failure_reason = f"Place {self.current_phase.value} phase failed: phase success check did not pass after controller done"
                 print(f"{self.current_phase.value} task failed!")
                 self.data_collector.clear_cache()
                 self._last_success = False
@@ -161,7 +164,7 @@ class PlaceTaskController(BaseController):
         
         if self.current_phase == Phase.PICKING:
             action = None
-            action = self.pick_controller.forward(
+            action, _ = self.pick_controller.forward(
                     picking_position=state['object_position'],
                     current_joint_positions=state['joint_positions'],
                     object_size=state['object_size'],

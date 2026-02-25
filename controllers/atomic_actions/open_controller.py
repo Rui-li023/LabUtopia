@@ -42,7 +42,26 @@ class OpenController(BaseController):
                 raise Exception(f"events_dt length must be 8, got {len(self._events_dt)}")
 
         self._position_threshold = 0.01 / get_stage_units()
-        
+        self._last_record_positions = None
+
+    def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
+        n = len(current_joint_positions)
+        jp = action.joint_positions
+        if jp is None:
+            if self._last_record_positions is not None:
+                return self._last_record_positions.copy()
+            return current_joint_positions.copy()
+        positions = current_joint_positions.copy().astype(np.float64)
+        for i in range(min(len(jp), n)):
+            if jp[i] is not None:
+                positions[i] = float(jp[i])
+            else:
+                positions[i] = current_joint_positions[i]
+        if len(jp) < n:
+            positions[len(jp):] = current_joint_positions[len(jp):]
+        self._last_record_positions = positions
+        return positions
+
     def forward(
         self,
         handle_position: np.ndarray,
@@ -52,7 +71,7 @@ class OpenController(BaseController):
         end_effector_orientation: typing.Optional[np.ndarray] = None,
         angle: float = 50.0,
         close_gripper_distance: float = 0.023
-    ) -> ArticulationAction:
+    ) -> typing.Tuple[ArticulationAction, np.ndarray]:
         """
         Execute one step of opening control.
 
@@ -69,7 +88,8 @@ class OpenController(BaseController):
         """
 
         if self._start:
-            return self._handle_start_state(current_joint_positions)
+            action = self._handle_start_state(current_joint_positions)
+            return action, self._build_record_array(action, current_joint_positions)
 
         if end_effector_orientation is None:
             end_effector_orientation = euler_angles_to_quat([0, 110, 0], degrees=True, extrinsic=False)
@@ -88,7 +108,8 @@ class OpenController(BaseController):
         if self._t >= 1.0:
             self._event += 1
             self._t = 0
-        return target_joint_positions
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        return target_joint_positions, record_array
     
     def _handle_start_state(self, current_joint_positions):
         """Handles the initial state by opening the gripper.
@@ -262,6 +283,7 @@ class OpenController(BaseController):
         self._t = 0
         self.position_rotation_interp_iter = None
         self._start = True
+        self._last_record_positions = None
 
     def is_done(self) -> bool:
         """Check if controller has completed all states"""

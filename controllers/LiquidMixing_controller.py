@@ -256,13 +256,14 @@ class LiquidMixingController(BaseController):
         
         # If the current controller is not completed, continue to execute
         if not self.active_controller.is_done():
-            action = self._get_phase_action(state)
+            action, record_array = self._get_phase_action(state)
             
             # Cache data for training
             if 'camera_data' in state:
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
                     joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
                     language_instruction=self.get_language_instruction()
                 )
                 
@@ -276,6 +277,7 @@ class LiquidMixingController(BaseController):
             else:
                 # All phases completed
                 print("All phases completed, task successful!")
+                self._last_failure_reason = None
                 self.data_collector.write_cached_data(state['joint_positions'][:-1])
                 self._last_success = True
                 self.current_phase = TaskPhase.FINISHED
@@ -293,7 +295,7 @@ class LiquidMixingController(BaseController):
     def _get_phase_action(self, state: Dict[str, Any]):
         """Get the corresponding action based on the current phase"""
         if self.current_phase == TaskPhase.PICKING1:
-            return self.pick_controller1.forward(
+            action, record_array = self.pick_controller1.forward(
                 picking_position=self.object_utils.get_geometry_center(object_path="/World/beaker_05"),
                 current_joint_positions=state['joint_positions'],
                 object_size=self.object_utils.get_object_size(object_path="/World/beaker_05"),
@@ -304,9 +306,10 @@ class LiquidMixingController(BaseController):
                 pre_offset_x=0.1,
                 pre_offset_z=0.05,
                 after_offset_z=0
-            )   
+            )
+            return action, record_array
         elif self.current_phase == TaskPhase.PICKING2:
-            return self.pick_controller2.forward(
+            action, record_array = self.pick_controller2.forward(
                 picking_position=self.object_utils.get_geometry_center(object_path="/World/beaker_04"),
                 current_joint_positions=state['joint_positions'],
                 object_size=self.object_utils.get_object_size(object_path="/World/beaker_04"),
@@ -318,8 +321,9 @@ class LiquidMixingController(BaseController):
                 pre_offset_z=0.05,
                 after_offset_z=0
             )
+            return action, record_array
         elif self.current_phase == TaskPhase.PICKING3:
-            return self.pick_controller3.forward(
+            action, record_array = self.pick_controller3.forward(
                 picking_position=self.object_utils.get_geometry_center(object_path="/World/beaker_03"),
                 current_joint_positions=state['joint_positions'],
                 object_size=self.object_utils.get_object_size(object_path="/World/beaker_03"),
@@ -331,8 +335,9 @@ class LiquidMixingController(BaseController):
                 pre_offset_z=0.05,
                 after_offset_z=0
             )
+            return action, record_array
         elif self.current_phase == TaskPhase.POURING1:
-            return self.pour_controller1.forward(
+            action, record_array = self.pour_controller1.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
                 source_size=self.object_utils.get_object_size(object_path="/World/beaker_05"),
                 target_position=np.array([0.32, 0.32, 0.90]),
@@ -342,8 +347,9 @@ class LiquidMixingController(BaseController):
                 gripper_position=state['gripper_position'],
                 target_end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
             )
+            return action, record_array
         elif self.current_phase == TaskPhase.POURING2:
-            return self.pour_controller2.forward(
+            action, record_array = self.pour_controller2.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
                 source_size=self.object_utils.get_object_size(object_path="/World/beaker_04"),
                 target_position=np.array([0.32, 0.32, 0.90]),
@@ -353,8 +359,9 @@ class LiquidMixingController(BaseController):
                 gripper_position=state['gripper_position'],
                 target_end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
             )
+            return action, record_array
         elif self.current_phase == TaskPhase.POURING3:
-            return self.pour_controller3.forward(
+            action, record_array = self.pour_controller3.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
                 source_size=self.object_utils.get_object_size(object_path="/World/beaker_03"),
                 target_position=np.array([0.32, 0.32, 0.90]),
@@ -364,8 +371,9 @@ class LiquidMixingController(BaseController):
                 gripper_position=state['gripper_position'],
                 target_end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
             )
+            return action, record_array
         elif self.current_phase == TaskPhase.PLACEING1:
-            return self.place_controller1.forward(
+            action, record_array = self.place_controller1.forward(
                 place_position=self.initial_beaker_position1,
                 current_joint_positions=state['joint_positions'],
                 gripper_control=self.gripper_control,
@@ -374,8 +382,9 @@ class LiquidMixingController(BaseController):
                 pre_place_z=0.3,
                 place_offset_z=0.02
             )
+            return action, record_array
         elif self.current_phase == TaskPhase.PLACEING2:
-            return self.place_controller2.forward(
+            action, record_array = self.place_controller2.forward(
                 place_position=self.initial_beaker_position2,
                 current_joint_positions=state['joint_positions'],
                 gripper_control=self.gripper_control,
@@ -384,8 +393,9 @@ class LiquidMixingController(BaseController):
                 pre_place_z=0.3,
                 place_offset_z=0.02
             )
+            return action, record_array
         elif self.current_phase == TaskPhase.PLACEING3:
-            return self.place_controller3.forward(
+            action, record_array = self.place_controller3.forward(
                 place_position=self.initial_beaker_position3,
                 current_joint_positions=state['joint_positions'],
                 gripper_control=self.gripper_control,
@@ -394,15 +404,17 @@ class LiquidMixingController(BaseController):
                 gripper_position=state['gripper_position'],
                 place_offset_z=0.02
             )
+            return action, record_array
         elif self.current_phase == TaskPhase.PRESS:
-            return self.press_controller.forward(
+            action, record_array = self.press_controller.forward(
                 target_position=self.object_utils.get_object_xform_position(object_path="/World/heat_device/button"),
                 current_joint_positions=state['joint_positions'],
                 gripper_control=self.gripper_control,
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 40])).as_quat(),
                 gripper_position=state['gripper_position']
             )
-        return None
+            return action, record_array
+        return None, None
         
     def _get_next_phase(self) -> Optional[TaskPhase]:
         phase_sequence = [

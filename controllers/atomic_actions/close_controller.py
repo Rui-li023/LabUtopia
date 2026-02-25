@@ -46,6 +46,25 @@ class CloseController(BaseController):
                 raise Exception(f"events_dt length must be 3, got {len(self._events_dt)}")
         
         self._position_threshold = 0.01 / get_stage_units()
+        self._last_record_positions = None
+
+    def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
+        n = len(current_joint_positions)
+        jp = action.joint_positions
+        if jp is None:
+            if self._last_record_positions is not None:
+                return self._last_record_positions.copy()
+            return current_joint_positions.copy()
+        positions = current_joint_positions.copy().astype(np.float64)
+        for i in range(min(len(jp), n)):
+            if jp[i] is not None:
+                positions[i] = float(jp[i])
+            else:
+                positions[i] = current_joint_positions[i]
+        if len(jp) < n:
+            positions[len(jp):] = current_joint_positions[len(jp):]
+        self._last_record_positions = positions
+        return positions
 
     def forward(
         self,
@@ -55,8 +74,9 @@ class CloseController(BaseController):
         end_effector_orientation: typing.Optional[np.ndarray] = None,
         angle: float = 50.0,
         revolute_joint_position: np.ndarray = None,
-        push_distance: float = None
-    ) -> ArticulationAction:        
+        push_distance: float = None,
+        after_move_distance: float = None,
+    ) -> typing.Tuple[ArticulationAction, np.ndarray]:        
         if end_effector_orientation is None:
             end_effector_orientation = euler_angles_to_quat([0, 110, 0], degrees=True, extrinsic=False)
         
@@ -72,21 +92,23 @@ class CloseController(BaseController):
             revolute_joint_position,
             gripper_position,
             angle,
-            push_distance
+            push_distance,
+            after_move_distance
         )
         
         if self._t >= 1.0:
             self._event += 1
             self._t = 0
-        return target_joint_positions
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        return target_joint_positions, record_array
 
-    def _execute_phase(self, handle_position, end_effector_orientation, current_joint_positions, revolute_joint_position, gripper_position, angle = 50, push_distance = None):
+    def _execute_phase(self, handle_position, end_effector_orientation, current_joint_positions, revolute_joint_position, gripper_position, angle = 50, push_distance = None, after_move_distance = None):
         if self.furniture_type == "drawer":
-            return self._execute_drawer_phase(handle_position, end_effector_orientation, current_joint_positions, gripper_position, push_distance)
+            return self._execute_drawer_phase(handle_position, end_effector_orientation, current_joint_positions, gripper_position, push_distance, after_move_distance)
         else:
-            return self._execute_door_phase(handle_position, end_effector_orientation, current_joint_positions, revolute_joint_position, gripper_position, angle)
+            return self._execute_door_phase(handle_position, end_effector_orientation, current_joint_positions, revolute_joint_position, gripper_position, angle, after_move_distance)
 
-    def _execute_drawer_phase(self, handle_position, end_effector_orientation, current_joint_positions, gripper_position, push_distance):
+    def _execute_drawer_phase(self, handle_position, end_effector_orientation, current_joint_positions, gripper_position, push_distance, after_move_distance):
         if self._event == 0:
             target_handle_position = handle_position.copy()
             target_handle_position[0] -= 0.1 / get_stage_units()
@@ -123,7 +145,7 @@ class CloseController(BaseController):
             target_joint_positions = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
         return target_joint_positions
 
-    def _execute_door_phase(self, handle_position, end_effector_orientation, current_joint_positions, revolute_joint_position, gripper_position, angle = 50):
+    def _execute_door_phase(self, handle_position, end_effector_orientation, current_joint_positions, revolute_joint_position, gripper_position, angle = 50, after_move_distance = None):
         if self._event == 0:
             handle_position[0] -= 0.05
             handle_position[2] += 0.1
@@ -164,7 +186,7 @@ class CloseController(BaseController):
                 target_joint_positions = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
         elif self._event == 2:
             target_handle_position = handle_position.copy()
-            target_handle_position[0] -= 0.2
+            target_handle_position[0] -= after_move_distance
             target_joint_positions = self._cspace_controller.forward(
                 target_end_effector_position=target_handle_position,
                 target_end_effector_orientation=end_effector_orientation
@@ -183,6 +205,7 @@ class CloseController(BaseController):
         self._event = 0
         self._t = 0
         self.position_rotation_interp_iter = None
+        self._last_record_positions = None
 
     def is_done(self) -> bool:
         """Check if controller has completed all states"""

@@ -34,6 +34,25 @@ class MoveController(BaseController):
         self._waypoints = []
         self._current_waypoint_index = 0
         self._multi_segment_mode = False
+        self._last_record_positions = None
+
+    def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
+        n = len(current_joint_positions)
+        jp = action.joint_positions
+        if jp is None:
+            if self._last_record_positions is not None:
+                return self._last_record_positions.copy()
+            return current_joint_positions.copy()
+        positions = current_joint_positions.copy().astype(np.float64)
+        for i in range(min(len(jp), n)):
+            if jp[i] is not None:
+                positions[i] = float(jp[i])
+            else:
+                positions[i] = current_joint_positions[i]
+        if len(jp) < n:
+            positions[len(jp):] = current_joint_positions[len(jp):]
+        self._last_record_positions = positions
+        return positions
 
     def forward(
         self,
@@ -41,7 +60,7 @@ class MoveController(BaseController):
         current_joint_positions: np.ndarray,
         gripper_position: np.ndarray,
         target_orientation: typing.Optional[np.ndarray] = None,
-    ) -> ArticulationAction:
+    ) -> typing.Tuple[ArticulationAction, np.ndarray]:
         """Computes the joint positions to move to the target position and orientation.
 
         Args:
@@ -73,7 +92,8 @@ class MoveController(BaseController):
         else:
             self._is_done = False
 
-        return target_joint_positions
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        return target_joint_positions, record_array
 
     def forward_multi_segment(
         self,
@@ -81,7 +101,7 @@ class MoveController(BaseController):
         current_joint_positions: np.ndarray,
         gripper_position: np.ndarray,
         target_orientation: typing.Optional[np.ndarray] = None,
-    ) -> ArticulationAction:
+    ) -> typing.Tuple[ArticulationAction, np.ndarray]:
         """Multi-segment movement: move to multiple path points in sequence.
 
         Args:
@@ -104,10 +124,11 @@ class MoveController(BaseController):
 
         if self._current_waypoint_index >= len(self._waypoints):
             self._is_done = True
-            return self._cspace_controller.forward(
+            action = self._cspace_controller.forward(
                 target_end_effector_position=self._waypoints[-1],
                 target_end_effector_orientation=target_orientation
             )
+            return action, self._build_record_array(action, current_joint_positions)
         current_target = self._waypoints[self._current_waypoint_index]
         self._target_position = current_target
         self._target_orientation = target_orientation
@@ -127,8 +148,9 @@ class MoveController(BaseController):
 
         if self._current_waypoint_index >= len(self._waypoints):
             self._is_done = True
-        
-        return target_joint_positions
+
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        return target_joint_positions, record_array
 
     def forward_two_points(
         self,
@@ -137,7 +159,7 @@ class MoveController(BaseController):
         current_joint_positions: np.ndarray,
         gripper_position: np.ndarray,
         target_orientation: typing.Optional[np.ndarray] = None,
-    ) -> ArticulationAction:
+    ) -> typing.Tuple[ArticulationAction, np.ndarray]:
         """A convenient method for vertical movement followed by horizontal movement.
 
         Args:
@@ -177,10 +199,10 @@ class MoveController(BaseController):
         self._target_position = None
         self._target_orientation = None
         self._is_done = False
-        # Reset multi-segment movement state
         self._waypoints = []
         self._current_waypoint_index = 0
         self._multi_segment_mode = False
+        self._last_record_positions = None
 
     def is_done(self) -> bool:
         """Check if the target position and angle have been reached.

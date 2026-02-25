@@ -20,6 +20,7 @@ infer:
   n_obs_steps: 1
   timeout: 30
   max_retries: 3
+  is_test_material: False
 
 task:
   max_steps: 2000

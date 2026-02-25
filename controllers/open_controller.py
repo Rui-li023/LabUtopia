@@ -98,7 +98,7 @@ class OpenTaskController(BaseController):
         if not self.open_controller.is_done():
             close_gripper_distance = state.get('close_gripper_distance', 0.023)
             if self.cfg.task.get("operate_type") == "door":
-                action = self.open_controller.forward(
+                action, record_array = self.open_controller.forward(
                     handle_position=state['object_position'],
                     current_joint_positions=state['joint_positions'],
                     revolute_joint_position=state['revolute_joint_position'],
@@ -107,7 +107,7 @@ class OpenTaskController(BaseController):
                     close_gripper_distance=close_gripper_distance
                 )
             else:
-                action = self.open_controller.forward(
+                action, record_array = self.open_controller.forward(
                     handle_position=state['object_position'],
                     current_joint_positions=state['joint_positions'],
                     gripper_position=state['gripper_position'],
@@ -118,6 +118,7 @@ class OpenTaskController(BaseController):
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
                     joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
                     language_instruction=self.get_language_instruction()
                 )
             
@@ -130,10 +131,12 @@ class OpenTaskController(BaseController):
 
         success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if success:
+            self._last_failure_reason = None
             print("Task success!")
             self.data_collector.write_cached_data(state['joint_positions'][:-1])
             self._last_success = True
         else:
+            self._last_failure_reason = self._last_failure_reason or "Open task: success counter did not reach REQUIRED_SUCCESS_STEPS"
             print("Task failed!")
             self.data_collector.clear_cache()
             self._last_success = False
@@ -165,6 +168,7 @@ class OpenTaskController(BaseController):
             
         success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if success:
+            self._last_failure_reason = None
             print("Task success!")
             self._last_success = True
             self.reset_needed = True
@@ -195,7 +199,9 @@ class OpenTaskController(BaseController):
         success = handle_moved_enough and gripper_far_enough
         
         # Update failure reason
-        if not success:
+        if success:
+            self._last_failure_reason = None
+        elif not success:
             if not handle_moved_enough and not gripper_far_enough:
                 self._last_failure_reason = f"Handle moved distance too short ({handle_move_distance:.4f}<0.12) and Gripper too close to object ({gripper_to_object_distance:.4f}<0.04)"
             elif not handle_moved_enough:

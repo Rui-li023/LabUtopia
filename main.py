@@ -102,10 +102,10 @@ def main():
         save_video = True
         show_video = True
 
-    robot = create_robot(
-        cfg.robot.type,
-        position=np.array(cfg.robot.position)
-    )
+    robot_kwargs = {"position": np.array(cfg.robot.position)}
+    if hasattr(cfg.robot, "default_joint_positions"):
+        robot_kwargs["default_joint_positions"] = np.array(cfg.robot.default_joint_positions)
+    robot = create_robot(cfg.robot.type, **robot_kwargs)
     
     stage = omni.usd.get_context().get_stage()
     add_reference_to_stage(usd_path=os.path.abspath(cfg.usd_path), prim_path="/World")

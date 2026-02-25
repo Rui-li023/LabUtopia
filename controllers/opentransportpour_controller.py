@@ -193,11 +193,12 @@ class OpenTransportPourController(BaseController):
             return None, True, self._last_success
 
         if not self.active_controller.is_done():
-            action = self._get_phase_action(state)
+            action, record_array = self._get_phase_action(state)
             if 'camera_data' in state:
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
                     joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
                     language_instruction=self.get_language_instruction()
                 )
                 
@@ -211,6 +212,7 @@ class OpenTransportPourController(BaseController):
                 return None, False, False
             else:
                 print("All phases completed, task successful!")
+                self._last_failure_reason = None
                 self.data_collector.write_cached_data(state['joint_positions'][:-1])
                 self._last_success = True
                 self.current_phase = TaskPhase.FINISHED
@@ -227,7 +229,7 @@ class OpenTransportPourController(BaseController):
     def _get_phase_action(self, state: Dict[str, Any]):
         """Get corresponding action based on current phase"""
         if self.current_phase == TaskPhase.OPENING:
-            return self.open_controller.forward(
+            action, record_array = self.open_controller.forward(
                 handle_position=self.object_utils.get_geometry_center(object_path="/World/MuffleFurnace/handle"),
                 revolute_joint_position=self.object_utils.get_revolute_joint_positions(
                     joint_path="/World/MuffleFurnace/RevoluteJoint"
@@ -237,9 +239,10 @@ class OpenTransportPourController(BaseController):
                 end_effector_orientation=euler_angles_to_quats([0, 110, 0], degrees=True, extrinsic=False),
                 angle=30,    
             )
+            return action, record_array
             
         elif self.current_phase == TaskPhase.PICKING1:
-            return self.pick_controller1.forward(
+            action, record_array = self.pick_controller1.forward(
                 picking_position=self.object_utils.get_geometry_center(object_path="/World/beaker2"),
                 current_joint_positions=state['joint_positions'],
                 object_size=self.object_utils.get_object_size(object_path="/World/beaker2"),
@@ -250,9 +253,10 @@ class OpenTransportPourController(BaseController):
                 pre_offset_x=0.1,
                 pre_offset_z=0.05,
                 after_offset_z=0.05
-            )   
+            )
+            return action, record_array
         elif self.current_phase == TaskPhase.PICKING2:
-            return self.pick_controller2.forward(
+            action, record_array = self.pick_controller2.forward(
                 picking_position=self.object_utils.get_geometry_center(object_path="/World/conical_bottle02"),
                 current_joint_positions=state['joint_positions'],
                 object_size=self.object_utils.get_object_size(object_path="/World/conical_bottle02"),
@@ -264,16 +268,18 @@ class OpenTransportPourController(BaseController):
                 pre_offset_z=0.05,
                 after_offset_z=0.05
             )
+            return action, record_array
         elif self.current_phase == TaskPhase.TRANSPORTING:
-            return self.place_controller.forward(
+            action, record_array = self.place_controller.forward(
                 place_position=self.object_utils.get_geometry_center(object_path="/World/target_plat"),
                 current_joint_positions=state['joint_positions'],
                 gripper_control=self.gripper_control,
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 60])).as_quat(),
                 gripper_position=state['gripper_position']
             )
+            return action, record_array
         elif self.current_phase == TaskPhase.POURING:
-            return self.pour_controller.forward(
+            action, record_array = self.pour_controller.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
                 source_size=self.object_utils.get_object_size(object_path="/World/conical_bottle02"),
                 target_position=self.object_utils.get_geometry_center(object_path="/World/beaker1"),
@@ -283,8 +289,9 @@ class OpenTransportPourController(BaseController):
                 gripper_position=state['gripper_position'],
                 target_end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 20])).as_quat(),
             )
+            return action, record_array
         elif self.current_phase == TaskPhase.TRANSPORTING2:
-            return self.place_controller2.forward(
+            action, record_array = self.place_controller2.forward(
                 place_position=self.object_utils.get_geometry_center(object_path="/World/target_plat2"),
                 current_joint_positions=state['joint_positions'],
                 gripper_control=self.gripper_control,
@@ -292,7 +299,8 @@ class OpenTransportPourController(BaseController):
                 gripper_position=state['gripper_position'],
                 place_offset_z=0.115
             )
-        return None
+            return action, record_array
+        return None, None
         
     def _get_next_phase(self) -> Optional[TaskPhase]:
         """Get next phase (based on random sequence)"""

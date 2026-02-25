@@ -44,6 +44,9 @@ class Franka(Robot):
         gripper_closed_position (Optional[np.ndarray], optional): [description]. Defaults to None.
     """
 
+    # Standard Franka Panda home position: arm in a natural upright-ready pose
+    DEFAULT_JOINT_POSITIONS = np.array([0.0, -0.785398, 0.0, -2.356194, 0.0, 1.570796, 0.785398, 0.04, 0.04])
+
     def __init__(
         self,
         prim_path: str = "/World/Franka",
@@ -56,12 +59,17 @@ class Franka(Robot):
         gripper_open_position: Optional[np.ndarray] = None,
         gripper_closed_position: Optional[np.ndarray] = None,
         deltas: Optional[np.ndarray] = None,
+        default_joint_positions: Optional[np.ndarray] = None,
     ) -> None:
         prim = get_prim_at_path(prim_path)
         self._end_effector = None
         self._gripper = None
         self._end_effector_prim_name = end_effector_prim_name
         self.prim_path_str = prim_path
+        self._default_joint_positions = (
+            default_joint_positions if default_joint_positions is not None
+            else self.DEFAULT_JOINT_POSITIONS.copy()
+        )
         
         if not prim.IsValid():
             if usd_path:
@@ -188,6 +196,7 @@ class Franka(Robot):
         self._articulation_controller.switch_dof_control_mode(
             dof_index=self.gripper.joint_dof_indicies[1], mode="position"
         )
+        self.set_joint_positions(self._default_joint_positions)
         return
 
     def get_gripper_position(self) -> np.ndarray:

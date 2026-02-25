@@ -199,16 +199,19 @@ class DeviceOperateController(BaseController):
             self.reset_needed = True
             print(self.success_steps)
             self._last_success = len(self.success_steps) == 7
+            if self._last_success:
+                self._last_failure_reason = None
             return None, True, self._last_success
 
         if self.mode == "collect":
             # Collection mode using atomic controllers
             action = None
+            record_array = None
             if self.current_phase == Phase.OPEN_DOOR:
                 if self.initial_handle_position is None:
                     self.initial_handle_position = state['door_handle_position']
                     
-                action = self.open_controller.forward(
+                action, record_array = self.open_controller.forward(
                     handle_position=state['door_handle_position'],
                     current_joint_positions=state['joint_positions'],
                     gripper_position=state['gripper_position'],
@@ -223,14 +226,14 @@ class DeviceOperateController(BaseController):
                 target_position = self.end_handle_position.copy()
                 target_position[0] -= 0.4
                 target_position[2] += 0.22
-                action = self.move_controller.forward(
+                action, record_array = self.move_controller.forward(
                     target_position=target_position,
                     current_joint_positions=state['joint_positions'],
                     gripper_position=state['gripper_position'],
                     target_orientation=R.from_euler('xyz', np.radians([0, 90, 0])).as_quat(),
                 )
             elif self.current_phase == Phase.PICK_BEAKER:
-                action = self.pick_controller.forward(
+                action, record_array = self.pick_controller.forward(
                     picking_position=state['beaker_position'],
                     current_joint_positions=state['joint_positions'],
                     object_size=state['beaker_size'],
@@ -240,7 +243,7 @@ class DeviceOperateController(BaseController):
                     end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat(),
                 )
             elif self.current_phase == Phase.PLACE_BEAKER:
-                action = self.place_controller.forward(
+                action, record_array = self.place_controller.forward(
                     place_position=np.array(state['device_interior_position']),
                     current_joint_positions=state['joint_positions'],
                     end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat(),
@@ -249,7 +252,7 @@ class DeviceOperateController(BaseController):
                     pre_place_z=0.1,
                 )
             elif self.current_phase == Phase.PICK_BEAKER3:
-                action = self.pick_controller.forward(
+                action, record_array = self.pick_controller.forward(
                     picking_position=state['beaker3_position'],
                     current_joint_positions=state['joint_positions'],
                     object_size=state['beaker3_size'],
@@ -259,7 +262,7 @@ class DeviceOperateController(BaseController):
                     end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat(),
                 )
             elif self.current_phase == Phase.PLACE_BEAKER3:
-                action = self.place_controller.forward(
+                action, record_array = self.place_controller.forward(
                     place_position=np.array(state['beaker3_target_position']),
                     current_joint_positions=state['joint_positions'],
                     end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 15])).as_quat(),
@@ -268,7 +271,7 @@ class DeviceOperateController(BaseController):
                     pre_place_z=0.15,
                 )
             elif self.current_phase == Phase.PRESS_BUTTON:
-                action = self.press_controller.forward(
+                action, record_array = self.press_controller.forward(
                     target_position=state['button_position'],
                     current_joint_positions=state['joint_positions'],
                     gripper_control=self.gripper_control,
@@ -278,16 +281,19 @@ class DeviceOperateController(BaseController):
             if 'camera_data' in state:
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
-                    joint_angles=state['joint_positions'][:-1]
+                    joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
                 )
             
             if self.active_controller.is_done():
                 success = self._check_phase_success(state)
                 if success:
+                    self._last_failure_reason = None
                     print(f"{self.current_phase.value} success!")
                     self._advance_to_next_phase()
                     return None, False, False
                 else:
+                    self._last_failure_reason = f"Phase {self.current_phase.value} failed: phase success check did not pass after controller done"
                     print(f"{self.current_phase.value} failed!")
                     self.data_collector.clear_cache()
                     self.current_phase = Phase.FINISHED
@@ -327,6 +333,8 @@ class DeviceOperateController(BaseController):
         if self.current_phase == Phase.FINISHED:
             self.reset_needed = True
             self._last_success = len(self.success_steps) == 7
+            if self._last_success:
+                self._last_failure_reason = None
             return None, True, self._last_success
 
         language_instruction = self.get_language_instruction()

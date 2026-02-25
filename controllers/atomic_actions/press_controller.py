@@ -51,8 +51,27 @@ class PressController(BaseController):
             if len(self._events_dt) != 3:
                 raise Exception("events_dt length must be exactly 3")
         
-        self._cspace_controller = cspace_controller  # Store Cartesian space controller
+        self._cspace_controller = cspace_controller
         self._start = True
+        self._last_record_positions = None
+
+    def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
+        n = len(current_joint_positions)
+        jp = action.joint_positions
+        if jp is None:
+            if self._last_record_positions is not None:
+                return self._last_record_positions.copy()
+            return current_joint_positions.copy()
+        positions = current_joint_positions.copy().astype(np.float64)
+        for i in range(min(len(jp), n)):
+            if jp[i] is not None:
+                positions[i] = float(jp[i])
+            else:
+                positions[i] = current_joint_positions[i]
+        if len(jp) < n:
+            positions[len(jp):] = current_joint_positions[len(jp):]
+        self._last_record_positions = positions
+        return positions
 
     def get_current_event(self) -> int:
         """
@@ -70,7 +89,7 @@ class PressController(BaseController):
         gripper_control,
         end_effector_orientation: typing.Optional[np.ndarray] = None,
         press_distance: float = 0.04
-    ) -> ArticulationAction:
+    ) -> typing.Tuple[ArticulationAction, np.ndarray]:
         """
         Execute one step of the pressing action.
         
@@ -85,17 +104,16 @@ class PressController(BaseController):
         """
         
         if self._start:
-            # Initial state: Open the gripper
             self._start = False
             target_joint_positions = [None] * current_joint_positions.shape[0]
-            target_joint_positions[7] = 0.04 / get_stage_units()  # Open the gripper
-            target_joint_positions[8] = 0.04 / get_stage_units()  # Open the gripper
-            return ArticulationAction(joint_positions=target_joint_positions)
-        
+            target_joint_positions[7] = 0.04 / get_stage_units()
+            target_joint_positions[8] = 0.04 / get_stage_units()
+            action = ArticulationAction(joint_positions=target_joint_positions)
+            return action, self._build_record_array(action, current_joint_positions)
+
         if self.is_done():
-            # Pause or done state: Maintain current joint positions
-            target_joint_positions = [None] * current_joint_positions.shape[0]
-            return ArticulationAction(joint_positions=target_joint_positions)
+            action = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
+            return action, self._build_record_array(action, current_joint_positions)
         
         if end_effector_orientation is None:
             end_effector_orientation = euler_angles_to_quat(np.array([0, np.pi, 0]))
@@ -126,8 +144,9 @@ class PressController(BaseController):
         if self._t >= 1.0:
             self._event += 1
             self._t = 0
-        
-        return target_joint_positions
+
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        return target_joint_positions, record_array
 
     
     def reset(
@@ -157,6 +176,7 @@ class PressController(BaseController):
             if len(self._events_dt) != 3:
                 raise Exception("events_dt length must be exactly 3")
         self._start = True
+        self._last_record_positions = None
     
     def is_done(self) -> bool:
         # Check if the state machine is done

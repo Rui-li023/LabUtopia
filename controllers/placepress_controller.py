@@ -130,8 +130,9 @@ class PlacePressTaskController(BaseController):
 
         if not self.active_controller.is_done():
             action = None
+            record_array = None
             if self.current_phase == Phase.PICKING:
-                action = self.pick_controller.forward(
+                action, record_array = self.pick_controller.forward(
                     picking_position=state['object_position'],
                     current_joint_positions=state['joint_positions'],
                     object_size=state['object_size'],
@@ -143,7 +144,7 @@ class PlacePressTaskController(BaseController):
                     pre_offset_z=0.05
                 )
             elif self.current_phase == Phase.PLACING:
-                action = self.place_controller.forward(
+                action, record_array = self.place_controller.forward(
                     place_position=state['target_position'],
                     current_joint_positions=state['joint_positions'],
                     gripper_control=self.gripper_control,
@@ -151,7 +152,7 @@ class PlacePressTaskController(BaseController):
                     gripper_position=state['gripper_position']
                 )
             elif self.current_phase == Phase.PRESSINGZ:
-                 action = self.press_controller.forward(
+                 action, record_array = self.press_controller.forward(
                     target_position=state['button_position'],
                     current_joint_positions=state['joint_positions'],
                     gripper_control=self.gripper_control,
@@ -163,6 +164,7 @@ class PlacePressTaskController(BaseController):
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
                     joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
                     language_instruction=self.get_language_instruction()
                 )
             
@@ -181,11 +183,13 @@ class PlacePressTaskController(BaseController):
                 return None, False, False
             elif self.current_phase == Phase.PRESSINGZ:
                 print("PressZ task success!")
+                self._last_failure_reason = None
                 self.data_collector.write_cached_data(state['joint_positions'][:-1])
                 self._last_success = True
                 self.current_phase = Phase.FINISHED
                 return None, True, True
             else:
+                self._last_failure_reason = f"PlacePress {self.current_phase.value} phase failed: phase success check did not pass after controller done"
                 print(f"{self.current_phase.value} task failed!")
                 self.data_collector.clear_cache()
                 self._last_success = False

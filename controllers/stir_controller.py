@@ -75,7 +75,7 @@ class StirTaskController(BaseController):
             tuple: (action, done, success) indicating control output and episode status
         """
         if not self.pick_controller.is_done():
-            action = self.pick_controller.forward(
+            action, _ = self.pick_controller.forward(
                 picking_position=state['object_position'],
                 current_joint_positions=state['joint_positions'],
                 object_size=state['object_size'],
@@ -98,7 +98,7 @@ class StirTaskController(BaseController):
             if target_position is None:
                 target_position = state['target_position']
             
-            action = self.stir_controller.forward(
+            action, record_array = self.stir_controller.forward(
                 center_position=target_position,
                 current_joint_positions=state['joint_positions'],
                 gripper_position=state['gripper_position'],
@@ -109,6 +109,7 @@ class StirTaskController(BaseController):
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
                     joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
                     language_instruction=self.get_language_instruction()
                 )
 
@@ -124,10 +125,12 @@ class StirTaskController(BaseController):
             if (final_object_position is not None and 
                 final_object_position[2] > 0.85 and
                 np.linalg.norm(final_object_position[0:2] - target_position[0:2]) < 0.04):
+                self._last_failure_reason = None
                 self.data_collector.write_cached_data(state['joint_positions'][:-1])
                 self._last_success = True
                 return None, True, True
             else:
+                self._last_failure_reason = "Stir task failed: glass rod final position (height > 0.85 or xy to target < 0.04) did not meet criteria"
                 self.data_collector.clear_cache()
                 self._last_success = False
                 return None, True, False
@@ -144,7 +147,7 @@ class StirTaskController(BaseController):
             tuple: (action, done, success) indicating control output and episode status
         """
         if not self.pick_controller.is_done():
-            action = self.pick_controller.forward(
+            action, _ = self.pick_controller.forward(
                 picking_position=state['object_position'],
                 current_joint_positions=state['joint_positions'],
                 object_size=state['object_size'],

@@ -98,15 +98,16 @@ class CloseTaskController(BaseController):
         """
         if not self.close_controller.is_done():
             if self.operate_type == "door":
-                action = self.close_controller.forward(
+                action, record_array = self.close_controller.forward(
                     handle_position=state['object_position'],
                     current_joint_positions=state['joint_positions'],
                     revolute_joint_position=state['revolute_joint_position'],
                     gripper_position=state['gripper_position'],
                     end_effector_orientation=R.from_euler('xyz', np.radians([350, 90, 25])).as_quat(),
+                    after_move_distance=0.25
                 )
             else:
-                action = self.close_controller.forward(
+                action, record_array = self.close_controller.forward(
                     handle_position=state['object_position'],
                     current_joint_positions=state['joint_positions'],
                     gripper_position=state['gripper_position'],
@@ -117,6 +118,7 @@ class CloseTaskController(BaseController):
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
                     joint_angles=state['joint_positions'][:-1],
+                    action=record_array,
                     language_instruction=self.get_language_instruction()
                 )
             
@@ -129,6 +131,7 @@ class CloseTaskController(BaseController):
 
         success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if success:
+            self._last_failure_reason = None
             print("Task success!")
             self.data_collector.write_cached_data(state['joint_positions'][:-1])
             self._last_success = True
@@ -164,6 +167,7 @@ class CloseTaskController(BaseController):
             
         success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if success:
+            self._last_failure_reason = None
             print("Task success!")
             self._last_success = True
             self.reset_needed = True
@@ -183,15 +187,23 @@ class CloseTaskController(BaseController):
         current_pos = state['object_position']
         gripper_position = state['gripper_position']
         if self.operate_type == "drawer":
-            return (
-                np.linalg.norm(np.array(current_pos) - self.initial_handle_position) > 0.13 and
-                np.linalg.norm(np.array(gripper_position) - np.array(current_pos)) > 0.04
-            )
+            handle_moved_enough = np.linalg.norm(np.array(current_pos) - self.initial_handle_position)
+            gripper_far_enough = np.linalg.norm(np.array(gripper_position) - np.array(current_pos))
+            success = handle_moved_enough  > 0.13 and gripper_far_enough > 0.04
+            if not success:
+                self._last_failure_reason = f"Close task failed: handle moved distance too short ({handle_moved_enough:.4f}<0.13) or gripper too close to object ({gripper_far_enough:.4f}<0.04)"
+            else:
+                self._last_failure_reason = None
+            return success
         else:
-            return (
-                np.array(current_pos)[0] - self.initial_handle_position[0] > 0.08 and
-                np.linalg.norm(np.array(gripper_position) - np.array(current_pos)) > 0.08
-            )
+            handle_moved_enough = np.array(current_pos)[0] - self.initial_handle_position[0] 
+            gripper_far_enough = np.linalg.norm(np.array(gripper_position) - np.array(current_pos))
+            success = handle_moved_enough > 0.08 and gripper_far_enough > 0.08
+            if not success:
+                self._last_failure_reason = f"Close task failed: handle moved distance too short ({handle_moved_enough:.4f}<0.08) or gripper too close to object ({gripper_far_enough:.4f}<0.08)"
+            else:
+                self._last_failure_reason = None
+            return success    
 
     def get_language_instruction(self) -> Optional[str]:
         """Get the language instruction for the current task.
