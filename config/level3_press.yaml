@@ -8,32 +8,30 @@ usd_path: "assets/chemistry_lab/lab_003/lab_003.usd"
 
 instrument_path: "/World/instrument"
 target_button_path: "/World/target_button"
-sub_obj_path: "/World/target_button/button"
 distractor_button1_path: "/World/distractor_button_1"
 distractor_button2_path: "/World/distractor_button_2"
 
 max_episodes: 100
 
-button_types: 4
-
-button_material_paths:
- - /World/Looks/OmniPBR_Button_Red
- - /World/Looks/OmniPBR_Button_Blue
- - /World/Looks/OmniPBR_Button_Yellow
- - /World/Looks/OmniPBR_Button_Green
-
 task:
   material_paths:
-  - path: /World/table/surface/mesh
-    materials:
-      - "/World/Looks/Material_1_plastic_dark_blue"
-      - "/World/Looks/Material_2_wood"
-      - "/World/Looks/Material_3_plastic_dark_green"
-      - "/World/Looks/Material_5_black"
-      - "/World/Looks/Material_6_plastic_light_blue"
-    test_materials:
-      - "/World/Looks/Material_4_plastic_light_white"
-      - "/World/Looks/Material_7_stainless"
+    - path: /World/table/surface/mesh
+      materials:
+        - "/World/Looks/Material_1_plastic_dark_blue"
+        - "/World/Looks/Material_2_wood"
+        - "/World/Looks/Material_3_plastic_dark_green"
+        - "/World/Looks/Material_5_black"
+        - "/World/Looks/Material_6_plastic_light_blue"
+      test_materials:
+        - "/World/Looks/Material_4_plastic_light_white"
+        - "/World/Looks/Material_7_stainless"
+    - path: /World/target_button/button
+      materials:
+        - /World/Looks/OmniPBR_Button_Red
+        - /World/Looks/OmniPBR_Button_Blue
+        - /World/Looks/OmniPBR_Button_Yellow
+        - /World/Looks/OmniPBR_Button_Green
+      random: true
 
 infer:
   type: "local"

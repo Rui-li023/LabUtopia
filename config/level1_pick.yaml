@@ -4,10 +4,7 @@ task_type: "pick"
 controller_type: "pick"
 
 mode: "collect"
-
 usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
-
-
 max_episodes: 100
 
 infer:

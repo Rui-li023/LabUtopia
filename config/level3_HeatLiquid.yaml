@@ -39,28 +39,27 @@ task:
 
     - path: "/World/heat_device/button"
 
-table_path: "/World/Table1/Desk1/surface/Cube"
-
-per_episode: 20 
-material_types: 5
-button_types: 3
-
-button_material_paths:
- - /World/Looks/OmniPBR_Button_Red
- - /World/Looks/OmniPBR_Button_Blue
- - /World/Looks/OmniPBR_Button_Green
- - /World/Looks/OmniPBR_Button_Yellow
- - /World/Looks/OmniPBR_Button_Gray
- - /World/Looks/OmniPBR_Button_DeepGray
-
-table_material_paths:
- - /World/Looks/Material_1_plastic_dark_blue
- - /World/Looks/Material_2_wood
- - /World/Looks/Material_3_plastic_dark_green
- - /World/Looks/Material_4_plastic_light_white
- - /World/Looks/Material_5_black
- - /World/Looks/Material_6_plastic_light_blue
- - /World/Looks/Material_7_stainless
+  material_paths:
+    - path: /World/Table1/Desk1/surface/Cube
+      materials:
+        - /World/Looks/Material_1_plastic_dark_blue
+        - /World/Looks/Material_2_wood
+        - /World/Looks/Material_3_plastic_dark_green
+        - /World/Looks/Material_4_plastic_light_white
+        - /World/Looks/Material_5_black
+      test_materials:
+        - /World/Looks/Material_6_plastic_light_blue
+        - /World/Looks/Material_7_stainless
+    - path: /World/heat_device/button
+      materials:
+        - /World/Looks/OmniPBR_Button_Red
+        - /World/Looks/OmniPBR_Button_Blue
+        - /World/Looks/OmniPBR_Button_Green
+      test_materials:
+        - /World/Looks/OmniPBR_Button_Yellow
+        - /World/Looks/OmniPBR_Button_Gray
+        - /World/Looks/OmniPBR_Button_DeepGray
+      random: true
         
 cameras:
   - prim_path: "/World/Camera1"

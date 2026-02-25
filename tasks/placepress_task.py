@@ -1,11 +1,10 @@
 import numpy as np
 import random
 from tasks.base_task import BaseTask
-from utils.Material_utils import bind_material_to_object
 
 class PlacePressTask(BaseTask):
     def __init__(self, cfg, world, stage, robot):
-        """Initialize the Pick and Pour task.
+        """Initialize the Place and Press task.
 
         Args:
             cfg: Configuration object for the task.
@@ -15,19 +14,11 @@ class PlacePressTask(BaseTask):
         """
         super().__init__(cfg, world, stage, robot)
 
-        self.table_path = self.cfg.table_path
-
-        self.table_material_paths = self.cfg.table_material_paths
-        self.button_material_paths = self.cfg.button_material_paths
-
-        self.material_types = self.cfg.material_types
-        self.button_types = self.cfg.button_types
         self.source_beaker = self.cfg.task.obj_paths[0]['path']
         self.target_plat = self.cfg.task.obj_paths[1]['path']
         self.target_sub_plat = self.cfg.task.obj_paths[1]['sub_path']
         self.button = self.cfg.task.obj_paths[2]['path']
-        self.table_material_index = 0
-        
+
     def reset(self):
         """Reset the task state."""
         super().reset()
@@ -48,16 +39,6 @@ class PlacePressTask(BaseTask):
                         target_position_range['z'][0]
                     ])
         self.object_utils.set_object_position(object_path=self.target_plat, position=target_position)
-
-        random_material_path = random.choice(self.button_material_paths[:self.button_types])
-        bind_material_to_object(stage=self.stage,
-                                obj_path=self.button,
-                                material_path=random_material_path)
-        
-        self.table_material_index = (self.table_material_index + 1) % self.material_types
-        bind_material_to_object(stage=self.stage,
-                                obj_path=self.table_path,
-                                material_path=self.table_material_paths[self.table_material_index])
 
     def step(self):
         """Execute one simulation step.
@@ -84,4 +65,3 @@ class PlacePressTask(BaseTask):
                 'button_position': button_position,
             }
         )
-

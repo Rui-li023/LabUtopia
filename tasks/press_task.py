@@ -2,7 +2,6 @@ import numpy as np
 from .base_task import BaseTask
 
 import random
-from utils.Material_utils import bind_material_to_object
 
 class PressTask(BaseTask):
     def __init__(self, cfg, world, stage, robot):
@@ -13,10 +12,6 @@ class PressTask(BaseTask):
         self.target_button_path = self.cfg.target_button_path
         self.distractor_button1_path = self.cfg.distractor_button1_path
         self.distractor_button2_path = self.cfg.distractor_button2_path
-
-        self.button_material_paths = self.cfg.button_material_paths
-
-        self.button_types = self.cfg.button_types
                     
     def reset(self):
         super().reset()
@@ -32,11 +27,6 @@ class PressTask(BaseTask):
         self.object_utils.set_object_position(object_path=self.target_button_path, position=positions[0])
         self.object_utils.set_object_position(object_path=self.distractor_button1_path, position=positions[1])
         self.object_utils.set_object_position(object_path=self.distractor_button2_path, position=positions[2])
-
-        random_material_path = random.choice(self.button_material_paths[:self.button_types])
-        bind_material_to_object(stage=self.stage,
-                                obj_path=self.cfg.sub_obj_path,
-                                material_path=random_material_path)
         
     def step(self):
         self.frame_idx += 1
@@ -51,4 +41,3 @@ class PressTask(BaseTask):
                 'object_position': object_position,
             }
         )
-

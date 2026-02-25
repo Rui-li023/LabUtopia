@@ -15,23 +15,22 @@ beaker_sub_2: "/World/beaker_hard_2/mesh"
 plat_1: "/World/target_plat_1"
 plat_2: "/World/target_plat_2"
 
-table1_surface_1: "/World/table_hard/table_hard/table1/Group_2/table_surface/surface_1"
-table1_surface_2: "/World/table_hard/table_hard/table1/Group_2/table_surface/surface_2"
-
-table2_surface_1: "/World/table_hard/table_hard/table2/Group_2/table_surface/surface_1"
-table2_surface_2: "/World/table_hard/table_hard/table2/Group_2/table_surface/surface_2"
-
-per_episode: 20 
-material_types: 5
-
-table_material_paths:
- - /World/Looks/Material_1_plastic_dark_blue
- - /World/Looks/table_material5
- - /World/Looks/Material_3_plastic_dark_green
- - /World/Looks/Material_4_plastic_light_white
- - /World/Looks/Material_5_black
- - /World/Looks/Material_6_plastic_light_blue
- - /World/Looks/Material_7_stainless
+task:
+  material_paths:
+    - paths:
+        - "/World/table_hard/table_hard/table1/Group_2/table_surface/surface_1"
+        - "/World/table_hard/table_hard/table1/Group_2/table_surface/surface_2"
+        - "/World/table_hard/table_hard/table2/Group_2/table_surface/surface_1"
+        - "/World/table_hard/table_hard/table2/Group_2/table_surface/surface_2"
+      materials:
+        - /World/Looks/Material_1_plastic_dark_blue
+        - /World/Looks/table_material5
+        - /World/Looks/Material_3_plastic_dark_green
+        - /World/Looks/Material_4_plastic_light_white
+        - /World/Looks/Material_5_black
+      test_materials:
+        - /World/Looks/Material_6_plastic_light_blue
+        - /World/Looks/Material_7_stainless
 
 max_episodes: 100
 

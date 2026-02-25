@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Dict, Any, List
+import random
 import numpy as np
 from isaacsim.sensors.camera import Camera
 from utils.object_utils import ObjectUtils
@@ -55,9 +56,7 @@ class BaseTask(ABC):
         self.world.reset()
         self.reset_needed = False
         self.frame_idx = 0
-                
-        if self.material_config:
-            self.apply_material_to_object(self.material_config.path)
+        self.apply_materials()
             
     @abstractmethod
     def step(self) -> Dict[str, Any]:
@@ -175,21 +174,35 @@ class BaseTask(ABC):
     def setup_materials(self) -> None:
         """
         Set up materials for the objects.
+
+        Each entry in task.material_paths supports:
+          path / paths : single USD path or list of USD paths to bind material to
+          materials    : list of materials used during data collection (sequential cycling)
+          test_materials: list of materials used during inference OOD testing (optional)
+          random       : if true, pick randomly from the active list each reset (default false)
         """
-        self.material_config = None
-        self.available_materials = []
+        self.material_configs: List[Dict] = []
         is_infer_mode = hasattr(self.cfg, "mode") and self.cfg.mode == "infer"
-        has_infer = hasattr(self.cfg, "infer")
-        is_ood = False
-        if has_infer and hasattr(self.cfg.infer, "is_test_material"):
-            is_ood = bool(self.cfg.infer.is_test_material)
-        has_material_paths = hasattr(self.cfg, "task") and hasattr(self.cfg.task, "material_paths") and self.cfg.task.material_paths
-        if has_material_paths:
-            self.material_config = self.cfg.task.material_paths[0]
-            if is_infer_mode and is_ood and hasattr(self.material_config, "test_materials"):
-                self.available_materials = getattr(self.material_config, "test_materials", [])
-            elif hasattr(self.material_config, "materials"):
-                self.available_materials = getattr(self.material_config, "materials", [])
+        is_ood = (
+            hasattr(self.cfg, "infer")
+            and hasattr(self.cfg.infer, "is_test_material")
+            and bool(self.cfg.infer.is_test_material)
+        )
+        if hasattr(self.cfg, "task") and hasattr(self.cfg.task, "material_paths") and self.cfg.task.material_paths:
+            for mat_cfg in self.cfg.task.material_paths:
+                use_test = is_infer_mode and is_ood and hasattr(mat_cfg, "test_materials")
+                materials = list(mat_cfg.test_materials if use_test else getattr(mat_cfg, "materials", []))
+                if hasattr(mat_cfg, "paths"):
+                    paths = list(mat_cfg.paths)
+                elif hasattr(mat_cfg, "path"):
+                    paths = [mat_cfg.path]
+                else:
+                    paths = []
+                self.material_configs.append({
+                    "paths": paths,
+                    "materials": materials,
+                    "random": bool(getattr(mat_cfg, "random", False)),
+                })
     
     def get_camera_data(self):
         camera_data = {}
@@ -206,29 +219,34 @@ class BaseTask(ABC):
                 display_data[cam_cfg.name] = display
         return camera_data, display_data
     
-    def apply_material_to_object(self, target_path: str, material_idx: int = None) -> None:
+    def apply_materials(self) -> None:
         """
-        Apply material to the specified object.
-        
-        Args:
-            target_path: Path of the target object
-            material_idx: Material index, if None use current material index
+        Apply all configured materials to their respective objects.
+
+        Sequential entries cycle via current_material_idx; entries with random=True
+        pick a random material from the active list on each call.
         """
-        if not self.material_config or not self.available_materials:
-            return
-            
-        if material_idx is None:
-            material_idx = self.current_material_idx
-            
-        target_prim = self.stage.GetPrimAtPath(target_path)
+        for mat_cfg in self.material_configs:
+            if not mat_cfg["materials"]:
+                continue
+            if mat_cfg["random"]:
+                material_path = random.choice(mat_cfg["materials"])
+            else:
+                material_path = mat_cfg["materials"][
+                    self.current_material_idx % len(mat_cfg["materials"])
+                ]
+            for obj_path in mat_cfg["paths"]:
+                self._bind_material(obj_path, material_path)
+
+    def _bind_material(self, obj_path: str, material_path: str) -> None:
+        """Bind a USD material to an object prim."""
+        target_prim = self.stage.GetPrimAtPath(obj_path)
         if target_prim.IsValid():
-            material_path = self.available_materials[material_idx]
             mtl_prim = self.stage.GetPrimAtPath(material_path)
             if mtl_prim.IsValid():
-                cube_mat_shade = UsdShade.Material(mtl_prim)
                 UsdShade.MaterialBindingAPI(target_prim).Bind(
-                    cube_mat_shade, 
-                    UsdShade.Tokens.strongerThanDescendants
+                    UsdShade.Material(mtl_prim),
+                    UsdShade.Tokens.strongerThanDescendants,
                 )
     
     def randomize_object_position(self, obj_path: str, position_range: Dict[str, list]) -> np.ndarray:
@@ -367,5 +385,6 @@ class BaseTask(ABC):
             if self.current_obj_episodes >= self.episodes_per_obj and len(self.obj_configs) > 0:
                 self.current_obj_idx = (self.current_obj_idx + 1) % len(self.obj_configs)
                 self.current_obj_episodes = 0
-            if self.available_materials:
-                self.current_material_idx = (self.current_material_idx + 1) % len(self.available_materials)
+            sequential = [mc for mc in self.material_configs if not mc["random"] and mc["materials"]]
+            if sequential:
+                self.current_material_idx = (self.current_material_idx + 1) % len(sequential[0]["materials"])

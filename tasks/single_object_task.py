@@ -23,10 +23,6 @@ class SingleObjectTask(BaseTask):
         """
         super().reset()
         self.robot.initialize()
-        
-        if self.material_config:
-            self.apply_material_to_object(self.material_config.path)
-        
         self.current_obj_path = self.place_objects_with_visibility_management(
             self.current_obj_idx, far_distance=10.0
         )

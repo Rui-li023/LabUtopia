@@ -1,17 +1,10 @@
 import numpy as np
 from .base_task import BaseTask
-from utils.Material_utils import bind_material_to_object
 
 class CleanBeakerTask(BaseTask):
     def __init__(self, cfg, world, stage, robot):
         super().__init__(cfg, world, stage, robot)
         self.world.reset()
-        self.table_material_paths = self.cfg.table_material_paths
-
-        self.table1_surface_1 = self.cfg.table1_surface_1
-        self.table1_surface_2 = self.cfg.table1_surface_2
-        self.table2_surface_1 = self.cfg.table2_surface_1
-        self.table2_surface_2 = self.cfg.table2_surface_2
             
     def reset(self):
         super().reset()
@@ -36,22 +29,6 @@ class CleanBeakerTask(BaseTask):
 
         plat_2_position = np.array([0.056, np.random.uniform(0.27, 0.32), 0.713])
         self.object_utils.set_object_position(object_path=self.plat_2, position=plat_2_position)
-
-        bind_material_to_object(stage=self.stage,
-                                obj_path=self.table1_surface_1,
-                                material_path=self.table_material_paths[0])
-        
-        bind_material_to_object(stage=self.stage,
-                                obj_path=self.table1_surface_2,
-                                material_path=self.table_material_paths[0])
-        
-        bind_material_to_object(stage=self.stage,
-                                obj_path=self.table2_surface_1,
-                                material_path=self.table_material_paths[0])
-        
-        bind_material_to_object(stage=self.stage,
-                                obj_path=self.table2_surface_2,
-                                material_path=self.table_material_paths[0])
             
     def step(self):
         self.frame_idx += 1

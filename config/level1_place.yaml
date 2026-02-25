@@ -2,13 +2,10 @@ name: Level1_place
 
 task_type: "place"
 controller_type: "place"
-
 mode: "collect"
 
 usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
 target_path: "/World/target_plat"
-
-
 max_episodes: 11
 
 infer:

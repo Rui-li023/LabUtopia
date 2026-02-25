@@ -6,11 +6,6 @@ controller_type: "pickplace"
 mode: "collect"
 
 usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
-table_path: "/World/table/surface/mesh"
-target_sub_path: "/World/target_plat/mesh"
-per_episode: 20
-material_types: 5
-button_types: 3
 
 max_episodes: 100
 
@@ -51,23 +46,16 @@ task:
       test_materials:
         - "/World/Looks/Material4_plastic_light_white"
         - "/World/Looks/Material7_stainless"
-
-button_material_paths:
- - /World/Looks/OmniPBR_Button_Red
- - /World/Looks/OmniPBR_Button_Blue
- - /World/Looks/OmniPBR_Button_Green
- - /World/Looks/OmniPBR_Button_Yellow
- - /World/Looks/OmniPBR_Button_Gray
- - /World/Looks/OmniPBR_Button_DeepGray
-
-table_material_paths:
- - /World/Looks/Material1_plastic_dark_blue
- - /World/Looks/Material2_wood
- - /World/Looks/Material3_plastic_dark_green
- - /World/Looks/Material4_plastic_light_white
- - /World/Looks/Material5_black
- - /World/Looks/Material6_plastic_light_blue
- - /World/Looks/Material7_stainless
+    - path: /World/target_plat/mesh
+      materials:
+        - /World/Looks/OmniPBR_Button_Red
+        - /World/Looks/OmniPBR_Button_Blue
+        - /World/Looks/OmniPBR_Button_Green
+      test_materials:
+        - /World/Looks/OmniPBR_Button_Yellow
+        - /World/Looks/OmniPBR_Button_Gray
+        - /World/Looks/OmniPBR_Button_DeepGray
+      random: true
 
 cameras:
   - prim_path: "/World/Camera1"

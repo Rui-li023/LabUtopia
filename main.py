@@ -30,6 +30,8 @@ simulation_config = {
 simulation_app = SimulationApp(simulation_config)
 
 import hydra
+import subprocess
+import threading
 from omegaconf import OmegaConf
 import cv2
 import numpy as np
@@ -47,6 +49,36 @@ from factories.robot_factory import create_robot
 from utils.object_utils import ObjectUtils
 from factories.task_factory import create_task
 from factories.controller_factory import create_controller
+
+
+
+def _convert_to_h264(src_path: str):
+    """Re-encode a video to H264 in-place using ffmpeg (runs in background thread)."""
+    tmp_path = src_path + ".h264.tmp.mp4"
+    ret = subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", src_path,
+            "-vcodec", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-crf", "18",
+            "-preset", "fast",
+            tmp_path,
+        ],
+        stderr=subprocess.DEVNULL,
+    )
+    if ret.returncode == 0:
+        os.replace(tmp_path, src_path)
+    else:
+        try:
+            os.remove(tmp_path)
+        except FileNotFoundError:
+            pass
+
+
+def release_and_convert(writer: cv2.VideoWriter, output_path: str):
+    """Release cv2 writer and kick off H264 conversion in a daemon thread."""
+    writer.release()
+    threading.Thread(target=_convert_to_h264, args=(output_path,), daemon=True).start()
 
 def main():
     hydra.initialize(config_path=args.config_dir, job_name=args.config_name)
@@ -95,6 +127,7 @@ def main():
     )
     
     video_writer = None
+    video_output_path = None
     task.reset()
     
     while simulation_app.is_running():
@@ -106,8 +139,9 @@ def main():
         if world.is_playing():
             if task_controller.need_reset() or task.need_reset():
                 if video_writer is not None:
-                    video_writer.release()
+                    release_and_convert(video_writer, video_output_path)
                     video_writer = None
+                    video_output_path = None
                            
                 task_controller.reset()
                 if task_controller.episode_num() >= cfg.max_episodes:
@@ -151,11 +185,11 @@ def main():
                     if save_video:
                         output_dir = os.path.join(cfg.multi_run.run_dir, "video")
                         os.makedirs(output_dir, exist_ok=True)
-                        output_path = os.path.join(output_dir, f"episode_{task_controller._episode_num}.mp4")
                         if video_writer is None:
                             height, width = combined_img.shape[:2]
+                            video_output_path = os.path.join(output_dir, f"episode_{task_controller._episode_num}.mp4")
                             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                            video_writer = cv2.VideoWriter(output_path, fourcc, 60.0, (width, height))
+                            video_writer = cv2.VideoWriter(video_output_path, fourcc, 60.0, (width, height))
                         video_writer.write(combined_img)
 
 
