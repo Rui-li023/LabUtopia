@@ -5,7 +5,6 @@ from .base_task import BaseTask
 from utils.a_star import plan_navigation_path, real_to_grid, load_grid
 from isaacsim.core.utils.rotations import quat_to_euler_angles
 
-
 class MobilePickTask(BaseTask):
     """
     Mobile pick task class, combining navigation and pick operations.

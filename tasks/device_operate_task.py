@@ -1,4 +1,3 @@
-import numpy as np
 from .base_task import BaseTask
 
 class DeviceOperateTask(BaseTask):

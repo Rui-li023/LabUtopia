@@ -189,7 +189,7 @@ class CloseController(BaseController):
             target_handle_position[0] -= after_move_distance
             target_joint_positions = self._cspace_controller.forward(
                 target_end_effector_position=target_handle_position,
-                target_end_effector_orientation=end_effector_orientation
+                target_end_effector_orientation=self.rotation_interp
             )
             xy_distance = np.linalg.norm(gripper_position[:2] - target_handle_position[:2])
             if xy_distance < 0.02:

@@ -1,5 +1,4 @@
 import numpy as np
-import random
 from tasks.base_task import BaseTask
 
 class PlacePressTask(BaseTask):

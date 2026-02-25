@@ -1,5 +1,3 @@
-import numpy as np
-from typing import Dict, Any
 from .base_task import BaseTask
 
 class DualObjectTask(BaseTask):
