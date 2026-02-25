@@ -159,7 +159,7 @@ task:
         z: [0.80, 0.80]
 
 # 数据收集参数
-max_episodes: 100                   # 最大收集轮数
+max_episodes: 50                   # 最大收集轮数
 
 # 相机配置
 cameras_names: ["camera_1", "camera_2"]

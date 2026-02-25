@@ -158,7 +158,7 @@ task:
         z: [0.80, 0.80]
 
 # Data collection parameters
-max_episodes: 100                   # Maximum collection episodes
+max_episodes: 50                   # Maximum collection episodes
 
 # Camera configuration
 cameras_names: ["camera_1", "camera_2"]

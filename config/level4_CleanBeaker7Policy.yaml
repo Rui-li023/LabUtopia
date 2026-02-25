@@ -32,7 +32,7 @@ task:
         - /World/Looks/Material_6_plastic_light_blue
         - /World/Looks/Material_7_stainless
 
-max_episodes: 100
+max_episodes: 50
 
 config_paths:
  - data/outputs/7pollicy_DP/1_PickBeaker2/config.yaml

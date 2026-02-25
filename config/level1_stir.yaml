@@ -10,7 +10,7 @@ obj_path: "/World/glass_rod"
 sub_obj_path: "/World/glass_rod/Cylinder"
 target_path: "/World/beaker_2"
 
-max_episodes: 100
+max_episodes: 50
 
 infer:
   type: "local"

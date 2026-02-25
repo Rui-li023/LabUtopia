@@ -46,7 +46,7 @@ infer:
 
   is_test_material: False
 
-max_episodes: 100
+max_episodes: 50
 
 cameras:
   - prim_path: "/World/Camera1"

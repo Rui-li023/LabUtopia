@@ -9,7 +9,7 @@ usd_path: "assets/chemistry_lab/lab_003/lab_003.usd"
 obj_path: "/World/beaker_2"
 sub_obj_path: "/World/beaker_2/mesh"
 
-max_episodes: 100
+max_episodes: 50
 
 infer:
   type: "local"

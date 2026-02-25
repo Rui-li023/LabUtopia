@@ -3,9 +3,9 @@ name: Level1_close_door
 task_type: "openclose"
 controller_type: "close"
 
-mode: "collect"
+mode: "collect" # "collect", "infer" or "replay"
 usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
-max_episodes: 100
+max_episodes: 50
 
 infer:
   type: "local"

@@ -8,7 +8,7 @@ mode: "collect"
 usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
 target_path: "/World/beaker1"
 
-max_episodes: 100
+max_episodes: 50
 
 infer:
   type: "remote"

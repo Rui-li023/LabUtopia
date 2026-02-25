@@ -52,9 +52,15 @@ from factories.controller_factory import create_controller
 
 
 
-def _convert_to_h264(src_path: str):
+def _convert_to_h264(src_path: str, is_success: bool):
     """Re-encode a video to H264 in-place using ffmpeg (runs in background thread)."""
-    tmp_path = src_path + ".h264.tmp.mp4"
+    if is_success:
+        tmp_path = src_path + ".success.h264.tmp.mp4"
+        dest_path = src_path.replace(".mp4", "_success.mp4")
+    else:
+        tmp_path = src_path + ".failure.h264.tmp.mp4"
+        dest_path = src_path.replace(".mp4", "_failure.mp4")
+    print(src_path)
     ret = subprocess.run(
         [
             "ffmpeg", "-y", "-i", src_path,
@@ -67,7 +73,8 @@ def _convert_to_h264(src_path: str):
         stderr=subprocess.DEVNULL,
     )
     if ret.returncode == 0:
-        os.replace(tmp_path, src_path)
+        os.replace(tmp_path, dest_path)
+        os.remove(src_path)
     else:
         try:
             os.remove(tmp_path)
@@ -75,10 +82,15 @@ def _convert_to_h264(src_path: str):
             pass
 
 
-def release_and_convert(writer: cv2.VideoWriter, output_path: str):
-    """Release cv2 writer and kick off H264 conversion in a daemon thread."""
+_convert_threads: list[threading.Thread] = []
+
+
+def release_and_convert(writer: cv2.VideoWriter, output_path: str, is_success: bool):
+    """Release cv2 writer and kick off H264 conversion in a background thread."""
     writer.release()
-    threading.Thread(target=_convert_to_h264, args=(output_path,), daemon=True).start()
+    t = threading.Thread(target=_convert_to_h264, args=(output_path, is_success), daemon=False)
+    t.start()
+    _convert_threads.append(t)
 
 def main():
     hydra.initialize(config_path=args.config_dir, job_name=args.config_name)
@@ -139,7 +151,7 @@ def main():
         if world.is_playing():
             if task_controller.need_reset() or task.need_reset():
                 if video_writer is not None:
-                    release_and_convert(video_writer, video_output_path)
+                    release_and_convert(video_writer, video_output_path, is_success)
                     video_writer = None
                     video_output_path = None
                            
@@ -148,6 +160,8 @@ def main():
                     task_controller.close()
                     simulation_app.close()
                     cv2.destroyAllWindows()
+                    for t in _convert_threads:
+                        t.join()
                     break
                 task.reset()
                 

@@ -10,7 +10,7 @@ target_button_path: "/World/target_button"
 distractor_button1_path: "/World/distractor_button_1"
 distractor_button2_path: "/World/distractor_button_2"
 
-max_episodes: 100
+max_episodes: 50
 
 task:
   max_steps: 1000
