@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import cv2
-from datetime import datetime
 import json
 import h5py
 from concurrent.futures import ProcessPoolExecutor, Future
@@ -9,22 +8,82 @@ from typing import List, Optional
 from glob import glob
 from loguru import logger
 
+
+# ---------------------------------------------------------------------------
+# Init-state serialisation helpers
+# ---------------------------------------------------------------------------
+
+def _flatten_init_state(init_state: dict) -> dict:
+    """Convert the nested init_state dict produced by BaseTask into flat
+    numpy/string arrays suitable for HDF5 storage.
+
+    Input schema::
+
+        {
+            "object_poses":     {usd_path: {"position": [x,y,z], "orientation": [x,y,z,w]}},
+            "object_materials": {usd_path: material_usd_path},
+            "extra":            {arbitrary key-value pairs},
+            # legacy keys also accepted as-is
+        }
+
+    Output schema (flat, for HDF5)::
+
+        object_pose_paths         – vlen-str array of USD paths
+        object_pose_positions     – float32 [N, 3]
+        object_pose_orientations  – float32 [N, 4]
+        object_material_paths     – vlen-str array of object USD paths
+        object_material_values    – vlen-str array of material USD paths
+        init_extra_json           – JSON string for arbitrary extra data
+        (any other legacy float keys are stored as float32)
+    """
+    flat: dict = {}
+
+    # Object poses
+    poses = init_state.get("object_poses", {})
+    if poses:
+        paths = list(poses.keys())
+        flat["object_pose_paths"]        = paths
+        flat["object_pose_positions"]    = np.array([poses[p]["position"]    for p in paths], dtype="float32")
+        flat["object_pose_orientations"] = np.array([poses[p]["orientation"] for p in paths], dtype="float32")
+
+    # Object materials
+    materials = init_state.get("object_materials", {})
+    if materials:
+        flat["object_material_paths"]  = list(materials.keys())
+        flat["object_material_values"] = list(materials.values())
+
+    # Extra (task-specific) data as JSON
+    extra = init_state.get("extra", {})
+    if extra:
+        flat["init_extra_json"] = json.dumps(extra)
+
+    # Pass through any legacy float keys (robot_init_joint_positions, etc.)
+    legacy_skip = {"object_poses", "object_materials", "extra"}
+    for k, v in init_state.items():
+        if k not in legacy_skip and k not in flat:
+            flat[k] = v
+
+    return flat
+
+
 def _write_episode_data(episode_dir: str, episode_name: str,
-                       camera_data: dict, agent_pose_data: np.ndarray,
-                       actions_data: np.ndarray, task_properties: dict = None,
-                       language_instruction: Optional[str] = None, compression=None,
-                       init_state: Optional[dict] = None):
-    """Helper function to write episode data in a separate process
-    
+                        camera_data: dict, agent_pose_data: np.ndarray,
+                        actions_data: np.ndarray, task_properties: dict = None,
+                        language_instruction: Optional[str] = None, compression=None,
+                        init_state: Optional[dict] = None):
+    """Write one episode's data to an HDF5 file and camera videos.
+
     Args:
-        episode_dir: Path to the individual episode directory
-        episode_name: Name of the episode
-        camera_data: Dict of camera name to image data {name: [T, H, W, 3]}
-        agent_pose_data: Robot joint angles [T, num_joints]
-        actions_data: Robot actions [T, num_joints]
-        task_properties: Task unique properties dictionary
-        language_instruction: Language instruction for the task
-        compression: Compression method for image data, None for no compression
+        episode_dir: Path to the individual episode directory.
+        episode_name: Name of the episode (used as HDF5 file name).
+        camera_data: ``{name: ndarray [T, H, W, 3]}`` image sequences.
+        agent_pose_data: Robot joint angles ``[T, n_joints]``.
+        actions_data: Robot actions ``[T, n_joints]``.
+        task_properties: Arbitrary task-property dict (stored as JSON).
+        language_instruction: Natural-language instruction string.
+        compression: Image compression method (``None`` = no compression).
+        init_state: Episode initial state dict.  Accepts the nested format
+                    produced by :class:`BaseTask` or the legacy flat format.
     """
     os.makedirs(episode_dir, exist_ok=True)
     episode_path = os.path.join(episode_dir, f"{episode_name}.h5")
@@ -64,17 +123,29 @@ def _write_episode_data(episode_dir: str, episode_name: str,
                 dtype=h5py.special_dtype(vlen=str)
             )
 
-        # Store per-episode initial state for deterministic replay
+        # Store per-episode initial state for deterministic replay.
+        # Normalise nested format → flat before writing.
         if init_state:
+            flat = _flatten_init_state(init_state) if "object_poses" in init_state or "object_materials" in init_state else init_state
             grp = h5_file.create_group("init_state")
-            for key, val in init_state.items():
-                if key == "object_pose_paths":
+            _STR_KEYS = {
+                "object_pose_paths",
+                "object_material_paths",
+                "object_material_values",
+                "init_extra_json",
+            }
+            _FLOAT2D_KEYS = {"object_pose_positions", "object_pose_orientations"}
+            for key, val in flat.items():
+                if key in _STR_KEYS:
                     arr = np.array(val, dtype=object)
                     grp.create_dataset(key, data=arr, dtype=h5py.special_dtype(vlen=str))
-                elif key in ("object_pose_positions", "object_pose_orientations"):
+                elif key in _FLOAT2D_KEYS:
                     grp.create_dataset(key, data=np.asarray(val, dtype="float32"))
                 else:
-                    grp.create_dataset(key, data=np.array(val, dtype="float32"))
+                    try:
+                        grp.create_dataset(key, data=np.array(val, dtype="float32"))
+                    except Exception:
+                        pass  # skip non-serialisable legacy keys
 
     # Save each camera stream as an MP4 video
     for camera_name, image_data in camera_data.items():
@@ -145,17 +216,33 @@ class DataCollector:
         self.process_pool = ProcessPoolExecutor(max_workers=max_workers)
         self.pending_futures: List[Future] = []
     
-    def set_init_state(self, state: dict) -> None:
+    def set_init_state(self, init_state: dict) -> None:
         """Store the per-episode initial state for deterministic replay.
 
-        Should be called once per episode (on the first step) with:
-            state = {
-                'object_init_position':         np.ndarray [3],
-                'robot_init_joint_positions':   np.ndarray [n_joints],
-                'robot_world_position':         np.ndarray [3],
+        Accepts either the **nested** format produced by :class:`BaseTask`::
+
+            {
+                "object_poses":     {usd_path: {"position": ..., "orientation": ...}},
+                "object_materials": {usd_path: material_path},
+                "extra":            {...},
             }
+
+        or the legacy flat format used by older controllers.  Should be called
+        once per episode (typically on the first step).
         """
-        self.temp_init_state = dict(state)
+        self.temp_init_state = dict(init_state)
+
+    def set_init_state_from_step(self, state: dict) -> None:
+        """Convenience helper: extract and store ``init_state`` from a step dict.
+
+        Call this at the top of each controller's ``cache_step`` loop.  It is
+        idempotent – only the *first* call per episode takes effect.
+
+        Args:
+            state: Step state dict; must contain an ``'init_state'`` key.
+        """
+        if self.temp_init_state is None and "init_state" in state:
+            self.set_init_state(state["init_state"])
 
     def set_task_properties(self, properties: dict):
         """Set the unique task properties for the current episode

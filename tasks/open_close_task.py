@@ -1,94 +1,50 @@
-import numpy as np
+from isaacsim.core.utils.prims import set_prim_visibility
 from .single_object_task import SingleObjectTask
-from .base_task import BaseTask
+
 
 class OpenCloseTask(SingleObjectTask):
+    """Open-and-close task for doors and drawers.
+
+    Extends :class:`SingleObjectTask` to track both the furniture prim
+    (``current_obj_path``) and the handle sub-prim (``current_sub_obj_path``).
     """
-    A task class for robotic opening operations.
-    Manages door/drawer opening, material switching, and task state transitions.
-    """
-    
-    def __init__(self, cfg, world, stage, robot):
-        super().__init__(cfg, world, stage, robot)
-        
-    def reset(self):
-        """
-        Resets the task state.
-        Initializes robot position, updates materials, and places objects.
-        """
+
+    def reset(self) -> None:
         super().reset()
         self._set_sub_obj_path()
 
-    def _set_sub_obj_path(self):
-        """Derive the handle prim path from config or convention."""
+    def reset_with_init_state(self, init_state: dict) -> None:
+        """Restore scene from recorded init state and reconstruct path aliases."""
+        super().reset_with_init_state(init_state)
+        self._set_sub_obj_path()
+
+    def _set_sub_obj_path(self) -> None:
+        """Derive the handle prim path from config or naming convention."""
         if self.cfg.get("handle_path"):
             self.current_sub_obj_path = self.cfg.get("handle_path")
         else:
             self.current_sub_obj_path = self.current_obj_path + "/handle"
 
-    def reset_with_init_state(self, init_state: dict) -> None:
-        """Reset using a recorded initial state for deterministic replay.
-
-        Reproduces exactly the same scene configuration as when the episode
-        was originally collected using object_poses (usd_path -> position + quat).
-
-        Args:
-            init_state: Dict with 'object_poses', 'robot_init_joint_positions', 'robot_world_position'.
-        """
-        BaseTask.reset(self)
-        self.robot.initialize()
-        self.current_obj_path = self.place_objects_with_visibility_management(
-            self.current_obj_idx,
-            far_distance=10.0,
-        )
-        self._apply_init_state_poses(init_state)
-        self._set_sub_obj_path()
-        
     def step(self):
-        """
-        Executes one simulation step and returns current state.
-        
-        Returns:
-            dict: Current state dictionary containing:
-                - joint_positions: Robot joint positions
-                - object_position: Target object position
-                - object_size: Target object dimensions
-                - camera_data: Camera image data
-                - done: Whether episode is complete
-                - object_name: Name of current target object
-                - gripper_position: End effector position
-                - revolute_joint_position: Joint angle of the opening mechanism
-        """
         self.frame_idx += 1
-        
         if not self.check_frame_limits():
             return None
-        
-        # Get position and size of sub-object (handle)
+
         object_position = self.object_utils.get_geometry_center(object_path=self.current_sub_obj_path)
-        object_size = self.object_utils.get_object_size(object_path=self.current_sub_obj_path)
-        
-        # Get close_gripper_distance from current object config
-        close_gripper_distance = self.obj_configs[self.current_obj_idx].get('close_gripper_distance', 0.023)
-        
+        object_size     = self.object_utils.get_object_size(object_path=self.current_sub_obj_path)
+        close_gripper_distance = self.obj_configs[self.current_obj_idx].get("close_gripper_distance", 0.023)
+
+        additional = {
+            "object_position":    object_position,
+            "object_size":        object_size,
+            "close_gripper_distance": close_gripper_distance,
+        }
         if self.cfg.task.get("operate_type") == "door":
-            return self.get_basic_state_info(
-                object_path=self.current_obj_path,
-                additional_info={
-                    'object_position': object_position,
-                    'object_size': object_size,
-                    'revolute_joint_position': self.object_utils.get_revolute_joint_positions(
-                        joint_path=self.current_obj_path+"/RevoluteJoint"
-                    ),
-                    'close_gripper_distance': close_gripper_distance
-                }
+            additional["revolute_joint_position"] = self.object_utils.get_revolute_joint_positions(
+                joint_path=self.current_obj_path + "/RevoluteJoint"
             )
-        else:
-            return self.get_basic_state_info(
-                object_path=self.current_obj_path,
-                additional_info={
-                    'object_position': object_position,
-                    'object_size': object_size,
-                    'close_gripper_distance': close_gripper_distance
-                }
-            )
+
+        return self.get_basic_state_info(
+            object_path=self.current_obj_path,
+            additional_info=additional,
+        )

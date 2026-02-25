@@ -198,34 +198,72 @@ class BaseController(ABC):
     def get_current_init_state(self) -> Optional[dict]:
         """Return the init_state dict for the current replay episode.
 
-        Called by main.py so it can pass the recorded state to
-        task.reset_with_init_state() instead of task.reset().
+        Reconstructs the nested format expected by ``task.reset_with_init_state()``
+        from the flat HDF5 representation stored during collection::
+
+            {
+                "object_poses":                  {usd_path: {"position": ..., "orientation": ...}},
+                "object_materials":              {usd_path: material_path},
+                "extra":                         {...},
+                "robot_init_joint_positions":    ndarray,
+                "robot_world_position":          ndarray,
+            }
 
         Returns:
-            Dict with 'object_poses', 'robot_init_joint_positions',
-            'robot_world_position'; or None if unavailable.
+            Reconstructed dict, or ``None`` if no init state is available.
         """
         if not hasattr(self, "_current_init_state") or self._current_init_state is None:
             return None
         raw = self._current_init_state
-        out = {
+
+        out: dict = {
+            "object_poses":               {},
+            "object_materials":           {},
+            "extra":                      {},
             "robot_init_joint_positions": raw.get("robot_init_joint_positions"),
-            "robot_world_position": raw.get("robot_world_position"),
+            "robot_world_position":       raw.get("robot_world_position"),
         }
+
+        # ---- Reconstruct object poses ----------------------------------------
         if "object_pose_paths" in raw and "object_pose_positions" in raw and "object_pose_orientations" in raw:
             paths = raw["object_pose_paths"]
             if hasattr(paths, "tolist"):
                 paths = paths.tolist()
             if np.isscalar(paths) or (isinstance(paths, np.ndarray) and paths.ndim == 0):
                 paths = [paths]
-            if isinstance(paths, np.ndarray):
-                paths = [p.decode("utf-8") if isinstance(p, bytes) else str(p) for p in paths]
-            positions = np.atleast_2d(raw["object_pose_positions"])
+            paths = [p.decode("utf-8") if isinstance(p, bytes) else str(p) for p in paths]
+            positions    = np.atleast_2d(raw["object_pose_positions"])
             orientations = np.atleast_2d(raw["object_pose_orientations"])
             out["object_poses"] = {
                 path: {"position": np.array(positions[i]), "orientation": np.array(orientations[i])}
                 for i, path in enumerate(paths)
             }
+
+        # ---- Reconstruct object materials ------------------------------------
+        if "object_material_paths" in raw and "object_material_values" in raw:
+            mat_paths  = raw["object_material_paths"]
+            mat_values = raw["object_material_values"]
+
+            def _decode(arr):
+                if isinstance(arr, np.ndarray):
+                    return [v.decode("utf-8") if isinstance(v, bytes) else str(v) for v in arr]
+                return list(arr)
+
+            out["object_materials"] = dict(zip(_decode(mat_paths), _decode(mat_values)))
+
+        # ---- Reconstruct extra (task-specific) data --------------------------
+        if "init_extra_json" in raw:
+            import json
+            try:
+                extra_json = raw["init_extra_json"]
+                if isinstance(extra_json, np.ndarray):
+                    extra_json = extra_json.item()
+                if isinstance(extra_json, bytes):
+                    extra_json = extra_json.decode("utf-8")
+                out["extra"] = json.loads(extra_json)
+            except Exception:
+                pass
+
         return out
 
     def _step_replay(self, state) -> Tuple[Any, bool, bool]:

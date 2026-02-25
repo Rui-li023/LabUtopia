@@ -1,67 +1,72 @@
 import numpy as np
 from .base_task import BaseTask
 
+
 class CleanBeakerTask(BaseTask):
+    """Multi-object beaker cleaning task.
+
+    Fixed scene objects (paths are hardcoded to match the lab USD):
+    - ``target_beaker``: the beaker being cleaned (primary object)
+    - ``beaker_1``, ``beaker_2``: dirty beakers placed randomly
+    - ``plat_1``, ``plat_2``: target platforms
+
+    4000-step episode budget.
+    """
+
+    TARGET_BEAKER = "/World/target_beaker"
+    BEAKER_1      = "/World/beaker_hard_1"
+    BEAKER_2      = "/World/beaker_hard_2"
+    PLAT_1        = "/World/target_plat_1"
+    PLAT_2        = "/World/target_plat_2"
+
     def __init__(self, cfg, world, stage, robot):
         super().__init__(cfg, world, stage, robot)
         self.world.reset()
-            
-    def reset(self):
+
+    def reset(self) -> None:
         super().reset()
         self.robot.initialize()
-        
-        self.target_beaker = "/World/target_beaker"
 
-        self.beaker_1 = "/World/beaker_hard_1"
-        self.beaker_2 = "/World/beaker_hard_2"
+        b1_pos = np.array([
+            np.random.uniform(0.20, 0.25),
+            np.random.uniform(-0.10, -0.05),
+            0.77,
+        ])
+        self.object_utils.set_object_position(self.BEAKER_1, b1_pos)
+        self._record_object_pose(self.BEAKER_1)
 
-        self.plat_1 = "/World/target_plat_1"
-        self.plat_2 = "/World/target_plat_2"
+        p1_pos = b1_pos + np.array([0.03, 0.0, -0.057])
+        self.object_utils.set_object_position(self.PLAT_1, p1_pos)
+        self._record_object_pose(self.PLAT_1)
 
-        beaker_1_position = np.array([np.random.uniform(0.20, 0.25), np.random.uniform(-0.05, -0.1), 0.77])
-        self.object_utils.set_object_position(object_path=self.beaker_1, position=beaker_1_position)
+        b2_pos = np.array([
+            np.random.uniform(0.20, 0.25),
+            np.random.uniform(0.20, 0.25),
+            0.77,
+        ])
+        self.object_utils.set_object_position(self.BEAKER_2, b2_pos)
+        self._record_object_pose(self.BEAKER_2)
 
-        plat_1_position = beaker_1_position + [0.03, 0, -0.057]
-        self.object_utils.set_object_position(object_path=self.plat_1, position=plat_1_position)
+        p2_pos = np.array([0.056, np.random.uniform(0.27, 0.32), 0.713])
+        self.object_utils.set_object_position(self.PLAT_2, p2_pos)
+        self._record_object_pose(self.PLAT_2)
 
-        beaker_2_position = np.array([np.random.uniform(0.20, 0.25), np.random.uniform(0.20, 0.25), 0.77])
-        self.object_utils.set_object_position(object_path=self.beaker_2, position=beaker_2_position)
+    def reset_with_init_state(self, init_state: dict) -> None:
+        super().reset_with_init_state(init_state)
 
-        plat_2_position = np.array([0.056, np.random.uniform(0.27, 0.32), 0.713])
-        self.object_utils.set_object_position(object_path=self.plat_2, position=plat_2_position)
-            
     def step(self):
         self.frame_idx += 1
-
         if not self.check_frame_limits(max_steps=4000):
             return None
-        
-        joint_positions = self.robot.get_joint_positions()
 
-        beaker_1_position = self.object_utils.get_geometry_center(object_path=self.beaker_1)
-        beaker_2_position = self.object_utils.get_geometry_center(object_path=self.beaker_2)
-
-        plat_1_position = self.object_utils.get_geometry_center(object_path=self.plat_1)
-        plat_2_position = self.object_utils.get_geometry_center(object_path=self.plat_2)
-
-        target_size = self.object_utils.get_object_size(object_path=self.target_beaker)
-        target_position = self.object_utils.get_geometry_center(object_path=self.target_beaker)
-        
-        camera_data, camera_display = self.get_camera_data()
-                
-        return {
-            'joint_positions': joint_positions,
-            'target_size': target_size,
-            'target_position': target_position,
-            'target_name': self.target_beaker,
-            'beaker_1_position': beaker_1_position,
-            'beaker_2_position': beaker_2_position,
-            'plat_1_position': plat_1_position,
-            'plat_2_position': plat_2_position,
-            'camera_data': camera_data,
-            'camera_display': camera_display,
-            'beaker_2': self.beaker_2,
-            'beaker_1': self.beaker_1,
-            'done': self.reset_needed,
-            'gripper_position': self.robot.get_gripper_position(),
-        }
+        return self.get_basic_state_info(
+            object_path=self.TARGET_BEAKER,
+            additional_info={
+                "beaker_1_position": self.object_utils.get_geometry_center(self.BEAKER_1),
+                "beaker_2_position": self.object_utils.get_geometry_center(self.BEAKER_2),
+                "plat_1_position":   self.object_utils.get_geometry_center(self.PLAT_1),
+                "plat_2_position":   self.object_utils.get_geometry_center(self.PLAT_2),
+                "beaker_1":          self.BEAKER_1,
+                "beaker_2":          self.BEAKER_2,
+            },
+        )
