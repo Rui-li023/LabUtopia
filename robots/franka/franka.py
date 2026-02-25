@@ -184,6 +184,7 @@ class Franka(Robot):
             set_joint_positions_func=self.set_joint_positions,
             dof_names=self.dof_names,
         )
+        self.set_joint_positions(self._default_joint_positions)
         return
 
     def post_reset(self) -> None:
