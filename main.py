@@ -1,6 +1,16 @@
 import os
+import sys
 import argparse
+from loguru import logger
 from isaacsim import SimulationApp
+
+logger.remove()
+logger.add(
+    sys.stdout,
+    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+    colorize=True,
+    level="DEBUG",
+)
 
 # Parse command line arguments
 def parse_args():
@@ -60,7 +70,7 @@ def _convert_to_h264(src_path: str, is_success: bool):
     else:
         tmp_path = src_path + ".failure.h264.tmp.mp4"
         dest_path = src_path.replace(".mp4", "_failure.mp4")
-    print(src_path)
+    logger.info(f"Converting video to H264: {src_path}")
     ret = subprocess.run(
         [
             "ffmpeg", "-y", "-i", src_path,
@@ -75,7 +85,9 @@ def _convert_to_h264(src_path: str, is_success: bool):
     if ret.returncode == 0:
         os.replace(tmp_path, dest_path)
         os.remove(src_path)
+        logger.success(f"Video saved: {dest_path}")
     else:
+        logger.error(f"H264 conversion failed for: {src_path}")
         try:
             os.remove(tmp_path)
         except FileNotFoundError:
@@ -97,6 +109,7 @@ def main():
     cfg = hydra.compose(config_name=args.config_name)
     os.makedirs(cfg.multi_run.run_dir, exist_ok=True)
     OmegaConf.save(cfg, cfg.multi_run.run_dir + "/config.yaml")
+    logger.info(f"Config loaded: {args.config_name}, run dir: {cfg.multi_run.run_dir}")
 
     # Set backend based on command line arguments
     if args.backend == 'gpu':
@@ -118,6 +131,7 @@ def main():
     if hasattr(cfg.robot, "default_joint_positions"):
         robot_kwargs["default_joint_positions"] = np.array(cfg.robot.default_joint_positions)
     robot = create_robot(cfg.robot.type, **robot_kwargs)
+    logger.info(f"Robot created: {cfg.robot.type}")
     
     stage = omni.usd.get_context().get_stage()
     add_reference_to_stage(usd_path=os.path.abspath(cfg.usd_path), prim_path="/World")
@@ -154,17 +168,31 @@ def main():
                     release_and_convert(video_writer, video_output_path, is_success)
                     video_writer = None
                     video_output_path = None
-                           
+
                 task_controller.reset()
-                if task_controller.episode_num() >= cfg.max_episodes:
+
+                # Determine how many episodes to run depending on mode
+                if cfg.mode == "replay":
+                    max_episodes = len(task_controller._replay_loader)
+                else:
+                    max_episodes = cfg.max_episodes
+
+                if task_controller.episode_num() >= max_episodes:
+                    logger.info(f"All {max_episodes} episodes completed. Shutting down.")
                     task_controller.close()
                     simulation_app.close()
                     cv2.destroyAllWindows()
                     for t in _convert_threads:
                         t.join()
                     break
-                task.reset()
-                
+
+                # In replay mode restore the exact recorded scene; otherwise reset randomly
+                if cfg.mode == "replay":
+                    init_state = task_controller.get_current_init_state()
+                    task.reset_with_init_state(init_state)
+                else:
+                    task.reset()
+
                 continue
                 
             state = task.step()
@@ -175,6 +203,10 @@ def main():
             if action is not None:
                 robot.get_articulation_controller().apply_action(action)
             if done:
+                if is_success:
+                    logger.success(f"Episode {task_controller.episode_num()} succeeded.")
+                else:
+                    logger.warning(f"Episode {task_controller.episode_num()} failed.")
                 task_controller.print_failure_reason()
                 task.on_task_complete(is_success)
                 continue

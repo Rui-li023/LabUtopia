@@ -3,14 +3,19 @@ name: Level2_ShakeBeaker
 task_type: "shake"
 controller_type: "shakebeaker"
 
-mode: "collect"
-
+mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_003/lab_003.usd"
-obj_path: "/World/beaker_2"  
+obj_path: "/World/beaker_2"
 sub_obj_path: "/World/beaker_2/mesh"
-
-
 max_episodes: 50
+
+# ── Replay mode ─────────────────────────────────────────────────────────────
+# Set mode: "replay" above to activate.
+# dataset_path: root dataset directory that contains episode_XXXX sub-folders.
+# episode_indices (optional): list of episode indices to replay; omit to replay all.
+replay:
+  dataset_path: ""
+  # episode_indices: [0, 1, 2]
 
 infer:
   type: "local"
@@ -56,7 +61,7 @@ robot:
 
 collector:
   type: "default"
-  compression: gzip  
+  compression: gzip
 
 hydra:
   run:

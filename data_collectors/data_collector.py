@@ -7,11 +7,13 @@ import h5py
 from concurrent.futures import ProcessPoolExecutor, Future
 from typing import List, Optional
 from glob import glob
+from loguru import logger
 
-def _write_episode_data(episode_dir: str, episode_name: str, 
-                       camera_data: dict, agent_pose_data: np.ndarray, 
+def _write_episode_data(episode_dir: str, episode_name: str,
+                       camera_data: dict, agent_pose_data: np.ndarray,
                        actions_data: np.ndarray, task_properties: dict = None,
-                       language_instruction: Optional[str] = None, compression=None):
+                       language_instruction: Optional[str] = None, compression=None,
+                       init_state: Optional[dict] = None):
     """Helper function to write episode data in a separate process
     
     Args:
@@ -26,7 +28,7 @@ def _write_episode_data(episode_dir: str, episode_name: str,
     """
     os.makedirs(episode_dir, exist_ok=True)
     episode_path = os.path.join(episode_dir, f"{episode_name}.h5")
-    print(f"[DataCollector] Writing episode {episode_name} to {episode_dir}")
+    logger.info(f"Writing episode {episode_name} to {episode_dir}")
     
     with h5py.File(episode_path, 'w') as h5_file:
         
@@ -62,10 +64,22 @@ def _write_episode_data(episode_dir: str, episode_name: str,
                 dtype=h5py.special_dtype(vlen=str)
             )
 
+        # Store per-episode initial state for deterministic replay
+        if init_state:
+            grp = h5_file.create_group("init_state")
+            for key, val in init_state.items():
+                if key == "object_pose_paths":
+                    arr = np.array(val, dtype=object)
+                    grp.create_dataset(key, data=arr, dtype=h5py.special_dtype(vlen=str))
+                elif key in ("object_pose_positions", "object_pose_orientations"):
+                    grp.create_dataset(key, data=np.asarray(val, dtype="float32"))
+                else:
+                    grp.create_dataset(key, data=np.array(val, dtype="float32"))
+
     # Save each camera stream as an MP4 video
     for camera_name, image_data in camera_data.items():
         if image_data.ndim != 4:
-            print(f"camera_data {camera_name} has wrong shape: {image_data.shape}")
+            logger.warning(f"camera_data {camera_name} has wrong shape: {image_data.shape}")
             continue
         elif image_data.shape[-1] != 3 and image_data.shape[1] == 3:
             image_data = image_data.transpose(0, 2, 3, 1)
@@ -76,17 +90,16 @@ def _write_episode_data(episode_dir: str, episode_name: str,
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             writer = cv2.VideoWriter(video_path, fourcc, 30, (W, H))
             if not writer.isOpened():
-                print(f"[DataCollector] Failed to open VideoWriter for {video_path}", flush=True)
+                logger.error(f"Failed to open VideoWriter for {video_path}")
                 continue
             writer.set(cv2.VIDEOWRITER_PROP_QUALITY, 95)
             for frame in image_data:
                 writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
             writer.release()
-            print(f"[DataCollector] Saved video {video_path}", flush=True)
         except Exception as e:
-            print(f"[DataCollector] Error saving video {video_path}: {e}")
+            logger.error(f"Error saving video {video_path}: {e}")
     
-    print(f"[DataCollector] Finished writing episode {episode_name}")
+    logger.info(f"Finished writing episode {episode_name}")
 
 class DataCollector:
     def __init__(self, camera_configs: List[dict], save_dir="output", 
@@ -126,11 +139,24 @@ class DataCollector:
         self.temp_actions = []
         self.temp_language_instruction = None
         self.temp_task_properties = {}
-        
+        self.temp_init_state: Optional[dict] = None
+
         # Initialize process pool and tracking variables
         self.process_pool = ProcessPoolExecutor(max_workers=max_workers)
         self.pending_futures: List[Future] = []
     
+    def set_init_state(self, state: dict) -> None:
+        """Store the per-episode initial state for deterministic replay.
+
+        Should be called once per episode (on the first step) with:
+            state = {
+                'object_init_position':         np.ndarray [3],
+                'robot_init_joint_positions':   np.ndarray [n_joints],
+                'robot_world_position':         np.ndarray [3],
+            }
+        """
+        self.temp_init_state = dict(state)
+
     def set_task_properties(self, properties: dict):
         """Set the unique task properties for the current episode
         
@@ -206,7 +232,8 @@ class DataCollector:
             actions_data,
             self.temp_task_properties,
             self.temp_language_instruction,
-            self.compression
+            self.compression,
+            self.temp_init_state,
         )
         self.pending_futures.append(future)
 
@@ -227,6 +254,7 @@ class DataCollector:
         self.temp_actions = []
         self.temp_language_instruction = None
         self.temp_task_properties = {}
+        self.temp_init_state = None
         
         # Increment episode count
         self.episode_count += 1
@@ -239,6 +267,7 @@ class DataCollector:
         self.temp_actions = []
         self.temp_language_instruction = None
         self.temp_task_properties = {}
+        self.temp_init_state = None
         self.task_instructions = None
         
     def close(self, merge=False):
@@ -255,7 +284,7 @@ class DataCollector:
             episode_files = sorted(glob(os.path.join(self.session_dir, "episode_*", "episode_*.h5")))
             
             if not episode_files:
-                print("No episodes to merge")
+                logger.warning("No episodes to merge")
                 return
                 
             with h5py.File(merged_path, 'w') as merged_file:
@@ -273,4 +302,4 @@ class DataCollector:
                     # Remove individual episode file after merging
                     os.remove(episode_path)
             os.rename(merged_path, os.path.join(self.session_dir, "episode_data.hdf5"))
-            print(f"Successfully merged {len(episode_files)} episodes into {merged_path}")
+            logger.success(f"Successfully merged {len(episode_files)} episodes into {merged_path}")

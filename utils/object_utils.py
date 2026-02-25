@@ -2,6 +2,7 @@ from pxr import Usd, UsdGeom, Gf, UsdPhysics
 from isaacsim.core.utils.stage import get_stage_units
 import numpy as np
 from isaacsim.core.utils.numpy.rotations import euler_angles_to_quats
+from scipy.spatial.transform import Rotation as R
 class ObjectUtils:
     _instance = None
 
@@ -96,9 +97,9 @@ class ObjectUtils:
         xformable = UsdGeom.Xformable(prim)
         xform_ops = xformable.GetOrderedXformOps()
         if local_position is not None and position_offset is not None:
-            new_position = Gf.Vec3d(*(local_position + position_offset))
+            new_position = Gf.Vec3d(*(local_position + position_offset).astype(np.float64))
         else:
-            new_position = Gf.Vec3d(*position)
+            new_position = Gf.Vec3d(*np.asarray(position, dtype=np.float64))
 
         if xform_ops:
             xform_ops[0].Set(new_position)
@@ -147,6 +148,66 @@ class ObjectUtils:
             quat = np.array([quat[1], quat[2], quat[3], quat[0]])
             
         return np.array([quat[3], quat[0], quat[1], quat[2]]) if w_first else quat
+
+    def get_world_pose(self, object_path: str) -> dict:
+        """Get world-space position and orientation (quaternion) for the object.
+
+        Returns:
+            dict: {"position": np.ndarray (3,), "orientation": np.ndarray (4,) [x,y,z,w]}
+                  or None if prim invalid.
+        """
+        prim = self._stage.GetPrimAtPath(object_path)
+        if not prim.IsValid():
+            print(f"Object at path {object_path} not found.")
+            return None
+        xformable = UsdGeom.Xformable(prim)
+        transform = xformable.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+        position = np.array(transform.ExtractTranslation())
+        rot_matrix = np.array([
+            [transform[0][0], transform[0][1], transform[0][2]],
+            [transform[1][0], transform[1][1], transform[1][2]],
+            [transform[2][0], transform[2][1], transform[2][2]],
+        ])
+        quat = R.from_matrix(rot_matrix).as_quat()
+        return {"position": position, "orientation": quat}
+
+    def set_world_pose(self, object_path: str, position: np.ndarray, orientation: np.ndarray) -> None:
+        """Set the object's local position and orientation (used for restoration when parent is identity).
+
+        Args:
+            object_path: USD path to the prim.
+            position: (3,) world position.
+            orientation: (4,) quaternion [x, y, z, w] in scipy format.
+        """
+        prim = self._stage.GetPrimAtPath(object_path)
+        if not prim.IsValid():
+            print(f"Object at path {object_path} not found.")
+            return
+        xformable = UsdGeom.Xformable(prim)
+        xform_ops = xformable.GetOrderedXformOps()
+        pos_vec = Gf.Vec3d(*np.asarray(position, dtype=np.float64))
+        quat = np.asarray(orientation, dtype=np.float64)
+        if len(quat) == 4 and (quat[3] >= -1.1 and quat[3] <= 1.1):
+            rot = Gf.Quatd(quat[3], quat[0], quat[1], quat[2])
+        else:
+            rot = Gf.Quatd(1, 0, 0, 0)
+        for op in xform_ops:
+            op_name = op.GetOpType()
+            if op_name == UsdGeom.XformOp.TypeTranslate:
+                op.Set(pos_vec)
+                break
+        else:
+            xformable.AddTranslateOp().Set(pos_vec)
+        for op in xform_ops:
+            op_name = op.GetOpType()
+            if op_name == UsdGeom.XformOp.TypeOrient:
+                op.Set(rot)
+                return
+            if op_name == UsdGeom.XformOp.TypeRotateXYZ:
+                euler = R.from_quat(quat).as_euler("xyz", degrees=True)
+                op.Set(Gf.Vec3f(*euler))
+                return
+        xformable.AddOrientOp().Set(rot)
         
     def get_revolute_joint_positions(self, joint_path: str) -> np.ndarray:
         joint_prim = self._stage.GetPrimAtPath(joint_path)

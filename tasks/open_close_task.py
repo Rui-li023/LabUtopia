@@ -1,4 +1,6 @@
+import numpy as np
 from .single_object_task import SingleObjectTask
+from .base_task import BaseTask
 
 class OpenCloseTask(SingleObjectTask):
     """
@@ -15,12 +17,32 @@ class OpenCloseTask(SingleObjectTask):
         Initializes robot position, updates materials, and places objects.
         """
         super().reset()
-        
-        # Set sub-object path (handle)
+        self._set_sub_obj_path()
+
+    def _set_sub_obj_path(self):
+        """Derive the handle prim path from config or convention."""
         if self.cfg.get("handle_path"):
             self.current_sub_obj_path = self.cfg.get("handle_path")
         else:
             self.current_sub_obj_path = self.current_obj_path + "/handle"
+
+    def reset_with_init_state(self, init_state: dict) -> None:
+        """Reset using a recorded initial state for deterministic replay.
+
+        Reproduces exactly the same scene configuration as when the episode
+        was originally collected using object_poses (usd_path -> position + quat).
+
+        Args:
+            init_state: Dict with 'object_poses', 'robot_init_joint_positions', 'robot_world_position'.
+        """
+        BaseTask.reset(self)
+        self.robot.initialize()
+        self.current_obj_path = self.place_objects_with_visibility_management(
+            self.current_obj_idx,
+            far_distance=10.0,
+        )
+        self._apply_init_state_poses(init_state)
+        self._set_sub_obj_path()
         
     def step(self):
         """

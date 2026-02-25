@@ -56,7 +56,7 @@ class CloseTaskController(BaseController):
             name="trajectory_controller",
             robot_articulation=robot
         )
-        
+
         self.inference_engine = InferenceEngineFactory.create_inference_engine(
             cfg, self.trajectory_controller
         )
@@ -67,8 +67,34 @@ class CloseTaskController(BaseController):
         self.initial_handle_position = None
         if self.mode == "collect":
             self.close_controller.reset()
-        else:
+        elif self.mode == "infer":
             self.inference_engine.reset()
+
+    def _get_object_poses_for_init(self, state) -> dict:
+        """Build kv dict: usd_path -> {position: xyz, orientation: quat} for restoration."""
+        object_path = state["object_path"]
+        handle_path = self.cfg.task.get("handle_path") or (object_path + "/handle")
+        paths = [object_path, handle_path]
+        object_poses = {}
+        for path in paths:
+            pose = self.object_utils.get_world_pose(path)
+            if pose is not None:
+                object_poses[path] = {
+                    "position": np.array(pose["position"], dtype=np.float32),
+                    "orientation": np.array(pose["orientation"], dtype=np.float32),
+                }
+        return object_poses
+
+    def _object_poses_to_flat(self, object_poses: dict) -> dict:
+        """Flatten object_poses for HDF5: paths list, positions (N,3), orientations (N,4)."""
+        paths = list(object_poses.keys())
+        positions = np.array([object_poses[p]["position"] for p in paths], dtype=np.float32)
+        orientations = np.array([object_poses[p]["orientation"] for p in paths], dtype=np.float32)
+        return {
+            "object_pose_paths": paths,
+            "object_pose_positions": positions,
+            "object_pose_orientations": orientations,
+        }
 
     def step(self, state):
         """Executes one step of the task based on the current state.
@@ -81,11 +107,21 @@ class CloseTaskController(BaseController):
         """
         self.state = state
         if self.initial_handle_position is None:
-            self.initial_handle_position = state['object_position']
+            self.initial_handle_position = np.array(state["object_position"], dtype=np.float32)
+            if self.mode == "collect":
+                object_poses = self._get_object_poses_for_init(state)
+                flat = self._object_poses_to_flat(object_poses)
+                self.data_collector.set_init_state({
+                    "robot_init_joint_positions": state["joint_positions"],
+                    "robot_world_position": np.array(self.robot.get_world_pose()[0], dtype=np.float32),
+                    **flat,
+                })
         if self.mode == "collect":
             return self._step_collect(state)
-        else:
+        elif self.mode == "infer":
             return self._step_infer(state)
+        else:
+            return self._step_replay(state)
 
     def _step_collect(self, state):
         """Executes a step in collect mode using the close controller.

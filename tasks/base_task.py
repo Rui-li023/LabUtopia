@@ -268,14 +268,17 @@ class BaseTask(ABC):
         self.object_utils.set_object_position(object_path=obj_path, position=position)
         return position
     
-    def place_objects_with_visibility_management(self, current_obj_idx: int, far_distance: float = 10.0) -> str:
+    def place_objects_with_visibility_management(self, current_obj_idx: int, far_distance: float = 10.0,
+                                                  fixed_position: np.ndarray = None) -> str:
         """
         Place objects and manage visibility, move non-current objects to far distance.
-        
+
         Args:
             current_obj_idx: Index of current object
             far_distance: Far distance where non-current objects are placed
-            
+            fixed_position: When provided, place the current object at this exact position
+                            instead of sampling a random one.  Used for deterministic replay.
+
         Returns:
             str: Path of current object
         """
@@ -283,10 +286,15 @@ class BaseTask(ABC):
             obj_path = obj_config['path']
             position_range = obj_config['position_range']
             prim = self.stage.GetPrimAtPath(obj_path)
-            
+
             if prim.IsValid():
                 if i == current_obj_idx:
-                    self.randomize_object_position(obj_path, position_range)
+                    if fixed_position is not None:
+                        self.object_utils.set_object_position(
+                            object_path=obj_path, position=np.array(fixed_position)
+                        )
+                    else:
+                        self.randomize_object_position(obj_path, position_range)
                     set_prim_visibility(prim, True)
                 else:
                     # Move non-current objects to far distance
@@ -298,8 +306,34 @@ class BaseTask(ABC):
                     ])
                     self.object_utils.set_object_position(object_path=obj_path, position=far_position)
                     set_prim_visibility(prim, False)
-        
+
         return self.obj_configs[current_obj_idx]['path']
+
+    def reset_with_init_state(self, init_state: dict) -> None:
+        """Reset the task using a recorded initial state instead of random sampling.
+
+        Subclasses should override this to restore the exact scene configuration
+        that was recorded during data collection.  The default implementation
+        falls back to a normal (random) reset so tasks that do not yet support
+        deterministic replay still work without errors.
+
+        Args:
+            init_state: Dictionary produced by the controller containing
+                        'object_poses' (k=usd_path, v={position, orientation}),
+                        'robot_init_joint_positions', 'robot_world_position'.
+        """
+        self.reset()
+
+    def _apply_init_state_poses(self, init_state: dict) -> None:
+        """Restore object poses from init_state['object_poses'] (usd_path -> position + quat)."""
+        if not init_state or "object_poses" not in init_state:
+            return
+        for path, pose in init_state["object_poses"].items():
+            self.object_utils.set_world_pose(
+                path,
+                np.asarray(pose["position"]),
+                np.asarray(pose["orientation"]),
+            )
     
     def get_basic_state_info(self, joint_positions: np.ndarray = None, object_path: str = None, 
                            target_path: str = None, additional_info: Dict[str, Any] = None) -> Dict[str, Any]:

@@ -1,4 +1,5 @@
 from .single_object_task import SingleObjectTask
+from .base_task import BaseTask
 
 class CloseTask(SingleObjectTask):
     """
@@ -15,13 +16,26 @@ class CloseTask(SingleObjectTask):
         Initializes robot position, updates materials, and places objects.
         """
         super().reset()
-        
-        # Set sub-object path (handle)
+        self._set_sub_obj_path()
+
+    def _set_sub_obj_path(self):
+        """Set sub-object path (handle) from config or convention."""
         if self.cfg.get("handle_path"):
             self.current_sub_obj_path = self.cfg.get("handle_path")
         else:
             self.current_sub_obj_path = self.current_obj_path + "/handle"
-        
+
+    def reset_with_init_state(self, init_state: dict) -> None:
+        """Reset using recorded initial state; restore poses from object_poses (usd_path -> position + quat)."""
+        BaseTask.reset(self)
+        self.robot.initialize()
+        self.current_obj_path = self.place_objects_with_visibility_management(
+            self.current_obj_idx,
+            far_distance=10.0,
+        )
+        self._apply_init_state_poses(init_state)
+        self._set_sub_obj_path()
+
     def step(self):
         """
         Executes one simulation step and returns current state.

@@ -2,16 +2,22 @@ name: Level3_press
 
 task_type: "press"
 controller_type: "press"
-mode: "collect"  # "collect" or "infer"
 
+mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_003/lab_003.usd"
-
 instrument_path: "/World/instrument"
 target_button_path: "/World/target_button"
 distractor_button1_path: "/World/distractor_button_1"
 distractor_button2_path: "/World/distractor_button_2"
-
 max_episodes: 50
+
+# ── Replay mode ─────────────────────────────────────────────────────────────
+# Set mode: "replay" above to activate.
+# dataset_path: root dataset directory that contains episode_XXXX sub-folders.
+# episode_indices (optional): list of episode indices to replay; omit to replay all.
+replay:
+  dataset_path: ""
+  # episode_indices: [0, 1, 2]
 
 task:
   material_paths:
@@ -54,7 +60,7 @@ cameras:
     resolution: [256, 256]
     focal_length: 6
     orientation: [0.72889, 0.68336, -0.02857, -0.03028]
-    image_type: "rgb" 
+    image_type: "rgb"
 
   - prim_path: "/World/Camera2"
     name: "camera_2"
@@ -75,7 +81,7 @@ robot:
 
 collector:
   type: "default"
-  compression: gzip  
+  compression: gzip
 
 hydra:
   run:

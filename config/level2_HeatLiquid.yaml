@@ -3,12 +3,18 @@ name: Level2_HeatLiquid
 task_type: "placepress"
 controller_type: "placepress"
 
-mode: "collect"
-
+mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_003/lab_003.usd"
 target_path: "/World/beaker1"
-
 max_episodes: 50
+
+# ── Replay mode ─────────────────────────────────────────────────────────────
+# Set mode: "replay" above to activate.
+# dataset_path: root dataset directory that contains episode_XXXX sub-folders.
+# episode_indices (optional): list of episode indices to replay; omit to replay all.
+replay:
+  dataset_path: ""
+  # episode_indices: [0, 1, 2]
 
 infer:
   type: "local"
@@ -69,7 +75,7 @@ cameras:
     resolution: [256, 256]
     focal_length: 5
     orientation: [0.61237, 0.35355, 0.35355, 0.61237]
-    image_type: "rgb" 
+    image_type: "rgb"
 
   - prim_path: "/World/Camera2"
     name: "camera_2"
@@ -78,19 +84,19 @@ cameras:
     focal_length: 5
     orientation: [0.70711, 0, 0, -0.70711]
     image_type: "rgb"
-    
+
   - prim_path: "/World/Franka/panda_hand/arm_camera"
     name: "camera_3"
     resolution: [256, 256]
     image_type: "rgb"
-    
+
 robot:
   type: "franka"
   position: [-0.4, -0, 0.71]
 
 collector:
   type: "default"
-  compression: gzip  
+  compression: gzip
 
 hydra:
   run:

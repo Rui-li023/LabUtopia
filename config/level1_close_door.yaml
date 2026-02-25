@@ -3,9 +3,17 @@ name: Level1_close_door
 task_type: "openclose"
 controller_type: "close"
 
-mode: "collect" # "collect", "infer" or "replay"
+mode: "replay"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
-max_episodes: 50
+max_episodes: 10
+
+# ── Replay mode ─────────────────────────────────────────────────────────────
+# Set mode: "replay" above to activate.
+# dataset_path: root dataset directory that contains episode_XXXX sub-folders.
+# episode_indices (optional): list of episode indices to replay; omit to replay all.
+replay:
+  dataset_path: "/home/ubuntu/Documents/LabUtopia/outputs/collect/2026.02.25/16.28.22_Level1_close_door/dataset"
+  # episode_indices: [0, 1, 2]
 
 infer:
   type: "local"
@@ -45,7 +53,7 @@ cameras:
     focal_length: 4
     orientation: [0.69035, 0.15304, -0.15304, -0.69035]
     image_type: "rgb"
-    
+
   - prim_path: "/World/Franka/panda_hand/arm_camera"
     name: "camera_3"
     resolution: [256, 256]
