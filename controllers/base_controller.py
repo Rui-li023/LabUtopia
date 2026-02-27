@@ -158,6 +158,11 @@ class BaseController(ABC):
             self._current_init_state = ep.init_state
             logger.info(f"Episode {ep.episode_idx}: {len(self._current_actions)} actions loaded.")
 
+        # Set reset_needed so the first episode triggers reset_with_init_state()
+        # before any actions are consumed.
+        self.reset_needed = True
+        self._is_initial_replay_reset = True
+
     def _init_infer_mode(self, cfg, robot=None):
         """Initialize the controller for infer mode."""
         self.trajectory_controller = FrankaTrajectoryController(
@@ -187,10 +192,22 @@ class BaseController(ABC):
     
     def reset(self) -> None:
         """Reset the controller state between episodes."""
+        # The very first replay reset is just scene setup — no episode has
+        # finished yet, so skip the bookkeeping that counts a completed episode.
+        if self.mode == "replay" and getattr(self, "_is_initial_replay_reset", False):
+            self._is_initial_replay_reset = False
+            self.reset_needed = False
+            self.check_success_counter = 0
+            self._current_action_step = 0
+            self.trajectory_controller.reset()
+            return
+
         if self._last_success:
             self.success_count += 1
+
         self._episode_num += 1
-        logger.info(f"Episode Stats: Success Rate = {self.success_count}/{self._episode_num} ({(self.success_count/self._episode_num)*100:.2f}%)")
+
+        logger.info(f"Episode Stats: Success Rate = {self.success_count}/{self._episode_num} ({(self.success_count/max(self._episode_num, 1))*100:.2f}%)")
         self.check_success_counter = 0
         self.reset_needed = False
         self._last_success = False
@@ -199,14 +216,13 @@ class BaseController(ABC):
             self._init_state_captured = False
             self.data_collector.clear_cache()
         elif self.mode == "replay":
-            self._current_replay_idx += 1
-            if self._current_replay_idx < len(self._replay_loader):
-                ep = self._replay_loader.get_episode(self._current_replay_idx)
-                self._current_actions = ep.actions
-                self._current_init_state = ep.init_state
-                self._current_action_step = 0
-                self.trajectory_controller.reset()
-                logger.info(f"[Replay] Episode {ep.episode_idx}: {len(self._current_actions)} actions loaded.")
+            # Only reset the action step and trajectory controller here.
+            # Episode advancement is handled in _step_replay() when the
+            # episode finishes, so that _current_init_state and
+            # _current_actions always refer to the same episode when
+            # get_current_init_state() is called in the next reset cycle.
+            self._current_action_step = 0
+            self.trajectory_controller.reset()
         
     def get_current_init_state(self) -> Optional[dict]:
         """Return the init_state dict for the current replay episode.
@@ -303,6 +319,16 @@ class BaseController(ABC):
         """
         raise NotImplementedError("Subclasses must implement _step_infer()")
     
+    def _advance_replay_episode(self) -> None:
+        """Pre-load the next replay episode so that ``get_current_init_state()``
+        returns the correct init state on the next reset cycle."""
+        if self._current_replay_idx + 1 < len(self._replay_loader):
+            self._current_replay_idx += 1
+            ep = self._replay_loader.get_episode(self._current_replay_idx)
+            self._current_actions = ep.actions
+            self._current_init_state = ep.init_state
+            logger.info(f"[Replay] Next episode {ep.episode_idx}: {len(self._current_actions)} actions preloaded.")
+
     def _step_replay(self, state) -> Tuple[Any, bool, bool]:
         """Execute one step in replay mode.
 
@@ -336,6 +362,7 @@ class BaseController(ABC):
             self._last_failure_reason = None
             self._last_success = True
             self.reset_needed = True
+            self._advance_replay_episode()
             logger.success("[Replay] Task success!")
             return None, True, True
 
@@ -345,6 +372,7 @@ class BaseController(ABC):
         )
         if all_done:
             logger.warning("[Replay] Task failed — all actions exhausted.")
+            self._advance_replay_episode()
             self.reset_needed = True
             return None, True, False
 

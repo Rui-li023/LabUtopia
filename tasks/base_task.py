@@ -77,7 +77,8 @@ class BaseTask(ABC):
 
         Args:
             init_state: Dict with keys ``object_poses``, ``object_materials``,
-                        and optionally ``extra``.
+                        ``extra``, ``robot_init_joint_positions``, and
+                        ``robot_world_position``.
         """
         self.world.reset()
         self.reset_needed = False
@@ -92,6 +93,19 @@ class BaseTask(ABC):
             logger.info(f"Bound material {material_path} to object {obj_path}")
         self._apply_init_state_poses(self._episode_init_state)
         self.robot.initialize()
+
+        # Restore robot joint positions from recorded init state
+        robot_joint_positions = init_state.get("robot_init_joint_positions")
+        if robot_joint_positions is not None:
+            self.robot.set_joint_positions(np.asarray(robot_joint_positions))
+            logger.info(f"Restored robot joint positions: {robot_joint_positions}")
+
+        # Restore robot world position from recorded init state
+        robot_world_position = init_state.get("robot_world_position")
+        if robot_world_position is not None:
+            current_orientation = self.robot.get_world_pose()[1]
+            self.robot.set_world_pose(position=np.asarray(robot_world_position), orientation=current_orientation)
+            logger.info(f"Restored robot world position: {robot_world_position}")
 
     @abstractmethod
     def step(self) -> Optional[Dict[str, Any]]:
@@ -336,15 +350,25 @@ class BaseTask(ABC):
                     "orientation": pose["orientation"].tolist(),
                 }
 
-    def _apply_init_state_poses(self, init_state: dict) -> None:
-        """Restore object world poses from ``init_state['object_poses']``."""
+    def _apply_init_state_poses(self, init_state: dict, restore_orientation: bool = False) -> None:
+        """Restore object world poses from ``init_state['object_poses']``.
+
+        Args:
+            init_state: Dict containing ``object_poses`` with position and orientation.
+            restore_orientation: If True, restore orientation; if False, only restore position.
+        """
         for path, pose in init_state.get("object_poses", {}).items():
-            self.object_utils.set_world_pose(
-                path,
-                np.asarray(pose["position"]),
-                np.asarray(pose["orientation"]),
-            )
-            logger.info(f"Restored object {path} to position {pose['position']} and orientation {pose['orientation']}")
+            position = np.asarray(pose["position"])
+            if restore_orientation and "orientation" in pose:
+                self.object_utils.set_world_pose(
+                    path,
+                    position,
+                    np.asarray(pose["orientation"]),
+                )
+                logger.info(f"Restored object {path} to position {pose['position']} and orientation {pose['orientation']}")
+            else:
+                self.object_utils.set_object_position(object_path=path, position=position)
+                logger.info(f"Restored object {path} to position {pose['position']}")
 
     # -------------------------------------------------------------------------
     # Step state helpers

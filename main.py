@@ -169,14 +169,13 @@ def main():
                     video_writer = None
                     video_output_path = None
 
-                task_controller.reset()
-
                 # Determine how many episodes to run depending on mode
                 if cfg.mode == "replay":
                     max_episodes = len(task_controller._replay_loader)
                 else:
                     max_episodes = cfg.max_episodes
 
+                # Check if we've completed all episodes BEFORE setting up the next one
                 if task_controller.episode_num() >= max_episodes:
                     logger.info(f"All {max_episodes} episodes completed. Shutting down.")
                     task_controller.close()
@@ -186,11 +185,14 @@ def main():
                         t.join()
                     break
 
-                # In replay mode restore the exact recorded scene; otherwise reset randomly
+                # In replay mode: restore scene FIRST, then reset controller
+                # This ensures correct episode numbering and environment setup
                 if cfg.mode == "replay":
                     init_state = task_controller.get_current_init_state()
                     task.reset_with_init_state(init_state)
+                    task_controller.reset()
                 else:
+                    task_controller.reset()
                     task.reset()
 
                 continue
