@@ -42,24 +42,6 @@ class OpenTaskController(BaseController):
             door_open_direction="clockwise"
         )
 
-    def _init_infer_mode(self, cfg, robot):
-        """
-        Initializes components for inference mode.
-        Creates inference engine and trajectory controller.
-
-        Args:
-            cfg: Configuration object containing model paths and settings
-            robot: Robot instance to control
-        """
-        self.trajectory_controller = FrankaTrajectoryController(
-            name="trajectory_controller",
-            robot_articulation=robot
-        )
-        
-        self.inference_engine = InferenceEngineFactory.create_inference_engine(
-            cfg, self.trajectory_controller
-        )
-
     def reset(self):
         """Resets the controller to its initial state."""
         super().reset()
@@ -176,7 +158,7 @@ class OpenTaskController(BaseController):
             
         return action, False, False
         
-    def _check_success(self, state):
+    def _check_success(self):
         """Checks if the task has been successfully completed.
 
         Args:
@@ -185,8 +167,8 @@ class OpenTaskController(BaseController):
         Returns:
             bool: True if the task is successful, False otherwise.
         """
-        current_pos = state['object_position']
-        gripper_position = state['gripper_position']
+        current_pos = self.state['object_position']
+        gripper_position = self.state['gripper_position']
         
         # Calculate distances
         handle_move_distance = np.linalg.norm(np.array(current_pos) - self.initial_handle_position)

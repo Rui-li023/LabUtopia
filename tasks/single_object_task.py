@@ -26,6 +26,7 @@ class SingleObjectTask(BaseTask):
         self.current_obj_path = self.place_objects_with_visibility_management(
             self.current_obj_idx, far_distance=10.0
         )
+        self._record_all_config_poses()
         self._episode_init_state["extra"]["current_obj_idx"] = self.current_obj_idx
 
     def reset_with_init_state(self, init_state: dict) -> None:

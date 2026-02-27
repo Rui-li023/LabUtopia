@@ -1,6 +1,7 @@
-from abc import ABC, abstractmethod 
+from abc import ABC, abstractmethod
 from typing import Dict, Any, Tuple, Optional
 import numpy as np
+from loguru import logger
 import torch
 from omegaconf import OmegaConf
 from controllers.inference_engines.inference_engine_factory import InferenceEngineFactory
@@ -34,10 +35,10 @@ class BaseController(ABC):
         self._episode_num = 0
         self.success_count = 0 
         self._language_instruction = ""
+        self._init_state_captured = False
         self.gripper_control = Gripper()
         self.REQUIRED_SUCCESS_STEPS = 60
         self.check_success_counter = 0
-        self.rmp_controller = None
         self._last_failure_reason = ""
         
         self.rmp_controller = FrankaRMPFlowController(
@@ -86,7 +87,6 @@ class BaseController(ABC):
         """
         return self._language_instruction
     
-    @abstractmethod
     def step(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
         """Execute one step of control.
         
@@ -99,8 +99,21 @@ class BaseController(ABC):
             - done: Whether the episode is complete
             - is_success: Whether the task was completed successfully
         """
-        pass
-    
+        self.state = state
+        if self.mode == "collect":
+            if not self._init_state_captured:
+                init = dict(state.get("init_state", {}))
+                init["robot_init_joint_positions"] = state["joint_positions"]
+                init["robot_world_position"] = np.array(self.robot.get_world_pose()[0], dtype=np.float32)
+                self.data_collector.set_init_state(init)
+                self._init_state_captured = True
+                logger.info(f"Set init state for episode {init}")
+            return self._step_collect(state)
+        elif self.mode == "replay":
+            return self._step_replay(state)
+        elif self.mode == "infer":
+            return self._step_infer(state)
+
     def _init_collect_mode(self, cfg, robot=None):
         """Initialize the controller for collect mode."""
         self.data_collector = create_collector(
@@ -110,7 +123,7 @@ class BaseController(ABC):
             max_episodes=cfg.max_episodes,
             compression=cfg.collector.compression
         )
-    
+
     def _init_replay_mode(self, cfg, robot=None):
         """Initialize the controller for replay mode.
 
@@ -143,7 +156,7 @@ class BaseController(ABC):
             ep = self._replay_loader.get_episode(0)
             self._current_actions = ep.actions
             self._current_init_state = ep.init_state
-            print(f"[Replay] Episode {ep.episode_idx}: {len(self._current_actions)} actions loaded.")
+            logger.info(f"Episode {ep.episode_idx}: {len(self._current_actions)} actions loaded.")
 
     def _init_infer_mode(self, cfg, robot=None):
         """Initialize the controller for infer mode."""
@@ -170,19 +183,20 @@ class BaseController(ABC):
     def print_failure_reason(self) -> None:
         """Print the last failure reason if it exists."""
         if self._last_failure_reason:
-            print(f"Failure Reason: {self._last_failure_reason}")
+            logger.warning(f"Failure Reason: {self._last_failure_reason}")
     
     def reset(self) -> None:
         """Reset the controller state between episodes."""
         if self._last_success:
             self.success_count += 1
         self._episode_num += 1
-        print(f"Episode Stats: Success Rate = {self.success_count}/{self._episode_num} ({(self.success_count/self._episode_num)*100:.2f}%)")
+        logger.info(f"Episode Stats: Success Rate = {self.success_count}/{self._episode_num} ({(self.success_count/self._episode_num)*100:.2f}%)")
         self.check_success_counter = 0
         self.reset_needed = False
         self._last_success = False
         self._last_failure_reason = ""
         if self.mode == "collect":
+            self._init_state_captured = False
             self.data_collector.clear_cache()
         elif self.mode == "replay":
             self._current_replay_idx += 1
@@ -192,8 +206,7 @@ class BaseController(ABC):
                 self._current_init_state = ep.init_state
                 self._current_action_step = 0
                 self.trajectory_controller.reset()
-                print(f"[Replay] Episode {ep.episode_idx}: {len(self._current_actions)} actions loaded.")
-
+                logger.info(f"[Replay] Episode {ep.episode_idx}: {len(self._current_actions)} actions loaded.")
         
     def get_current_init_state(self) -> Optional[dict]:
         """Return the init_state dict for the current replay episode.
@@ -266,6 +279,30 @@ class BaseController(ABC):
 
         return out
 
+    @abstractmethod
+    def _step_collect(self, state) -> Tuple[Any, bool, bool]:
+        """Execute one step in collect mode.
+
+        Args:
+            state: Current state of the environment.
+
+        Returns:
+            Tuple of (action, done, success).
+        """
+        raise NotImplementedError("Subclasses must implement _step_collect()")
+    
+    @abstractmethod
+    def _step_infer(self, state) -> Tuple[Any, bool, bool]:
+        """Execute one step in infer mode.
+
+        Args:
+            state: Current state of the environment.
+
+        Returns:
+            Tuple of (action, done, success).
+        """
+        raise NotImplementedError("Subclasses must implement _step_infer()")
+    
     def _step_replay(self, state) -> Tuple[Any, bool, bool]:
         """Execute one step in replay mode.
 
@@ -289,7 +326,7 @@ class BaseController(ABC):
 
         action = self.trajectory_controller.get_next_action()
 
-        if self._check_success(state):
+        if self._check_success():
             self.check_success_counter += 1
         else:
             self.check_success_counter = 0
@@ -299,7 +336,7 @@ class BaseController(ABC):
             self._last_failure_reason = None
             self._last_success = True
             self.reset_needed = True
-            print("[Replay] Task success!")
+            logger.success("[Replay] Task success!")
             return None, True, True
 
         all_done = self._current_actions is None or (
@@ -307,13 +344,13 @@ class BaseController(ABC):
             and self.trajectory_controller.is_trajectory_complete()
         )
         if all_done:
-            print("[Replay] Task failed — all actions exhausted.")
+            logger.warning("[Replay] Task failed — all actions exhausted.")
             self.reset_needed = True
             return None, True, False
 
         return action, False, False
 
-    def _check_success(self, state) -> bool:
+    def _check_success(self) -> bool:
         """Evaluate whether the current state meets the task success criterion.
 
         Subclasses must override this method with task-specific logic.
@@ -341,3 +378,4 @@ class BaseController(ABC):
 
     def is_success(self):
         return self._last_success
+    

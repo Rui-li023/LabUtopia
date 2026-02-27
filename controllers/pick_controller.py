@@ -1,13 +1,11 @@
 import re
 from typing import Optional
 import numpy as np
-from robots.franka.rmpflow_controller import RMPFlowController
 from scipy.spatial.transform import Rotation as R
 
 from .base_controller import BaseController
 from .atomic_actions.pick_controller import PickController
-from .robot_controllers.trajectory_controller import FrankaTrajectoryController
-from .inference_engines.inference_engine_factory import InferenceEngineFactory
+
 class PickTaskController(BaseController):
     """
     Controller for pick-and-place tasks with two operation modes:
@@ -43,39 +41,19 @@ class PickTaskController(BaseController):
         super().reset()
         if self.mode == "collect":
             self.pick_controller.reset()
-        else:
+        elif self.mode == "replay":
+            self.trajectory_controller.reset()
+        elif self.mode == "infer":
             self.inference_engine.reset()
         self.initial_position = None
     
     def step(self, state):
         if self.initial_position is None:
             self.initial_position = state['object_position']
-        self.state = state
-        if self.mode == "collect":
-            return self._step_collect(state)
-        else:
-            return self._step_infer(state)
+        return super().step(state)
             
     def _check_success(self):
         return self.state['object_position'][2] > self.initial_position[2] + 0.1
-
-    def _init_infer_mode(self, cfg, robot):
-        """
-        Initializes components for inference mode.
-        Creates inference engine and trajectory controller.
-
-        Args:
-            cfg: Configuration object containing model paths and settings
-            robot: Robot instance to control
-        """
-        self.trajectory_controller = FrankaTrajectoryController(
-            name="trajectory_controller",
-            robot_articulation=robot
-        )
-        
-        self.inference_engine = InferenceEngineFactory.create_inference_engine(
-            cfg, self.trajectory_controller
-        )
         
     def _step_collect(self, state):
         """

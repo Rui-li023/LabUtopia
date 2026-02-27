@@ -96,7 +96,12 @@ class ReplayDataLoader:
                 init_state: Dict[str, np.ndarray] = {}
                 if "init_state" in f:
                     for key in f["init_state"]:
-                        init_state[key] = f[f"init_state/{key}"][:]
+                        dataset = f[f"init_state/{key}"]
+                        # Handle scalar datasets (shape=()) correctly
+                        if dataset.shape == ():
+                            init_state[key] = dataset[()]
+                        else:
+                            init_state[key] = dataset[:]
                 else:
                     print(f"[ReplayDataLoader] Warning: {h5_path} has no 'init_state' group. "
                           "Scene will be reset randomly for this episode.")

@@ -106,21 +106,25 @@ def _write_episode_data(episode_dir: str, episode_name: str,
             chunks=True
         )
         
-        # Store language instruction if provided
+        # Store language instruction if provided (as scalar string)
         if language_instruction is not None:
+            dt = h5py.special_dtype(vlen=str)
             h5_file.create_dataset(
                 "language_instruction",
                 data=language_instruction,
-                dtype=h5py.special_dtype(vlen=str)
+                dtype=dt,
+                shape=()
             )
         
         # Store task properties (as JSON string)
         if task_properties:
             task_properties_json = json.dumps(task_properties, ensure_ascii=False)
+            dt = h5py.special_dtype(vlen=str)
             h5_file.create_dataset(
                 "task_properties",
                 data=task_properties_json,
-                dtype=h5py.special_dtype(vlen=str)
+                dtype=dt,
+                shape=()
             )
 
         # Store per-episode initial state for deterministic replay.
@@ -132,19 +136,24 @@ def _write_episode_data(episode_dir: str, episode_name: str,
                 "object_pose_paths",
                 "object_material_paths",
                 "object_material_values",
-                "init_extra_json",
             }
+            _STR_SCALAR_KEYS = {"init_extra_json"}  # Scalar string datasets
             _FLOAT2D_KEYS = {"object_pose_positions", "object_pose_orientations"}
             for key, val in flat.items():
                 if key in _STR_KEYS:
                     arr = np.array(val, dtype=object)
                     grp.create_dataset(key, data=arr, dtype=h5py.special_dtype(vlen=str))
+                elif key in _STR_SCALAR_KEYS:
+                    # Handle scalar string datasets (e.g., JSON strings)
+                    dt = h5py.special_dtype(vlen=str)
+                    grp.create_dataset(key, data=val, dtype=dt, shape=())
                 elif key in _FLOAT2D_KEYS:
                     grp.create_dataset(key, data=np.asarray(val, dtype="float32"))
                 else:
                     try:
                         grp.create_dataset(key, data=np.array(val, dtype="float32"))
                     except Exception:
+                        logger.error("")
                         pass  # skip non-serialisable legacy keys
 
     # Save each camera stream as an MP4 video

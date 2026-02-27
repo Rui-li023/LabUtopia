@@ -54,24 +54,6 @@ class OpenCloseTaskController(BaseController):
             door_open_direction="clockwise"
         )
         
-    def _init_infer_mode(self, cfg, robot):
-        """
-        Initializes components for inference mode.
-        Creates inference engine and trajectory controller.
-
-        Args:
-            cfg: Configuration object containing model paths and settings
-            robot: Robot instance to control
-        """
-        self.trajectory_controller = FrankaTrajectoryController(
-            name="trajectory_controller",
-            robot_articulation=robot
-        )
-        
-        self.inference_engine = InferenceEngineFactory.create_inference_engine(
-            cfg, self.trajectory_controller
-        )
-
     def reset(self):
         """Resets the controller to its initial state."""
         super().reset()

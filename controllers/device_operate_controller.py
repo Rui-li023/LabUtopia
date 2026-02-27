@@ -91,9 +91,6 @@ class DeviceOperateController(BaseController):
         
         self.active_controller = self.open_controller
 
-    def _init_infer_mode(self, cfg, robot):
-        """Initialize controller for inference mode."""
-        super()._init_infer_mode(cfg, robot)
         
     def reset(self):
         """Reset controller state and phase."""

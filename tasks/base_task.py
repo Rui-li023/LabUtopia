@@ -8,7 +8,7 @@ from isaacsim.core.utils.semantics import add_update_semantics
 from utils.camera_utils import process_camera_image
 from isaacsim.core.utils.prims import set_prim_visibility
 from pxr import UsdShade
-
+from loguru import logger
 
 class BaseTask(ABC):
     """
@@ -55,9 +55,10 @@ class BaseTask(ABC):
         """Reset world state and begin a new episode.
 
         Clears the episode init state, then re-applies materials (which are
-        automatically recorded into the fresh init state).  Subclasses should
-        call ``super().reset()`` first, then set up object positions and call
-        ``self._record_object_pose(path)`` for every object they place.
+        automatically recorded into the fresh init state).  Subclasses that use
+        ``obj_paths`` should call ``self._record_all_config_poses()`` at the
+        end of ``reset()`` after placing objects; others may use
+        ``self._record_object_pose(path)`` for individual objects.
         """
         self.world.reset()
         self.reset_needed = False
@@ -88,6 +89,7 @@ class BaseTask(ABC):
         }
         for obj_path, material_path in self._episode_init_state["object_materials"].items():
             self._bind_material(obj_path, material_path)
+            logger.info(f"Bound material {material_path} to object {obj_path}")
         self._apply_init_state_poses(self._episode_init_state)
         self.robot.initialize()
 
@@ -246,7 +248,10 @@ class BaseTask(ABC):
     # -------------------------------------------------------------------------
 
     def randomize_object_position(self, obj_path: str, position_range: Dict[str, list]) -> np.ndarray:
-        """Sample a random position, move the object, and record its pose.
+        """Sample a random position and move the object.
+
+        Poses are recorded in bulk via ``_record_all_config_poses()`` (call at
+        end of subclass ``reset()`` after placement).
 
         Args:
             obj_path: USD prim path of the object.
@@ -261,7 +266,6 @@ class BaseTask(ABC):
             np.random.uniform(position_range["z"][0], position_range["z"][1]),
         ])
         self.object_utils.set_object_position(object_path=obj_path, position=position)
-        self._record_object_pose(obj_path)
         return position
 
     def place_objects_with_visibility_management(
@@ -293,7 +297,6 @@ class BaseTask(ABC):
             if i == current_obj_idx:
                 if fixed_position is not None:
                     self.object_utils.set_object_position(object_path=obj_path, position=np.array(fixed_position))
-                    self._record_object_pose(obj_path)
                 else:
                     self.randomize_object_position(obj_path, obj_cfg["position_range"])
                 set_prim_visibility(prim, True)
@@ -317,6 +320,22 @@ class BaseTask(ABC):
                 "orientation": pose["orientation"].tolist(),
             }
 
+    def _record_all_config_poses(self) -> None:
+        """Record current world pose for every object in cfg.task.obj_paths.
+
+        Call this at the end of subclass ``reset()`` after placing objects.
+        Materials are already recorded in ``apply_materials()`` from
+        cfg.task.material_paths.
+        """
+        for obj_cfg in self.obj_configs:
+            path = obj_cfg["path"]
+            pose = self.object_utils.get_world_pose(path)
+            if pose is not None:
+                self._episode_init_state["object_poses"][path] = {
+                    "position":    pose["position"].tolist(),
+                    "orientation": pose["orientation"].tolist(),
+                }
+
     def _apply_init_state_poses(self, init_state: dict) -> None:
         """Restore object world poses from ``init_state['object_poses']``."""
         for path, pose in init_state.get("object_poses", {}).items():
@@ -325,6 +344,7 @@ class BaseTask(ABC):
                 np.asarray(pose["position"]),
                 np.asarray(pose["orientation"]),
             )
+            logger.info(f"Restored object {path} to position {pose['position']} and orientation {pose['orientation']}")
 
     # -------------------------------------------------------------------------
     # Step state helpers

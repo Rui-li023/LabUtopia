@@ -188,9 +188,9 @@ class ObjectUtils:
         pos_vec = Gf.Vec3d(*np.asarray(position, dtype=np.float64))
         quat = np.asarray(orientation, dtype=np.float64)
         if len(quat) == 4 and (quat[3] >= -1.1 and quat[3] <= 1.1):
-            rot = Gf.Quatd(quat[3], quat[0], quat[1], quat[2])
+            rot = Gf.Quatf(float(quat[3]), float(quat[0]), float(quat[1]), float(quat[2]))
         else:
-            rot = Gf.Quatd(1, 0, 0, 0)
+            rot = Gf.Quatf(1, 0, 0, 0)
         for op in xform_ops:
             op_name = op.GetOpType()
             if op_name == UsdGeom.XformOp.TypeTranslate:

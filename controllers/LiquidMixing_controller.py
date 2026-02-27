@@ -132,10 +132,6 @@ class LiquidMixingController(BaseController):
         else:
             self.active_controller = self.pick_controller1
         
-    def _init_infer_mode(self, cfg, robot):
-        """Initialize inference mode"""
-        super()._init_infer_mode(cfg, robot)
-        
     def reset(self):
         """Reset controller state"""
         super().reset()
