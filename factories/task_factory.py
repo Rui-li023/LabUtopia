@@ -12,7 +12,7 @@ from tasks.placepress_task import PlacePressTask
 from tasks.cleanbeaker_task import CleanBeakerTask
 from tasks.device_operate_task import DeviceOperateTask
 from tasks.opentransportpour_task import OpenTransportPourTask
-from tasks.LiquidMixing_task import LiquidMixing
+from tasks.liquid_mixing_task import LiquidMixingTask
 from tasks.navigation_task import NavigationTask
 from tasks.mobile_pick_task import MobilePickTask
 
@@ -41,6 +41,6 @@ register_task("pickplace", PickPlaceTask)
 register_task("placepress", PlacePressTask)
 register_task("cleanbeaker", CleanBeakerTask)
 register_task("OpenTransportPour", OpenTransportPourTask)
-register_task("LiquidMixing", LiquidMixing)
+register_task("LiquidMixing", LiquidMixingTask)
 register_task("navigation", NavigationTask)
 register_task("mobile_pick", MobilePickTask)

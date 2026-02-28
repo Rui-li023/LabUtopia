@@ -6,7 +6,7 @@
 
 <div align="center">
 
-[![Paper](https://img.shields.io/badge/📄_Paper-arXiv-red.svg)](https://arxiv.org/pdf/2505.22634v1.pdf)
+[![Paper](https://img.shields.io/badge/📄_Paper-arXiv-red.svg)](https://arxiv.org/pdf/2505.22634v2.pdf)
 [![arXiv](https://img.shields.io/badge/arXiv-2505.22634-b31b1b.svg)](https://arxiv.org/abs/2505.22634)
 [![Website](https://img.shields.io/badge/🌐_Website-LabUtopia-blue.svg)](https://rui-li023.github.io/labutopia-site/)
 [![Dataset](https://img.shields.io/badge/HuggingFace-Dataset-orange?logo=huggingface)](https://huggingface.co/datasets/Ruinwalker/Labutopia-Dataset)
@@ -64,33 +64,39 @@ python -m isaacsim --generate-vscode-settings
 ## Code Structure
 
 ```
-LabSim/
-├── assets/                # Resource files directory
-│   ├── chemistry_lab/     # Chemistry lab scene resources
-│   ├── fetch/             # Fetch robot resources
-│   ├── navigation/        # Navigation task resources
-│   └── robots/            # Robot model resources
-├── config/                # Configuration files directory
-│   ├── level1_*.yaml    # Level 1 basic task configs
-│   ├── level2_*.yaml    # Level 2 combined task configs
-│   ├── level3_*.yaml    # Level 3 generalization task configs
-│   └── level4_*.yaml    # Level 4 long sequence task configs
-├── controllers/         # Controller implementations
-│   ├── atomic_actions/  # Basic action controllers
-│   ├── inference_engines/ # Inference engine implementations
-│   └── robot_controllers/ # Robot controllers
-├── data_collectors/     # Data collector implementations
-├── factories/           # Factory class implementations
-├── policy/            # Policy model implementations
-├── tasks/             # Task definition implementations
-├── tests/            # Test code
-└── utils/            # Utility functions
+LabUtopia/
+├── main.py                  # Entry point: config → factory → simulation loop
+├── train.py                 # Policy training (Diffusion UNet / ACT)
+├── assets/                  # USD scene files
+│   ├── chemistry_lab/       # Chemistry lab scene resources
+│   ├── navigation/          # Navigation task resources
+│   └── robots/              # Robot model resources
+├── config/                  # Hydra YAML configuration files
+│   ├── level1_*.yaml        # Level 1: single atomic action tasks
+│   ├── level2_*.yaml        # Level 2: multi-step combined tasks
+│   ├── level3_*.yaml        # Level 3: generalization tasks (OOD materials/objects)
+│   ├── level4_*.yaml        # Level 4: long-horizon sequence tasks
+│   └── level5_*.yaml        # Level 5: mobile manipulation tasks
+├── controllers/             # Task controllers (robot actions + success checking)
+│   ├── atomic_actions/      # Low-level state-machine controllers
+│   ├── inference_engines/   # Local (PyTorch) / Remote (OpenPI) inference
+│   └── robot_controllers/   # Trajectory controller, gripper, RMPFlow
+├── data_collectors/         # HDF5 episode data collectors
+├── factories/               # Registry-based factories (task, controller, robot, collector)
+├── packages/                # Vendored openpi-client package
+├── policy/                  # ML models: Diffusion UNet, ACT, vision encoders
+├── robots/                  # Robot definitions (Franka, Ridgebase)
+├── scripts/                 # Data conversion & dataset utilities
+├── tasks/                   # Task environments (scene, cameras, observations)
+├── tests/                   # Configuration validation tests
+└── utils/                   # Shared utilities (ObjectUtils, camera, replay)
 ```
 
 ### Design Philosophy
-1. Modular structure for better code organization and maintainability
-2. Scene state and observation data acquisition (including camera images, robot states, and scene object states) are handled in tasks
-3. Robot control and task success condition checking are handled in controllers
+1. **Modular structure** — clear separation of concerns for maintainability
+2. **Tasks** handle scene state and observation data (camera images, robot states, object states)
+3. **Controllers** handle robot control and task success condition checking
+4. Three operating modes (`collect` / `infer` / `replay`) driven by a single YAML config
 
 ## Usage
 
@@ -122,16 +128,23 @@ There are multiple pre-configured task files in the `config` folder:
 - `level2_openclose.yaml` - Open and close tasks
 
 **Level 3 Generalization Tasks:**
-- `level3_PourLiquid.yaml` - Complex pour tasks
-- `level3_Heat_Liquid.yaml` - Complex heating tasks
-- `level3_TrabsportBeaker.yaml` - Complex transport tasks
-- `level3_open.yaml` - Complex open tasks
-- `level3_pick.yaml` - Complex pick tasks
-- `level3_press.yaml` - Complex press tasks
+- `level3_PourLiquid.yaml` - Pour liquid (OOD generalization)
+- `level3_HeatLiquid.yaml` - Heat liquid (OOD generalization)
+- `level3_TransportBeaker.yaml` - Transport beaker (OOD generalization)
+- `level3_open.yaml` - Open tasks (OOD generalization)
+- `level3_pick.yaml` - Pick tasks (OOD generalization)
+- `level3_press.yaml` - Press tasks (OOD generalization)
 
 **Level 4 Long Sequence Tasks:**
 - `level4_CleanBeaker.yaml` - Clean beaker
+- `level4_CleanBeaker7Policy.yaml` - Clean beaker (7-policy variant)
 - `level4_DeviceOperation.yaml` - Device operation
+- `level4_OpenTransportPour.yaml` - Open, transport, and pour
+- `level4_LiquidMixing.yaml` - Liquid mixing
+
+**Level 5 Mobile Manipulation Tasks:**
+- `level5_Navigation.yaml` - Mobile base navigation
+- `level5_Mobile_manipulation.yaml` - Mobile pick and place
 
 #### 2. Modify Configuration Parameters
 
@@ -378,7 +391,13 @@ We welcome contributions from the community! If you have any questions, suggesti
 - **Open an Issue**: Report bugs, request features, or discuss ideas
 - **Submit a Pull Request**: Contribute code improvements, documentation fixes, or new features
 
-Before submitting a PR, please ensure your code follows the project's coding style and passes relevant tests.
+Before submitting a PR, please ensure:
+- Your code passes `ruff check` and `ruff format --check` (config in `pyproject.toml`)
+- Abstract methods use the `@abstractmethod` decorator
+- All public methods have return type annotations
+- Imports are grouped: stdlib → third-party → project-internal
+
+See `CLAUDE.md` for detailed architecture and coding conventions.
 
 Thank you to all contributors for supporting this project! 🙏
 

@@ -273,7 +273,7 @@ class LiquidMixingController(BaseController):
             else:
                 # All phases completed
                 print("All phases completed, task successful!")
-                self._last_failure_reason = None
+                self._last_failure_reason = ""
                 self.data_collector.write_cached_data(state['joint_positions'][:-1])
                 self._last_success = True
                 self.current_phase = TaskPhase.FINISHED

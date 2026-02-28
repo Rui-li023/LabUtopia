@@ -126,7 +126,7 @@ class OpenCloseTaskController(BaseController):
 
             self.open_success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
             if self.open_success:
-                self._last_failure_reason = None
+                self._last_failure_reason = ""
                 print("Open phase success! Starting close phase...")
                 self.current_phase = "close"
                 self.close_controller.reset()
@@ -176,7 +176,7 @@ class OpenCloseTaskController(BaseController):
 
             close_success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
             if close_success:
-                self._last_failure_reason = None
+                self._last_failure_reason = ""
                 print("Close phase success! Task completed!")
                 self.data_collector.write_cached_data(state['joint_positions'][:-1])
                 self._last_success = True
@@ -213,7 +213,7 @@ class OpenCloseTaskController(BaseController):
             
         success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if success:
-            self._last_failure_reason = None
+            self._last_failure_reason = ""
             print("Task success!")
             self._last_success = True
             self.reset_needed = True

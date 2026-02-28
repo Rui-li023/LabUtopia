@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 from .base_task import BaseTask
 
 
@@ -21,7 +21,7 @@ class OpenTransportPourTask(BaseTask):
         ("/World/MuffleFurnace",  (0.69, 0.70),  (0.09, 0.10),  0.78),
     ]
 
-    def __init__(self, cfg, world, stage, robot):
+    def __init__(self, cfg: Any, world: Any, stage: Any, robot: Any) -> None:
         super().__init__(cfg, world, stage, robot)
         self.beaker_path      = cfg.task.obj_paths[0]["path"]
         self.target_plat_path = cfg.task.obj_paths[1]["path"]
@@ -37,7 +37,7 @@ class OpenTransportPourTask(BaseTask):
     def reset_with_init_state(self, init_state: dict) -> None:
         super().reset_with_init_state(init_state)
 
-    def step(self) -> Dict[str, Any]:
+    def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1
         if not self.check_frame_limits(max_steps=self.cfg.task.max_steps):
             return None

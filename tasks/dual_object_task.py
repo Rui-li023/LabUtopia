@@ -1,3 +1,5 @@
+from typing import Any, Dict, Optional
+
 from .base_task import BaseTask
 
 
@@ -26,7 +28,7 @@ class DualObjectTask(BaseTask):
         self.source_obj = self.cfg.task.obj_paths[0]["path"]
         self.target_obj  = self.cfg.task.obj_paths[1]["path"]
 
-    def step(self):
+    def step(self) -> Optional[Dict[str, Any]]:
         """Return state with source object and target object info."""
         self.frame_idx += 1
         if not self.check_frame_limits():

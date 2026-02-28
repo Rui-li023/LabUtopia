@@ -1,0 +1,68 @@
+[project]
+name = "labutopia"
+version = "1.0.0"
+description = "High-Fidelity Simulation and Hierarchical Benchmark for Scientific Embodied Agents"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "Rui Li"},
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+exclude = [
+    "packages/",
+    "outputs/",
+    "assets/",
+    ".claude/",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",       # pycodestyle errors
+    "W",       # pycodestyle warnings
+    "F",       # pyflakes
+    "I",       # isort (import sorting)
+    "UP",      # pyupgrade
+    "B",       # flake8-bugbear
+    "SIM",     # flake8-simplify
+    "RUF",     # ruff-specific rules
+]
+ignore = [
+    "E501",    # line too long (handled by formatter)
+    "E741",    # ambiguous variable name (common in math/physics code)
+    "B008",    # do not perform function call in argument defaults (Hydra uses this)
+    "B905",    # zip without strict= (Python 3.10+ only)
+    "SIM108",  # use ternary operator (reduces readability in complex cases)
+    "RUF012",  # mutable class attributes (common in dataclass-like patterns)
+    "UP035",   # deprecated typing imports (keep for compatibility)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "controllers",
+    "tasks",
+    "factories",
+    "robots",
+    "policy",
+    "data_collectors",
+    "utils",
+]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = [
+    "packages/",
+    "outputs/",
+]

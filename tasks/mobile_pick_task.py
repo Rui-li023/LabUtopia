@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 from .navigation_base_task import NavigationBaseTask
 
@@ -14,7 +14,7 @@ class MobilePickTask(NavigationBaseTask):
     - Tracking the target object's position and size each step.
     """
 
-    def __init__(self, cfg, world, stage, robot):
+    def __init__(self, cfg: Any, world: Any, stage: Any, robot: Any) -> None:
         self.target_object_path: Optional[str] = None
         self.initial_object_position: Optional[np.ndarray] = None
         self.navigation_done: bool = False
@@ -30,19 +30,24 @@ class MobilePickTask(NavigationBaseTask):
         super().setup_objects()
 
         task = self.cfg.task
-        if hasattr(task, "pick_object_usd") and hasattr(task, "pick_object_prim_path"):
+        pick_object_usd = getattr(task, "pick_object_usd", None)
+        pick_object_prim_path = getattr(task, "pick_object_prim_path", None)
+        if pick_object_usd is not None and pick_object_prim_path is not None:
             from isaacsim.core.utils.stage import add_reference_to_stage
             add_reference_to_stage(
-                usd_path=os.path.abspath(task.pick_object_usd),
-                prim_path=task.pick_object_prim_path,
+                usd_path=os.path.abspath(pick_object_usd),
+                prim_path=pick_object_prim_path,
             )
             self.target_object_path = task.pick_object_path
-            if hasattr(task, "object_position"):
+            object_position = getattr(task, "object_position", None)
+            if object_position is not None:
                 self.object_utils.set_object_position(
-                    task.pick_object_path, np.array(task.object_position)
+                    task.pick_object_path, np.array(object_position)
                 )
-        elif hasattr(task, "pick_object_path"):
-            self.target_object_path = task.pick_object_path
+        else:
+            pick_object_path = getattr(task, "pick_object_path", None)
+            if pick_object_path is not None:
+                self.target_object_path = pick_object_path
 
     # -------------------------------------------------------------------------
     # Lifecycle
@@ -60,11 +65,11 @@ class MobilePickTask(NavigationBaseTask):
         """Sample a free-space start, plan an A* path to the config target.
 
         Returns:
-            ``True`` on success, ``False`` after 100 failed attempts.
+            ``True`` on success, ``False`` after ``MAX_SAMPLE_ATTEMPTS`` failed attempts.
         """
         nav_scene = self.navigation_assets[0]
         self.target_position = getattr(self.cfg.task, "target_position", [-3.0, -0.46])
-        for _ in range(100):
+        for _ in range(self.MAX_SAMPLE_ATTEMPTS):
             start = self._sample_free_point(nav_scene["x_bounds"], nav_scene["y_bounds"])
             if start is None:
                 continue

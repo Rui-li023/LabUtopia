@@ -1,6 +1,6 @@
 import yaml
 import numpy as np
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from isaacsim.core.utils.rotations import quat_to_euler_angles
 
@@ -19,7 +19,9 @@ class NavigationBaseTask(BaseTask):
     - Providing ``get_navigation_state()`` with common nav fields.
     """
 
-    def __init__(self, cfg, world, stage, robot):
+    MAX_SAMPLE_ATTEMPTS = 100
+
+    def __init__(self, cfg: Any, world: Any, stage: Any, robot: Any) -> None:
         self.navigation_assets: List[dict] = []
         self.grid = None
         self.current_start = None
@@ -33,8 +35,9 @@ class NavigationBaseTask(BaseTask):
     def setup_objects(self) -> None:
         """Load the A* navigation config and obstacle grid in addition to normal objects."""
         super().setup_objects()
-        if hasattr(self.cfg.task, "navigation_config_path"):
-            with open(self.cfg.task.navigation_config_path, "r") as f:
+        nav_config_path = getattr(self.cfg.task, "navigation_config_path", None)
+        if nav_config_path is not None:
+            with open(nav_config_path, "r") as f:
                 config = yaml.safe_load(f)
                 self.navigation_assets = config.get("assets", [])
         if self.navigation_assets:
@@ -54,11 +57,11 @@ class NavigationBaseTask(BaseTask):
 
         Returns:
             ``[x, y]`` in world coordinates, or ``None`` if no free cell found
-            after 100 attempts.
+            after ``MAX_SAMPLE_ATTEMPTS`` attempts.
         """
         W = len(self.grid[0])
         H = len(self.grid)
-        for _ in range(100):
+        for _ in range(self.MAX_SAMPLE_ATTEMPTS):
             x = np.random.uniform(x_bounds[0], x_bounds[1])
             y = np.random.uniform(y_bounds[0], y_bounds[1])
             i, j = real_to_grid(x, y, x_bounds, y_bounds, (W, H))

@@ -1,3 +1,5 @@
+from typing import Any, Dict, Optional
+
 from isaacsim.core.utils.prims import set_prim_visibility
 from .base_task import BaseTask
 
@@ -9,7 +11,7 @@ class PickPourTask(BaseTask):
     target object position is randomised from ``cfg.task.left_pos``.
     """
 
-    def __init__(self, cfg, world, stage, robot):
+    def __init__(self, cfg: Any, world: Any, stage: Any, robot: Any) -> None:
         super().__init__(cfg, world, stage, robot)
         self.target_path = cfg.target_path
 
@@ -17,7 +19,7 @@ class PickPourTask(BaseTask):
         super().reset()
         self.robot.initialize()
         self.current_obj_path = self.place_objects_with_visibility_management(
-            self.current_obj_idx, far_distance=10.0
+            self.current_obj_idx
         )
         self._episode_init_state["extra"]["current_obj_idx"] = self.current_obj_idx
         self.randomize_object_position(self.target_path, self.cfg.task.left_pos)
@@ -31,7 +33,7 @@ class PickPourTask(BaseTask):
             if prim.IsValid():
                 set_prim_visibility(prim, i == current_obj_idx)
 
-    def step(self):
+    def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1
         if not self.check_frame_limits():
             return None

@@ -65,7 +65,7 @@ class PressTaskController(BaseController):
         
         self._last_success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if self._last_success:
-            self._last_failure_reason = None
+            self._last_failure_reason = ""
             self.data_collector.write_cached_data(state['joint_positions'][:-1])
             self.reset_needed = True
             return None, True, True
@@ -89,7 +89,7 @@ class PressTaskController(BaseController):
             
         self._last_success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if self._last_success:
-            self._last_failure_reason = None
+            self._last_failure_reason = ""
             self.reset_needed = True
             return action, True, True
         return action, False, False

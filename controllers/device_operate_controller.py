@@ -197,7 +197,7 @@ class DeviceOperateController(BaseController):
             print(self.success_steps)
             self._last_success = len(self.success_steps) == 7
             if self._last_success:
-                self._last_failure_reason = None
+                self._last_failure_reason = ""
             return None, True, self._last_success
 
         if self.mode == "collect":
@@ -285,7 +285,7 @@ class DeviceOperateController(BaseController):
             if self.active_controller.is_done():
                 success = self._check_phase_success(state)
                 if success:
-                    self._last_failure_reason = None
+                    self._last_failure_reason = ""
                     print(f"{self.current_phase.value} success!")
                     self._advance_to_next_phase()
                     return None, False, False
@@ -331,7 +331,7 @@ class DeviceOperateController(BaseController):
             self.reset_needed = True
             self._last_success = len(self.success_steps) == 7
             if self._last_success:
-                self._last_failure_reason = None
+                self._last_failure_reason = ""
             return None, True, self._last_success
 
         language_instruction = self.get_language_instruction()

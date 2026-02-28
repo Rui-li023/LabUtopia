@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Any, Dict, Optional
 from .base_task import BaseTask
 
 
@@ -12,7 +13,9 @@ class PlacePressTask(BaseTask):
     - index 2: button prim
     """
 
-    def __init__(self, cfg, world, stage, robot):
+    TARGET_HEIGHT_OFFSET = 0.045
+
+    def __init__(self, cfg: Any, world: Any, stage: Any, robot: Any) -> None:
         super().__init__(cfg, world, stage, robot)
         self.source_beaker  = self.cfg.task.obj_paths[0]["path"]
         self.target_plat    = self.cfg.task.obj_paths[1]["path"]
@@ -28,14 +31,14 @@ class PlacePressTask(BaseTask):
     def reset_with_init_state(self, init_state: dict) -> None:
         super().reset_with_init_state(init_state)
 
-    def step(self):
+    def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1
         if not self.check_frame_limits():
             return None
 
         target_position = self.object_utils.get_object_xform_position(self.target_sub_plat)
         button_position = self.object_utils.get_object_xform_position(self.button)
-        target_position[2] += 0.045
+        target_position[2] += self.TARGET_HEIGHT_OFFSET
 
         return self.get_basic_state_info(
             object_path=self.source_beaker,

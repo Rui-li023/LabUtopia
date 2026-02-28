@@ -1,3 +1,4 @@
+from typing import Any, Dict, Optional
 from .base_task import BaseTask
 
 
@@ -17,7 +18,9 @@ class DeviceOperateTask(BaseTask):
     - index 2: target placement object
     """
 
-    def __init__(self, cfg, world, stage, robot):
+    BUTTON_DEPRESSION_THRESHOLD = 0.01
+
+    def __init__(self, cfg: Any, world: Any, stage: Any, robot: Any) -> None:
         super().__init__(cfg, world, stage, robot)
         self.device_path        = cfg.task.device_path
         self.beaker_path        = cfg.task.beaker_path
@@ -43,7 +46,7 @@ class DeviceOperateTask(BaseTask):
         self.beaker3_obj = self.cfg.task.obj_paths[1]["path"]
         self.target_obj  = self.cfg.task.obj_paths[2]["path"]
 
-    def step(self):
+    def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1
         if not self.check_frame_limits():
             return None
@@ -72,7 +75,7 @@ class DeviceOperateTask(BaseTask):
         )
 
     def _check_button_pressed(self) -> bool:
-        """Return True if the button has been depressed by more than 1 cm."""
+        """Return True if the button has been depressed by more than the threshold."""
         button_z = self.object_utils.get_geometry_center(object_path=self.button_path)[2]
         initial_z = self.cfg.task.button_position[2]
-        return button_z < initial_z - 0.01
+        return button_z < initial_z - self.BUTTON_DEPRESSION_THRESHOLD

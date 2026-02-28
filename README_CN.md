@@ -6,7 +6,7 @@
 
 <div align="center">
 
-[![Paper](https://img.shields.io/badge/📄_Paper-arXiv-red.svg)](https://arxiv.org/pdf/2505.22634v1.pdf)
+[![Paper](https://img.shields.io/badge/📄_Paper-arXiv-red.svg)](https://arxiv.org/pdf/2505.22634v2.pdf)
 [![arXiv](https://img.shields.io/badge/arXiv-2505.22634-b31b1b.svg)](https://arxiv.org/abs/2505.22634)
 [![Website](https://img.shields.io/badge/🌐_Website-LabUtopia-blue.svg)](https://rui-li023.github.io/labutopia-site/)
 [![Dataset](https://img.shields.io/badge/HuggingFace-Dataset-orange?logo=huggingface)](https://huggingface.co/datasets/Ruinwalker/LabUtopia-Dataset)
@@ -18,6 +18,7 @@
   <img src="images/teaser.png" alt="LabUtopia Teaser" width="80%">
 </div>
 
+[中文版 README](README_CN.md) | [English README](README.md)
 
 ## 系统要求
 - 支持CUDA的RTX系列NVIDIA GPU（Isaac Sim 不支持A100/A800）
@@ -64,33 +65,39 @@ python -m isaacsim --generate-vscode-settings
 ## 代码结构
 
 ```
-LabSim/
-├── assets/                # 资源文件目录
-│   ├── chemistry_lab/     # 化学实验室场景资源
-│   ├── fetch/             # Fetch机器人相关资源
-│   ├── navigation/        # 导航任务相关资源
-│   └── robots/            # 机器人模型资源
-├── config/                # 配置文件目录
-│   ├── level1_*.yaml    # Level 1基础任务配置
-│   ├── level2_*.yaml    # Level 2组合任务配置
-│   ├── level3_*.yaml    # Level 3泛化性任务配置
-│   └── level4_*.yaml    # Level 4长序列任务配置
-├── controllers/         # 控制器实现
-│   ├── atomic_actions/  # 基础动作控制器
-│   ├── inference_engines/ # 推理引擎实现
-│   └── robot_controllers/ # 机器人控制器
-├── data_collectors/     # 数据收集器实现
-├── factories/           # 工厂类实现
-├── policy/            # 策略模型实现
-├── tasks/             # 任务定义实现
-├── tests/            # 测试代码
-└── utils/            # 工具函数
+LabUtopia/
+├── main.py                  # 入口：配置 → 工厂构建 → 仿真循环
+├── train.py                 # 策略训练（Diffusion UNet / ACT）
+├── assets/                  # USD 场景文件
+│   ├── chemistry_lab/       # 化学实验室场景资源
+│   ├── navigation/          # 导航任务相关资源
+│   └── robots/              # 机器人模型资源
+├── config/                  # Hydra YAML 配置文件
+│   ├── level1_*.yaml        # Level 1：单原子动作任务
+│   ├── level2_*.yaml        # Level 2：多步组合任务
+│   ├── level3_*.yaml        # Level 3：泛化性任务（OOD 材质/物体）
+│   ├── level4_*.yaml        # Level 4：长序列任务
+│   └── level5_*.yaml        # Level 5：移动操作任务
+├── controllers/             # 任务控制器（机器人动作 + 成功判断）
+│   ├── atomic_actions/      # 底层状态机控制器
+│   ├── inference_engines/   # 本地 (PyTorch) / 远程 (OpenPI) 推理
+│   └── robot_controllers/   # 轨迹控制器、夹爪、RMPFlow
+├── data_collectors/         # HDF5 数据收集器
+├── factories/               # 注册式工厂（task、controller、robot、collector）
+├── packages/                # 内置 openpi-client 包
+├── policy/                  # ML 模型：Diffusion UNet、ACT、视觉编码器
+├── robots/                  # 机器人定义（Franka、Ridgebase）
+├── scripts/                 # 数据转换与数据集工具
+├── tasks/                   # 任务环境（场景、相机、观测）
+├── tests/                   # 配置验证测试
+└── utils/                   # 共享工具（ObjectUtils、相机、回放）
 ```
 
 ### 设计思路
-1. 使用模块化结构
-2. 在task中完成场景状态和观测数据的获取，包括相机图像、机器人状态和场景物体状态
-3. 在controller中完成机器人控制和任务成功条件判断
+1. **模块化结构** — 职责分离，便于维护
+2. **Task** 负责场景状态和观测数据的获取（相机图像、机器人状态、物体状态）
+3. **Controller** 负责机器人控制和任务成功条件判断
+4. 三种运行模式（`collect` / `infer` / `replay`）由同一 YAML 配置驱动
 
 ## 使用方法
 
@@ -123,16 +130,23 @@ LabSim/
 
 
 **Level 3 泛化性任务：**
-- `level3_PourLiquid.yaml` - 复杂倾倒任务
-- `level3_Heat_Liquid.yaml` - 复杂加热任务
-- `level3_TrabsportBeaker.yaml` - 复杂运输任务
-- `level3_open.yaml` - 复杂开启任务
-- `level3_pick.yaml` - 复杂抓取任务
-- `level3_press.yaml` - 复杂按压任务
+- `level3_PourLiquid.yaml` - 倾倒液体（OOD 泛化）
+- `level3_HeatLiquid.yaml` - 加热液体（OOD 泛化）
+- `level3_TransportBeaker.yaml` - 运输烧杯（OOD 泛化）
+- `level3_open.yaml` - 开启任务（OOD 泛化）
+- `level3_pick.yaml` - 抓取任务（OOD 泛化）
+- `level3_press.yaml` - 按压任务（OOD 泛化）
 
 **Level 4 长序列任务：**
 - `level4_CleanBeaker.yaml` - 清洗烧杯
+- `level4_CleanBeaker7Policy.yaml` - 清洗烧杯（7策略变体）
 - `level4_DeviceOperation.yaml` - 设备操作
+- `level4_OpenTransportPour.yaml` - 开门、运输、倾倒
+- `level4_LiquidMixing.yaml` - 液体混合
+
+**Level 5 移动操作任务：**
+- `level5_Navigation.yaml` - 移动底盘导航
+- `level5_Mobile_manipulation.yaml` - 移动抓取放置
 
 #### 2. 修改配置参数
 
@@ -378,7 +392,13 @@ OpenPI服务器应返回以下格式之一的动作：
 - **提交 Issue**：报告 bug、提出功能请求或讨论想法
 - **提交 Pull Request**：贡献代码改进、文档修复或新功能
 
-在提交 PR 之前，请确保您的代码符合项目的代码风格，并通过了相关测试。
+在提交 PR 之前，请确保：
+- 代码通过 `ruff check` 和 `ruff format --check`（配置见 `pyproject.toml`）
+- 抽象方法使用 `@abstractmethod` 装饰器
+- 所有公开方法有返回类型注解
+- 导入按 标准库 → 第三方库 → 项目内部 分组
+
+详细的架构说明和编码约定请参考 `CLAUDE.md`。
 
 感谢所有贡献者对本项目的支持！🙏
 

@@ -1,31 +1,35 @@
+import json
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Tuple, Optional
+from typing import Any
+
 import numpy as np
-from loguru import logger
 import torch
+from loguru import logger
 from omegaconf import OmegaConf
+
 from controllers.inference_engines.inference_engine_factory import InferenceEngineFactory
 from controllers.robot_controllers.grapper_manager import Gripper
 from controllers.robot_controllers.trajectory_controller import FrankaTrajectoryController
 from factories.collector_factory import create_collector
+from robots.franka.rmpflow_controller import RMPFlowController as FrankaRMPFlowController
 from utils.object_utils import ObjectUtils
 from utils.replay_data_loader import ReplayDataLoader
-from robots.franka.rmpflow_controller import RMPFlowController as FrankaRMPFlowController
+
 
 class BaseController(ABC):
     """Base class for all controllers in the chemistry lab simulator.
-    
+
     Provides common functionality for robot control, state management,
     and episode tracking.
     """
-    
-    def __init__(self, cfg, robot, use_default_config=True):
+
+    def __init__(self, cfg, robot, use_default_config: bool = True):
         """Initialize the base controller.
-        
+
         Args:
-            cfg: Configuration object containing controller settings
-            robot: Robot instance to control
-            object_utils: Utility class for object manipulation
+            cfg: Configuration object containing controller settings.
+            robot: Robot instance to control.
+            use_default_config: Whether to use the default RMPFlow config.
         """
         self.cfg = cfg
         self.robot = robot
@@ -33,22 +37,21 @@ class BaseController(ABC):
         self.reset_needed = False
         self._last_success = False
         self._episode_num = 0
-        self.success_count = 0 
+        self.success_count = 0
         self._language_instruction = ""
         self._init_state_captured = False
         self.gripper_control = Gripper()
         self.REQUIRED_SUCCESS_STEPS = 60
         self.check_success_counter = 0
         self._last_failure_reason = ""
-        
+
         self.rmp_controller = FrankaRMPFlowController(
-            name="target_follower_controller",
-            robot_articulation=robot,
-            use_default_config=use_default_config
+            name="target_follower_controller", robot_articulation=robot, use_default_config=use_default_config
         )
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        OmegaConf.register_new_resolver("eval", lambda x: eval(x))
+        if not OmegaConf.has_resolver("eval"):
+            OmegaConf.register_new_resolver("eval", lambda x: eval(x))
         if hasattr(cfg, "mode"):
             self.mode = cfg.mode  # "collect", "infer", or "replay"
             if self.mode == "collect":
@@ -61,43 +64,44 @@ class BaseController(ABC):
                 raise ValueError(f"Invalid mode: {self.mode}. Expected 'collect', 'infer', or 'replay'.")
 
     @property
-    def language_instruction(self) -> Optional[str]:
+    def language_instruction(self) -> str | None:
         """Get the current language instruction for the task.
-        
+
         Returns:
             Optional[str]: The language instruction or None if not set
         """
         return self._language_instruction
-    
+
     @language_instruction.setter
-    def language_instruction(self, instruction: Optional[str]):
+    def language_instruction(self, instruction: str | None):
         """Set the language instruction for the task.
-        
+
         Args:
             instruction: The language instruction to set, or None to clear
         """
         self._language_instruction = instruction
-    
-    def get_language_instruction(self) -> Optional[str]:
+
+    def get_language_instruction(self) -> str | None:
         """Get the language instruction for the current task.
         This method can be overridden by subclasses to provide dynamic instructions.
-        
+
         Returns:
             Optional[str]: The language instruction or None if not available
         """
         return self._language_instruction
-    
-    def step(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
+
+    def step(self, state: dict[str, Any]) -> tuple[Any, bool, bool]:
         """Execute one step of control.
-        
+
+        Dispatches to the mode-specific step method. Stores ``state`` on
+        ``self.state`` so that subclass helpers (e.g. ``_check_success``)
+        can access the latest observation without extra arguments.
+
         Args:
-            state: Current state dictionary containing sensor data and robot state
-            
+            state: Current state dictionary containing sensor data and robot state.
+
         Returns:
-            Tuple containing:
-            - action: Control action to execute
-            - done: Whether the episode is complete
-            - is_success: Whether the task was completed successfully
+            Tuple of (action, done, is_success).
         """
         self.state = state
         if self.mode == "collect":
@@ -113,6 +117,8 @@ class BaseController(ABC):
             return self._step_replay(state)
         elif self.mode == "infer":
             return self._step_infer(state)
+        else:
+            raise ValueError(f"Unknown mode: {self.mode}")
 
     def _init_collect_mode(self, cfg, robot=None):
         """Initialize the controller for collect mode."""
@@ -121,7 +127,7 @@ class BaseController(ABC):
             camera_configs=cfg.cameras,
             save_dir=cfg.multi_run.run_dir,
             max_episodes=cfg.max_episodes,
-            compression=cfg.collector.compression
+            compression=cfg.collector.compression,
         )
 
     def _init_replay_mode(self, cfg, robot=None):
@@ -147,9 +153,9 @@ class BaseController(ABC):
             episode_indices=episode_indices,
         )
         self._current_replay_idx = 0
-        self._current_actions: Optional[Any] = None
+        self._current_actions: Any | None = None
         self._current_action_step = 0
-        self._current_init_state: Optional[dict] = None
+        self._current_init_state: dict | None = None
 
         # Load the first episode immediately so init_state is available right away.
         if len(self._replay_loader) > 0:
@@ -166,30 +172,23 @@ class BaseController(ABC):
     def _init_infer_mode(self, cfg, robot=None):
         """Initialize the controller for infer mode."""
         self.trajectory_controller = FrankaTrajectoryController(
-            name="trajectory_controller",
-            robot_articulation=robot,
-            use_interpolation=False
+            name="trajectory_controller", robot_articulation=robot, use_interpolation=False
         )
-        
-        self.inference_engine = InferenceEngineFactory.create_inference_engine(
-            cfg, self.trajectory_controller
-        )
-    
-    def episode_num(self) -> int:
-        """Get the current episode number.
 
-        Returns:
-            int: Current episode number
-        """
+        self.inference_engine = InferenceEngineFactory.create_inference_engine(cfg, self.trajectory_controller)
+
+    @property
+    def episode_num(self) -> int:
+        """The current episode number."""
         if self.mode == "collect":
             return self.data_collector.episode_count
         return self._episode_num
-    
+
     def print_failure_reason(self) -> None:
         """Print the last failure reason if it exists."""
         if self._last_failure_reason:
             logger.warning(f"Failure Reason: {self._last_failure_reason}")
-    
+
     def reset(self) -> None:
         """Reset the controller state between episodes."""
         # The very first replay reset is just scene setup — no episode has
@@ -207,7 +206,9 @@ class BaseController(ABC):
 
         self._episode_num += 1
 
-        logger.info(f"Episode Stats: Success Rate = {self.success_count}/{self._episode_num} ({(self.success_count/max(self._episode_num, 1))*100:.2f}%)")
+        logger.info(
+            f"Episode Stats: Success Rate = {self.success_count}/{self._episode_num} ({(self.success_count / max(self._episode_num, 1)) * 100:.2f}%)"
+        )
         self.check_success_counter = 0
         self.reset_needed = False
         self._last_success = False
@@ -223,8 +224,8 @@ class BaseController(ABC):
             # get_current_init_state() is called in the next reset cycle.
             self._current_action_step = 0
             self.trajectory_controller.reset()
-        
-    def get_current_init_state(self) -> Optional[dict]:
+
+    def get_current_init_state(self) -> dict | None:
         """Return the init_state dict for the current replay episode.
 
         Reconstructs the nested format expected by ``task.reset_with_init_state()``
@@ -246,11 +247,11 @@ class BaseController(ABC):
         raw = self._current_init_state
 
         out: dict = {
-            "object_poses":               {},
-            "object_materials":           {},
-            "extra":                      {},
+            "object_poses": {},
+            "object_materials": {},
+            "extra": {},
             "robot_init_joint_positions": raw.get("robot_init_joint_positions"),
-            "robot_world_position":       raw.get("robot_world_position"),
+            "robot_world_position": raw.get("robot_world_position"),
         }
 
         # ---- Reconstruct object poses ----------------------------------------
@@ -261,7 +262,7 @@ class BaseController(ABC):
             if np.isscalar(paths) or (isinstance(paths, np.ndarray) and paths.ndim == 0):
                 paths = [paths]
             paths = [p.decode("utf-8") if isinstance(p, bytes) else str(p) for p in paths]
-            positions    = np.atleast_2d(raw["object_pose_positions"])
+            positions = np.atleast_2d(raw["object_pose_positions"])
             orientations = np.atleast_2d(raw["object_pose_orientations"])
             out["object_poses"] = {
                 path: {"position": np.array(positions[i]), "orientation": np.array(orientations[i])}
@@ -270,7 +271,7 @@ class BaseController(ABC):
 
         # ---- Reconstruct object materials ------------------------------------
         if "object_material_paths" in raw and "object_material_values" in raw:
-            mat_paths  = raw["object_material_paths"]
+            mat_paths = raw["object_material_paths"]
             mat_values = raw["object_material_values"]
 
             def _decode(arr):
@@ -282,7 +283,6 @@ class BaseController(ABC):
 
         # ---- Reconstruct extra (task-specific) data --------------------------
         if "init_extra_json" in raw:
-            import json
             try:
                 extra_json = raw["init_extra_json"]
                 if isinstance(extra_json, np.ndarray):
@@ -296,7 +296,7 @@ class BaseController(ABC):
         return out
 
     @abstractmethod
-    def _step_collect(self, state) -> Tuple[Any, bool, bool]:
+    def _step_collect(self, state) -> tuple[Any, bool, bool]:
         """Execute one step in collect mode.
 
         Args:
@@ -306,9 +306,9 @@ class BaseController(ABC):
             Tuple of (action, done, success).
         """
         raise NotImplementedError("Subclasses must implement _step_collect()")
-    
+
     @abstractmethod
-    def _step_infer(self, state) -> Tuple[Any, bool, bool]:
+    def _step_infer(self, state) -> tuple[Any, bool, bool]:
         """Execute one step in infer mode.
 
         Args:
@@ -318,7 +318,7 @@ class BaseController(ABC):
             Tuple of (action, done, success).
         """
         raise NotImplementedError("Subclasses must implement _step_infer()")
-    
+
     def _advance_replay_episode(self) -> None:
         """Pre-load the next replay episode so that ``get_current_init_state()``
         returns the correct init state on the next reset cycle."""
@@ -329,7 +329,7 @@ class BaseController(ABC):
             self._current_init_state = ep.init_state
             logger.info(f"[Replay] Next episode {ep.episode_idx}: {len(self._current_actions)} actions preloaded.")
 
-    def _step_replay(self, state) -> Tuple[Any, bool, bool]:
+    def _step_replay(self, state) -> tuple[Any, bool, bool]:
         """Execute one step in replay mode.
 
         Feeds recorded waypoints through the trajectory controller one at a
@@ -359,7 +359,7 @@ class BaseController(ABC):
 
         success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if success:
-            self._last_failure_reason = None
+            self._last_failure_reason = ""
             self._last_success = True
             self.reset_needed = True
             self._advance_replay_episode()
@@ -378,32 +378,26 @@ class BaseController(ABC):
 
         return action, False, False
 
+    @abstractmethod
     def _check_success(self) -> bool:
         """Evaluate whether the current state meets the task success criterion.
 
         Subclasses must override this method with task-specific logic.
 
-        Args:
-            state: Current state of the environment.
-
         Returns:
             bool: True if the task is currently successful.
         """
-        raise NotImplementedError("Subclasses must implement _check_success()")
+        ...
 
     def close(self) -> None:
         """Clean up resources used by the controller."""
         if self.mode == "collect" and hasattr(self, "data_collector"):
             self.data_collector.close()
-        
+
     def need_reset(self) -> bool:
-        """Check if the controller needs to be reset.
-        
-        Returns:
-            bool: True if reset is needed, False otherwise
-        """
+        """Check if the controller needs to be reset."""
         return self.reset_needed
 
-    def is_success(self):
+    def is_success(self) -> bool:
+        """Check if the last episode was successful."""
         return self._last_success
-    

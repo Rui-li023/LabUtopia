@@ -1,5 +1,6 @@
 import random
 import numpy as np
+from typing import Any, Dict, Optional
 from .base_task import BaseTask
 
 
@@ -11,11 +12,19 @@ class PressTask(BaseTask):
     rely on positional memory.  Episode budget: 1000 steps.
     """
 
-    def __init__(self, cfg, world, stage, robot):
+    _INSTRUMENT_POSITION = np.array([0.73, -0.1, 0.64])
+    _BUTTON_BASE_X = 0.40
+    _BUTTON_BASE_Y_RANGE = (-0.06, 0.04)
+    _BUTTON_BASE_Z = 1.1
+    _BUTTON_Z_JITTER = (-0.1, 0.1)
+    _DISTRACTOR1_Y_OFFSET = (-0.25, -0.15)
+    _DISTRACTOR2_Y_OFFSET = (-0.40, -0.30)
+
+    def __init__(self, cfg: Any, world: Any, stage: Any, robot: Any) -> None:
         super().__init__(cfg, world, stage, robot)
         self.object_utils.set_object_position(
             object_path=self.cfg.instrument_path,
-            position=np.array([0.73, -0.1, 0.64]),
+            position=self._INSTRUMENT_POSITION,
         )
         self.target_button_path      = self.cfg.target_button_path
         self.distractor_button1_path = self.cfg.distractor_button1_path
@@ -25,11 +34,15 @@ class PressTask(BaseTask):
         super().reset()
         self.robot.initialize()
 
-        base_pos = np.array([0.40, random.uniform(-0.06, 0.04), 1.1 + np.random.uniform(-0.1, 0.1)])
+        base_pos = np.array([
+            self._BUTTON_BASE_X,
+            random.uniform(*self._BUTTON_BASE_Y_RANGE),
+            self._BUTTON_BASE_Z + np.random.uniform(*self._BUTTON_Z_JITTER),
+        ])
         positions = [
             base_pos,
-            base_pos + np.array([0.0, random.uniform(-0.25, -0.15), 0.0]),
-            base_pos + np.array([0.0, random.uniform(-0.40, -0.30), 0.0]),
+            base_pos + np.array([0.0, random.uniform(*self._DISTRACTOR1_Y_OFFSET), 0.0]),
+            base_pos + np.array([0.0, random.uniform(*self._DISTRACTOR2_Y_OFFSET), 0.0]),
         ]
         random.shuffle(positions)
 
@@ -43,7 +56,7 @@ class PressTask(BaseTask):
     def reset_with_init_state(self, init_state: dict) -> None:
         super().reset_with_init_state(init_state)
 
-    def step(self):
+    def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1
         if not self.check_frame_limits(max_steps=1000):
             return None

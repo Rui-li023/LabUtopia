@@ -1,8 +1,8 @@
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 from .base_task import BaseTask
 
 
-class LiquidMixing(BaseTask):
+class LiquidMixingTask(BaseTask):
     """Level-4 composite task: Open door → Transfer beaker → Stir.
 
     This task uses a fixed scene layout (paths hardcoded to the lab USD).
@@ -14,9 +14,6 @@ class LiquidMixing(BaseTask):
     BEAKER_PATH      = "/World/beaker_4"
     TARGET_PLAT_PATH = "/World/heat_device/heat_device/heat_device/plat"
 
-    def __init__(self, cfg, world, stage, robot):
-        super().__init__(cfg, world, stage, robot)
-
     def reset(self) -> None:
         super().reset()
         self.robot.initialize()
@@ -24,7 +21,7 @@ class LiquidMixing(BaseTask):
     def reset_with_init_state(self, init_state: dict) -> None:
         super().reset_with_init_state(init_state)
 
-    def step(self) -> Dict[str, Any]:
+    def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1
         if not self.check_frame_limits(max_steps=6000):
             return None

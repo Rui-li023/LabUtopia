@@ -237,7 +237,7 @@ class MobilePickController(BaseController):
             pick_success = (current_z - self.initial_object_z) > 0.1
             
             if pick_success:
-                self._last_failure_reason = None
+                self._last_failure_reason = ""
                 print("Pick successful - object lifted!")
                 # Save complete episode trajectory data (navigation + pick)
                 if hasattr(self, 'data_collector'):

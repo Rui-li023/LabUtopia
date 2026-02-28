@@ -125,7 +125,7 @@ class StirTaskController(BaseController):
             if (final_object_position is not None and 
                 final_object_position[2] > 0.85 and
                 np.linalg.norm(final_object_position[0:2] - target_position[0:2]) < 0.04):
-                self._last_failure_reason = None
+                self._last_failure_reason = ""
                 self.data_collector.write_cached_data(state['joint_positions'][:-1])
                 self._last_success = True
                 return None, True, True

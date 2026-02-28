@@ -176,7 +176,7 @@ def main():
                     max_episodes = cfg.max_episodes
 
                 # Check if we've completed all episodes BEFORE setting up the next one
-                if task_controller.episode_num() >= max_episodes:
+                if task_controller.episode_num >= max_episodes:
                     logger.info(f"All {max_episodes} episodes completed. Shutting down.")
                     task_controller.close()
                     simulation_app.close()
@@ -206,9 +206,9 @@ def main():
                 robot.get_articulation_controller().apply_action(action)
             if done:
                 if is_success:
-                    logger.success(f"Episode {task_controller.episode_num()} succeeded.")
+                    logger.success(f"Episode {task_controller.episode_num} succeeded.")
                 else:
-                    logger.warning(f"Episode {task_controller.episode_num()} failed.")
+                    logger.warning(f"Episode {task_controller.episode_num} failed.")
                 task_controller.print_failure_reason()
                 task.on_task_complete(is_success)
                 continue

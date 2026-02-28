@@ -1,3 +1,5 @@
+from typing import Any, Dict, Optional
+
 from isaacsim.core.utils.prims import set_prim_visibility
 from .single_object_task import SingleObjectTask
 
@@ -25,7 +27,7 @@ class OpenCloseTask(SingleObjectTask):
         else:
             self.current_sub_obj_path = self.current_obj_path + "/handle"
 
-    def step(self):
+    def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1
         if not self.check_frame_limits():
             return None

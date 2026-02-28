@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Any, Dict, Optional
 from .base_task import BaseTask
 
 
@@ -11,7 +12,12 @@ class StirTask(BaseTask):
 
     TEST_TUBE_RACK = "/World/test_tube_rack"
 
-    def __init__(self, cfg, world, stage, robot):
+    _BEAKER_BASE_POS = np.array([0.24125, -0.31358, 0.77])
+    _BEAKER_RANDOM_RANGE = 0.075
+    _RACK_POS = np.array([0.28421, 0.30755, 0.82291])
+    _ROD_OFFSET = np.array([-0.01152, -0.1125, 0.03197])
+
+    def __init__(self, cfg: Any, world: Any, stage: Any, robot: Any) -> None:
         super().__init__(cfg, world, stage, robot)
         self.glass_rod      = self.cfg.obj_path
         self.target_beaker  = self.cfg.target_path
@@ -21,19 +27,17 @@ class StirTask(BaseTask):
         super().reset()
         self.robot.initialize()
 
-        beaker_pos = np.array([
-            0.24125 + np.random.uniform(-0.075, 0.075),
-            -0.31358 + np.random.uniform(-0.075, 0.075),
-            0.77,
-        ])
+        beaker_pos = self._BEAKER_BASE_POS.copy()
+        beaker_pos[0] += np.random.uniform(-self._BEAKER_RANDOM_RANGE, self._BEAKER_RANDOM_RANGE)
+        beaker_pos[1] += np.random.uniform(-self._BEAKER_RANDOM_RANGE, self._BEAKER_RANDOM_RANGE)
         self.object_utils.set_object_position(self.target_beaker, beaker_pos)
         self._record_object_pose(self.target_beaker)
 
-        rack_pos = np.array([0.28421, 0.30755, 0.82291])
+        rack_pos = self._RACK_POS.copy()
         self.object_utils.set_object_position(self.TEST_TUBE_RACK, rack_pos)
         self._record_object_pose(self.TEST_TUBE_RACK)
 
-        rod_pos = rack_pos + np.array([-0.01152, -0.1125, 0.03197])
+        rod_pos = rack_pos + self._ROD_OFFSET
         self.object_utils.set_object_position(self.glass_rod, rod_pos)
         self._record_object_pose(self.glass_rod)
 
@@ -44,7 +48,7 @@ class StirTask(BaseTask):
     def reset_with_init_state(self, init_state: dict) -> None:
         super().reset_with_init_state(init_state)
 
-    def step(self):
+    def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1
         if not self.check_frame_limits(max_steps=2000):
             return None

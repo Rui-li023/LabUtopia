@@ -117,7 +117,7 @@ class ShakeBeakerTaskController(BaseController):
                 )
             return action, False, self.is_success()
         elif self.is_success():
-            self._last_failure_reason = None
+            self._last_failure_reason = ""
             self.data_collector.write_cached_data(state['joint_positions'][:-1])
             self._last_success = True
             self.reset_needed = True

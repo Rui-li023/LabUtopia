@@ -5,7 +5,7 @@ controller_type: "placepress"
 
 mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_003/lab_003.usd"
-max_episodes: 200
+max_episodes: 50
 
 # ── Replay mode ─────────────────────────────────────────────────────────────
 # Set mode: "replay" above to activate.
@@ -47,7 +47,7 @@ task:
     - path: "/World/heat_device/button"
 
   material_paths:
-    - path: /World/Table1/Desk1/surface/Cube
+    - path: /World/table/surface/mesh
       materials:
         - /World/Looks/Material_1_plastic_dark_blue
         - /World/Looks/Material_2_wood

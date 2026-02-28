@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 from .navigation_base_task import NavigationBaseTask
 
@@ -12,7 +12,7 @@ class NavigationTask(NavigationBaseTask):
     the robot at the start.
     """
 
-    def __init__(self, cfg, world, stage, robot):
+    def __init__(self, cfg: Any, world: Any, stage: Any, robot: Any) -> None:
         self.current_end: Optional[list] = None
         super().__init__(cfg, world, stage, robot)
 
@@ -30,7 +30,7 @@ class NavigationTask(NavigationBaseTask):
             100 attempts.
         """
         nav_scene = self.navigation_assets[0]
-        for _ in range(100):
+        for _ in range(self.MAX_SAMPLE_ATTEMPTS):
             start = self._sample_free_point(nav_scene["x_bounds"], nav_scene["y_bounds"])
             end   = self._sample_free_point(nav_scene["x_bounds"], nav_scene["y_bounds"])
             if start is None or end is None:

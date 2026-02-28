@@ -1,10 +1,12 @@
+from typing import Any, Dict, Optional
+
 from .single_object_task import SingleObjectTask
 
 
 class ShakeTask(SingleObjectTask):
     """Shake-beaker task: single object with a 2000-step episode limit."""
 
-    def step(self):
+    def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1
         if not self.check_frame_limits(max_steps=2000):
             return None

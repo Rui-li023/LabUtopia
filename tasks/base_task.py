@@ -28,7 +28,13 @@ class BaseTask(ABC):
         }
     """
 
-    def __init__(self, cfg, world, stage, robot):
+    WARMUP_FRAMES: int = 5
+    DEFAULT_FAR_DISTANCE: float = 10.0
+    DEFAULT_CLIPPING_NEAR: float = 0.1
+    DEFAULT_CLIPPING_FAR: float = 10.0
+
+    def __init__(self, cfg: Any, world: Any, stage: Any, robot: Any) -> None:
+        """Initialise the task with simulation handles and set up cameras, objects, and materials."""
         self.cfg = cfg
         self.world = world
         self.stage = stage
@@ -140,8 +146,8 @@ class BaseTask(ABC):
 
             clipping = getattr(cam_cfg, "clipping_range", None)
             camera.set_clipping_range(
-                near_distance=clipping[0] if clipping else 0.1,
-                far_distance=clipping[1] if clipping else 10.0,
+                near_distance=clipping[0] if clipping else self.DEFAULT_CLIPPING_NEAR,
+                far_distance=clipping[1] if clipping else self.DEFAULT_CLIPPING_FAR,
             )
             self.cameras.append(camera)
 
@@ -188,8 +194,10 @@ class BaseTask(ABC):
     def setup_objects(self) -> None:
         """Populate ``self.obj_configs`` from ``cfg.task.obj_paths``."""
         self.obj_configs = []
-        if hasattr(self.cfg, "task") and hasattr(self.cfg.task, "obj_paths"):
-            for obj in self.cfg.task.obj_paths:
+        task = getattr(self.cfg, "task", None)
+        obj_paths = getattr(task, "obj_paths", None)
+        if obj_paths is not None:
+            for obj in obj_paths:
                 if isinstance(obj, str):
                     self.obj_configs.append({
                         "path": obj,
@@ -208,21 +216,22 @@ class BaseTask(ABC):
         - ``random``: if true, pick randomly each reset instead of cycling.
         """
         self.material_configs: List[Dict] = []
-        is_infer = hasattr(self.cfg, "mode") and self.cfg.mode == "infer"
-        is_ood = (
-            hasattr(self.cfg, "infer")
-            and hasattr(self.cfg.infer, "is_test_material")
-            and bool(self.cfg.infer.is_test_material)
-        )
-        if not (hasattr(self.cfg, "task") and hasattr(self.cfg.task, "material_paths") and self.cfg.task.material_paths):
+        is_infer = getattr(self.cfg, "mode", None) == "infer"
+        infer_cfg = getattr(self.cfg, "infer", None)
+        is_ood = is_infer and bool(getattr(infer_cfg, "is_test_material", False))
+        task = getattr(self.cfg, "task", None)
+        material_paths = getattr(task, "material_paths", None)
+        if not material_paths:
             return
-        for mat_cfg in self.cfg.task.material_paths:
-            use_test = is_infer and is_ood and hasattr(mat_cfg, "test_materials")
+        for mat_cfg in material_paths:
+            use_test = is_ood and getattr(mat_cfg, "test_materials", None) is not None
             materials = list(mat_cfg.test_materials if use_test else getattr(mat_cfg, "materials", []))
-            if hasattr(mat_cfg, "paths"):
-                paths = list(mat_cfg.paths)
-            elif hasattr(mat_cfg, "path"):
-                paths = [mat_cfg.path]
+            paths_attr = getattr(mat_cfg, "paths", None)
+            path_attr = getattr(mat_cfg, "path", None)
+            if paths_attr is not None:
+                paths = list(paths_attr)
+            elif path_attr is not None:
+                paths = [path_attr]
             else:
                 paths = []
             self.material_configs.append({
@@ -285,7 +294,7 @@ class BaseTask(ABC):
     def place_objects_with_visibility_management(
         self,
         current_obj_idx: int,
-        far_distance: float = 10.0,
+        far_distance: float = None,
         fixed_position: np.ndarray = None,
     ) -> str:
         """Place the active object and hide all others.
@@ -297,12 +306,15 @@ class BaseTask(ABC):
         Args:
             current_obj_idx: Index into ``self.obj_configs`` for the active object.
             far_distance: Distance at which inactive objects are placed.
+                          Defaults to ``DEFAULT_FAR_DISTANCE``.
             fixed_position: When provided, skip randomisation and place the
                             active object at this exact position (replay mode).
 
         Returns:
             USD path of the active object.
         """
+        if far_distance is None:
+            far_distance = self.DEFAULT_FAR_DISTANCE
         for i, obj_cfg in enumerate(self.obj_configs):
             obj_path = obj_cfg["path"]
             prim = self.stage.GetPrimAtPath(obj_path)
@@ -445,10 +457,10 @@ class BaseTask(ABC):
         Returns:
             ``False`` during warm-up, ``True`` otherwise.
         """
-        if self.frame_idx < 5:
+        if self.frame_idx < self.WARMUP_FRAMES:
             return False
         if max_steps is None:
-            max_steps = self.cfg.task.max_steps
+            max_steps = getattr(getattr(self.cfg, "task", None), "max_steps", float("inf"))
         if self.frame_idx > max_steps:
             self.on_task_complete(True)
         return True
@@ -483,3 +495,9 @@ class BaseTask(ABC):
         sequential = [mc for mc in self.material_configs if not mc["random"] and mc["materials"]]
         if sequential:
             self.current_material_idx = (self.current_material_idx + 1) % len(sequential[0]["materials"])
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}(frame={self.frame_idx}, "
+            f"objs={len(self.obj_configs)}, mats={len(self.material_configs)})"
+        )

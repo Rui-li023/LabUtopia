@@ -128,7 +128,7 @@ class NavigationController(BaseController):
             )
         
         if done or self.ridgebase_controller.is_path_complete():
-            self._last_failure_reason = None
+            self._last_failure_reason = ""
             self._last_success = True
             self.reset_needed = True
             
@@ -178,7 +178,7 @@ class NavigationController(BaseController):
         
         # If the navigation is complete
         if done or self.ridgebase_controller.is_path_complete():
-            self._last_failure_reason = None
+            self._last_failure_reason = ""
             self._last_success = True
             self.reset_needed = True
             return action, True, True

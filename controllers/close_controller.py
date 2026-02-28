@@ -117,7 +117,7 @@ class CloseTaskController(BaseController):
 
         success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if success:
-            self._last_failure_reason = None
+            self._last_failure_reason = ""
             print("Task success!")
             self.data_collector.write_cached_data(state['joint_positions'][:-1])
             self._last_success = True
@@ -153,7 +153,7 @@ class CloseTaskController(BaseController):
             
         success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if success:
-            self._last_failure_reason = None
+            self._last_failure_reason = ""
             print("Task success!")
             self._last_success = True
             self.reset_needed = True
@@ -179,7 +179,7 @@ class CloseTaskController(BaseController):
             if not success:
                 self._last_failure_reason = f"Close task failed: handle moved distance too short ({handle_moved_enough:.4f}<0.13) or gripper too close to object ({gripper_far_enough:.4f}<0.04)"
             else:
-                self._last_failure_reason = None
+                self._last_failure_reason = ""
             return success
         else:
             handle_moved_enough = np.array(current_pos)[0] - self.initial_handle_position[0] 
@@ -188,7 +188,7 @@ class CloseTaskController(BaseController):
             if not success:
                 self._last_failure_reason = f"Close task failed: handle moved distance too short ({handle_moved_enough:.4f}<0.08) or gripper too close to object ({gripper_far_enough:.4f}<0.08)"
             else:
-                self._last_failure_reason = None
+                self._last_failure_reason = ""
             return success    
 
     def get_language_instruction(self) -> Optional[str]:

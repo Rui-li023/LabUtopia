@@ -113,7 +113,7 @@ class OpenTaskController(BaseController):
 
         success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if success:
-            self._last_failure_reason = None
+            self._last_failure_reason = ""
             print("Task success!")
             self.data_collector.write_cached_data(state['joint_positions'][:-1])
             self._last_success = True
@@ -150,7 +150,7 @@ class OpenTaskController(BaseController):
             
         success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if success:
-            self._last_failure_reason = None
+            self._last_failure_reason = ""
             print("Task success!")
             self._last_success = True
             self.reset_needed = True
@@ -182,7 +182,7 @@ class OpenTaskController(BaseController):
         
         # Update failure reason
         if success:
-            self._last_failure_reason = None
+            self._last_failure_reason = ""
         elif not success:
             if not handle_moved_enough and not gripper_far_enough:
                 self._last_failure_reason = f"Handle moved distance too short ({handle_move_distance:.4f}<0.12) and Gripper too close to object ({gripper_to_object_distance:.4f}<0.04)"

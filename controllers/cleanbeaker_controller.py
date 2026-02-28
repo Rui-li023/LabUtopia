@@ -223,7 +223,7 @@ class CleanBeakerTaskController(BaseController):
             if self.place_beaker1.is_done():
                 success = self._check_success()
                 if success:
-                    self._last_failure_reason = None
+                    self._last_failure_reason = ""
                     self.data_collector.write_cached_data(state['joint_positions'][:-1])
                     self._last_success = True
                 else:

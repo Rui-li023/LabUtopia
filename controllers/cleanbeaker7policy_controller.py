@@ -324,7 +324,7 @@ class CleanBeaker7PolicyTaskController(BaseController):
                 )
                 if success:
                     # Task succeeded
-                    self._last_failure_reason = None
+                    self._last_failure_reason = ""
                     for step in range(1, 7):
                         if self._last_joint_data[step] is not None:
                             self.collectors[step].write_cached_data(self._last_joint_data[step])
