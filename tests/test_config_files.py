@@ -84,7 +84,7 @@ class ConfigTester:
         try:
             # Build command
             cmd = [
-                sys.executable, "main.py", 
+                "python3", "main.py",
                 "--config-name", config_name,
                 "--config-dir", str(temp_config_file.parent),
             ]
