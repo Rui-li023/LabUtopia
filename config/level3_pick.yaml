@@ -3,9 +3,9 @@ name: Level3_pick
 task_type: "pick"
 controller_type: "pick"
 
-mode: "replay"  # "collect", "infer", or "replay"
+mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
-max_episodes: 10
+max_episodes: 100
 
 # ── Replay mode ─────────────────────────────────────────────────────────────
 # Set mode: "replay" above to activate.
