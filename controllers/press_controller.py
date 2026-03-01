@@ -35,7 +35,7 @@ class PressTaskController(BaseController):
             
     def _check_success(self):
         final_object_position = self.object_utils.get_object_xform_position(
-            object_path=self.cfg.sub_obj_path
+            object_path=self.cfg.target_button_path
         )
         return final_object_position is not None and final_object_position[0] > 0.405
 

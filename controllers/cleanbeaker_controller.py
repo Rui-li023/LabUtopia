@@ -135,7 +135,7 @@ class CleanBeakerTaskController(BaseController):
             action, record_array = self.pick_beaker2.forward(
                 picking_position=state['beaker_2_position'],
                 current_joint_positions=state['joint_positions'],
-                object_size=state['target_size'],
+                object_size=state['object_size'],
                 object_name="beaker_l",
                 gripper_control=self.gripper_control,
                 gripper_position=state['gripper_position'],
@@ -151,7 +151,7 @@ class CleanBeakerTaskController(BaseController):
             # 2. Pour beaker2 to beaker1
             action, record_array = self.pour_beaker2.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
-                source_size=state['target_size'],
+                source_size=state['object_size'],
                 target_position=state['beaker_1_position'],
                 gripper_position=state['gripper_position'],
                 source_name="beaker",
@@ -178,7 +178,7 @@ class CleanBeakerTaskController(BaseController):
             action, record_array = self.pick_beaker1.forward(
                 picking_position=state['beaker_1_position'],
                 current_joint_positions=state['joint_positions'],
-                object_size=state['target_size'],
+                object_size=state['object_size'],
                 object_name="beaker_l",
                 gripper_control=self.gripper_control,
                 gripper_position=state['gripper_position'],
@@ -201,7 +201,7 @@ class CleanBeakerTaskController(BaseController):
             # 6. Pour beaker1 to target_beaker
             action, record_array = self.pour_beaker1.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
-                source_size=state['target_size'],
+                source_size=state['object_size'],
                 source_name="beaker",
                 target_position=state['target_position'],
                 gripper_position=state['gripper_position'],

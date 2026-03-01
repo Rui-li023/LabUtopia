@@ -297,6 +297,9 @@ class DeviceOperateController(BaseController):
                     self._last_failure_reason = ""
                     print(f"{self.current_phase.value} success!")
                     self._advance_to_next_phase()
+                    if self.current_phase == Phase.FINISHED:
+                        # All phases succeeded — write collected data
+                        self.data_collector.write_cached_data(state['joint_positions'][:-1])
                     return None, False, False
                 else:
                     self._last_failure_reason = f"Phase {self.current_phase.value} failed: phase success check did not pass after controller done"

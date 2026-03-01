@@ -178,7 +178,17 @@ class CleanBeaker7PolicyTaskController(BaseController):
         
         self._current_collector = self.collectors[self._current_step]
         self.frame_count += 1
-        
+
+        # Guard against None positions from get_geometry_center (prim not yet valid)
+        if self._current_step in (1, 2) and state.get('beaker_2_position') is None:
+            return action, done, success
+        if self._current_step in (4, 5, 6) and state.get('beaker_1_position') is None:
+            return action, done, success
+        if self._current_step == 3 and state.get('plat_2_position') is None:
+            return action, done, success
+        if self._current_step == 7 and state.get('plat_1_position') is None:
+            return action, done, success
+
         if self._current_step == 1:
             # 1. Pick beaker2
             action, record_array = self.pick_beaker2.forward(
