@@ -147,6 +147,19 @@ class CleanBeaker7PolicyTaskController(BaseController):
         
         self.frame_count = 0
 
+    def _check_success(self) -> bool:
+        """Evaluate whether the current state meets the task success criterion."""
+        return self._last_success
+
+    def _step_collect(self, state):
+        """Execute one step in collect mode (dispatched from base step)."""
+        # Collection logic is handled in step() override; this satisfies the abstract contract.
+        raise NotImplementedError("CleanBeaker7PolicyTaskController uses step() override for collect mode")
+
+    def _step_infer(self, state):
+        """Execute one step in infer mode (dispatched from base step)."""
+        raise NotImplementedError("CleanBeaker7PolicyTaskController uses step() override for infer mode")
+
     def step(self, state):
         """Execute one step of the CleanBeaker sequence.
         

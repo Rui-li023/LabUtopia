@@ -57,6 +57,10 @@ class PickPlaceTaskController(BaseController):
         else:
             self.inference_engine.reset()
 
+    def _check_success(self) -> bool:
+        """Evaluate whether the current state meets the task success criterion."""
+        return self._check_phase_success()
+
     def _check_phase_success(self):
         """Check if current phase is successful based on object position."""
         object_pos = self.state['object_position']

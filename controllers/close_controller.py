@@ -108,7 +108,7 @@ class CloseTaskController(BaseController):
                     language_instruction=self.get_language_instruction()
                 )
             
-            if self._check_success(state):
+            if self._check_success():
                 self.check_success_counter += 1
             else:
                 self.check_success_counter = 0
@@ -146,7 +146,7 @@ class CloseTaskController(BaseController):
         
         action = self.inference_engine.step_inference(state)
         
-        if self._check_success(state):
+        if self._check_success():
             self.check_success_counter += 1
         else:
             self.check_success_counter = 0

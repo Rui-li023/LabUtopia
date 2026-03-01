@@ -157,6 +157,10 @@ class LiquidMixingController(BaseController):
         else:
             self.inference_engine.reset()
             
+    def _check_success(self) -> bool:
+        """Evaluate whether the current state meets the task success criterion."""
+        return self._check_phase_success(self.state)
+
     def _check_phase_success(self, state: Dict[str, Any]) -> bool:
         """Check if the current phase is successfully completed
         

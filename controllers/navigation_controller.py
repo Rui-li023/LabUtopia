@@ -156,6 +156,12 @@ class NavigationController(BaseController):
         
         return action, False, False
     
+    def _check_success(self) -> bool:
+        """Evaluate whether the current state meets the task success criterion."""
+        if not self.waypoints_set:
+            return False
+        return self.ridgebase_controller.is_path_complete()
+
     def _step_infer(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
         """
         Control step in inference mode (reserved interface).

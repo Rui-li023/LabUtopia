@@ -254,6 +254,13 @@ class MobilePickController(BaseController):
         
         return action, False, False
     
+    def _check_success(self) -> bool:
+        """Evaluate whether the current state meets the task success criterion."""
+        if self.initial_object_z is None or self.state is None:
+            return False
+        current_z = self.state.get('object_position', [0, 0, 0])[2]
+        return (current_z - self.initial_object_z) > 0.1
+
     def _step_infer(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
         """
         Control step in inference mode (reserved interface).

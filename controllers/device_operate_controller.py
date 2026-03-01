@@ -114,6 +114,15 @@ class DeviceOperateController(BaseController):
         else:
             pass
 
+    def _check_success(self) -> bool:
+        """Evaluate whether the current state meets the task success criterion."""
+        return self._check_phase_success(self.state)
+
+    def _step_collect(self, state):
+        """Execute one step in collect mode (dispatched from base step)."""
+        # Collection logic is handled in step() override; this satisfies the abstract contract.
+        raise NotImplementedError("DeviceOperateController uses step() override for collect mode")
+
     def _check_phase_success(self, state):
         """Check success criteria for current phase."""
         if self.current_phase == Phase.OPEN_DOOR:

@@ -70,6 +70,10 @@ class PourTaskController(BaseController):
         else:
             self.inference_engine.reset()
 
+    def _check_success(self) -> bool:
+        """Evaluate whether the current state meets the task success criterion."""
+        return self._check_phase_success()
+
     def _check_phase_success(self):
         """Check if current phase is successful."""
         object_pos = self.state['object_position']
@@ -172,22 +176,18 @@ class PourTaskController(BaseController):
         return False
     def step(self, state):
         """Execute one step of control.
-        
+
         Args:
             state: Current state dictionary containing sensor data and robot state
-            
+
         Returns:
             Tuple containing action, done flag, and success flag
         """
-        self.state = state
         if self.initial_position is None:
-            self.initial_position = self.state['object_position']
+            self.initial_position = state['object_position']
         if self.initial_size is None:
-            self.initial_size = self.state['object_size']
-        if self.mode == "collect":
-            return self._step_collect(state)
-        else:
-            return self._step_infer(state)
+            self.initial_size = state['object_size']
+        return super().step(state)
 
     def _step_collect(self, state):
         """Execute collection mode step."""

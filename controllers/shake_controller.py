@@ -109,6 +109,10 @@ class ShakeTaskController(BaseController):
 
         return action, self._last_success, self.is_success()
         
+    def _check_success(self) -> bool:
+        """Evaluate whether the current state meets the task success criterion."""
+        return self.is_success()
+
     def is_success(self):
         if self._initial_position is None:
             return False

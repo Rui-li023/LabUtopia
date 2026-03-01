@@ -206,7 +206,7 @@ class OpenCloseTaskController(BaseController):
         
         action = self.inference_engine.step_inference(state)
         
-        if self._check_success(state):
+        if self._check_success():
             self.check_success_counter += 1
         else:
             self.check_success_counter = 0
@@ -221,6 +221,13 @@ class OpenCloseTaskController(BaseController):
             
         return action, False, False
         
+    def _check_success(self) -> bool:
+        """Evaluate whether the current state meets the task success criterion."""
+        if self.current_phase == "open":
+            return self._check_open_success(self.state)
+        else:
+            return self._check_close_success(self.state)
+
     def _check_open_success(self, state):
         """Checks if the opening phase has been successfully completed.
 
