@@ -293,72 +293,7 @@ class CleanBeakerTaskController(BaseController):
         if self.frame_count > Maxframe:
             self.reset_needed = True
             return True
-        
-        if self.frame_count > 5000:
-            beaker1_pos = self.object_utils.get_object_xform_position(object_path=self.cfg.beaker_1+"/mesh")
-            beaker2_pos = self.object_utils.get_object_xform_position(object_path=self.cfg.beaker_2+"/mesh")
-            plat1_pos = self.object_utils.get_object_xform_position(object_path=self.cfg.plat_1)
-            plat2_pos = self.object_utils.get_object_xform_position(object_path=self.cfg.plat_2)
 
-            print("===  ===")
-            print(f"beaker1_pos: {beaker1_pos}")
-            print(f"plat1_pos: {plat1_pos}")
-            print(f"beaker2_pos: {beaker2_pos}")
-            print(f"plat2_pos: {plat2_pos}")
-            print("\n===  ===")
-
-            cond1 = beaker1_pos is not None
-            print(f" 1: beaker1_pos is not None -> {cond1}")
-            
-            diff_x1 = abs(beaker1_pos[0] - plat1_pos[0])
-            cond2 = diff_x1 < 0.04
-            print(f" 2: abs(beaker1_pos[0] - plat1_pos[0]) = {diff_x1:.6f} < 0.04 -> {cond2}")
-
-            diff_y1 = abs(beaker1_pos[1] - plat1_pos[1])
-            cond3 = diff_y1 < 0.04
-            print(f" 3: abs(beaker1_pos[1] - plat1_pos[1]) = {diff_y1:.6f} < 0.04 -> {cond3}")
-
-            z1 = beaker1_pos[2]
-            cond4 = z1 <= 0.78
-            print(f" 4: beaker1_pos[2] = {z1:.6f} <= 0.78 -> {cond4}")
-
-            cond5 = beaker2_pos is not None
-            print(f" 5: beaker2_pos is not None -> {cond5}")
-            
-            diff_x2 = abs(beaker2_pos[0] - plat2_pos[0])
-            cond6 = diff_x2 < 0.04
-            print(f" 6: abs(beaker2_pos[0] - plat2_pos[0]) = {diff_x2:.6f} < 0.04 -> {cond6}")
-            
-            diff_y2 = abs(beaker2_pos[1] - plat2_pos[1])
-            cond7 = diff_y2 < 0.04
-            print(f" 7: abs(beaker2_pos[1] - plat2_pos[1]) = {diff_y2:.6f} < 0.04 -> {cond7}")
-
-            z2 = beaker2_pos[2]
-            cond8 = z2 <= 0.78
-            print(f" 8: beaker2_pos[2] = {z2:.6f} <= 0.78 -> {cond8}")
-
-            success = cond1 and cond2 and cond3 and cond4 and cond5 and cond6 and cond7 and cond8
-            print("\n===  ===")
-            print(f"success = {success}")
-            if success:
-                print("(1-8) True")
-            else:
-                print("(1-8) False")
-                if not cond1: print("-  1: beaker1_pos is not None")
-                if not cond3: print("-  3: abs(beaker1_pos[1] - plat1_pos[1]) < 0.04")
-                if not cond4: print("-  4: beaker1_pos[2] <= 0.78")
-                if not cond5: print("-  5: beaker2_pos is not None")
-                if not cond6: print("-  6: abs(beaker2_pos[0] - plat2_pos[0]) < 0.04")
-                if not cond7: print("-  7: abs(beaker2_pos[1] - plat2_pos[1]) < 0.04")
-                if not cond8: print("-  8: beaker2_pos[2] <= 0.78")
-
-        else:
-            success = False
-
-        if success:
-            self.reset_needed = True
-            self.print_success = True
-            return True
         return False
 
     def get_language_instruction(self) -> Optional[str]:

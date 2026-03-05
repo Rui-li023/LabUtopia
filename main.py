@@ -80,14 +80,16 @@ def _convert_to_h264(src_path: str, is_success: bool):
             "-preset", "fast",
             tmp_path,
         ],
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        timeout=300,
     )
     if ret.returncode == 0:
         os.replace(tmp_path, dest_path)
         os.remove(src_path)
         logger.success(f"Video saved: {dest_path}")
     else:
-        logger.error(f"H264 conversion failed for: {src_path}")
+        stderr_msg = ret.stderr.decode(errors="replace") if ret.stderr else ""
+        logger.error(f"H264 conversion failed for: {src_path}\n{stderr_msg}")
         try:
             os.remove(tmp_path)
         except FileNotFoundError:
@@ -238,7 +240,11 @@ def main():
                             video_output_path = os.path.join(output_dir, f"episode_{task_controller._episode_num}.mp4")
                             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                             video_writer = cv2.VideoWriter(video_output_path, fourcc, 60.0, (width, height))
-                        video_writer.write(combined_img)
+                            if not video_writer.isOpened():
+                                logger.error(f"Failed to open VideoWriter for {video_output_path}")
+                                video_writer = None
+                        if video_writer is not None:
+                            video_writer.write(combined_img)
 
 
 if __name__ == "__main__":

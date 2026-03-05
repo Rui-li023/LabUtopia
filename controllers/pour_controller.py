@@ -1,4 +1,3 @@
-import re
 from typing import Optional
 from scipy.spatial.transform import Rotation as R
 import numpy as np
@@ -291,6 +290,6 @@ class PourTaskController(BaseController):
         return action, False, False
 
     def get_language_instruction(self) -> Optional[str]:
-        object_name = re.sub(r'\d+', '', self.state['object_name']).replace('_', ' ').lower()
+        object_name = self.clean_object_name(self.state['object_name'])
         self.language_instruction = f"Pick up the {object_name} from the table and pour it into the target".replace("  ", " ")
         return self.language_instruction

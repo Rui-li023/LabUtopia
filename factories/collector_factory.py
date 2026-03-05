@@ -12,7 +12,7 @@ def register_collector(name: str, collector_class: Type[DataCollector]):
 def create_collector(collector_type: str, *args, **kwargs) -> DataCollector:
     
     if collector_type not in _collector_registry:
-        raise ValueError(f": {collector_type}")
+        raise ValueError(f"Unknown collector type: '{collector_type}'. Available: {list(_collector_registry.keys())}")
     return _collector_registry[collector_type](*args, **kwargs)
 
 

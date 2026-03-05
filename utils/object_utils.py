@@ -3,6 +3,7 @@ from isaacsim.core.utils.stage import get_stage_units
 import numpy as np
 from isaacsim.core.utils.numpy.rotations import euler_angles_to_quats
 from scipy.spatial.transform import Rotation as R
+from loguru import logger
 class ObjectUtils:
     _instance = None
 
@@ -79,7 +80,7 @@ class ObjectUtils:
         """Get the world-space position from the object's transform."""
         prim = self._stage.GetPrimAtPath(object_path)
         if not prim.IsValid():
-            print(f"Object at path {object_path} not found.")
+            logger.warning(f"Object at path {object_path} not found.")
             return None
 
         xformable = UsdGeom.Xformable(prim)
@@ -91,7 +92,7 @@ class ObjectUtils:
         """Set the object's position in world or local space."""
         prim = self._stage.GetPrimAtPath(object_path)
         if not prim.IsValid():
-            print(f"Object at path {object_path} not found.")
+            logger.warning(f"Object at path {object_path} not found.")
             return
 
         xformable = UsdGeom.Xformable(prim)
@@ -132,7 +133,7 @@ class ObjectUtils:
         """
         prim = self._stage.GetPrimAtPath(object_path)
         if not prim.IsValid():
-            print(f"Object at path {object_path} not found.")
+            logger.warning(f"Object at path {object_path} not found.")
             return None
 
         rotation = prim.GetAttribute("xformOp:orient").Get()
@@ -158,7 +159,7 @@ class ObjectUtils:
         """
         prim = self._stage.GetPrimAtPath(object_path)
         if not prim.IsValid():
-            print(f"Object at path {object_path} not found.")
+            logger.warning(f"Object at path {object_path} not found.")
             return None
         xformable = UsdGeom.Xformable(prim)
         transform = xformable.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
@@ -181,7 +182,7 @@ class ObjectUtils:
         """
         prim = self._stage.GetPrimAtPath(object_path)
         if not prim.IsValid():
-            print(f"Object at path {object_path} not found.")
+            logger.warning(f"Object at path {object_path} not found.")
             return
         xformable = UsdGeom.Xformable(prim)
         xform_ops = xformable.GetOrderedXformOps()
@@ -215,8 +216,8 @@ class ObjectUtils:
         joint_api = UsdPhysics.Joint(joint_prim)
         body1 = joint_api.GetBody1Rel().GetTargets()
         if not body1:
-            print("No body1 found!")
-            exit()
+            logger.error("No body1 found for joint!")
+            return None
 
         body1_prim = self._stage.GetPrimAtPath(body1[0])
 

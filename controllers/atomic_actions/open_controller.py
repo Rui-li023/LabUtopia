@@ -238,11 +238,11 @@ class OpenController(BaseController):
                     target_end_effector_position=self.trans_interp,
                     target_end_effector_orientation=self.rotation_interp
                 )
-            except:
+            except StopIteration:
                 self._event += 1
                 self._t = 0
                 target_joint_positions = self._cspace_controller.forward(
-                    target_end_effector_position=self.trans_interp, 
+                    target_end_effector_position=self.trans_interp,
                     target_end_effector_orientation=self.rotation_interp
                 )
         elif self._event == 4:

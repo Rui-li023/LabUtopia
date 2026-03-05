@@ -12,7 +12,7 @@ def register_robot(name: str, robot_class: Type[Robot]):
 def create_robot(robot_type: str, *args, **kwargs) -> Robot:
     
     if robot_type not in _robot_registry:
-        raise ValueError(f": {robot_type}")
+        raise ValueError(f"Unknown robot type: '{robot_type}'. Available: {list(_robot_registry.keys())}")
     return _robot_registry[robot_type](*args, **kwargs)
 
 

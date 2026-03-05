@@ -102,7 +102,7 @@ LabUtopia/
 
 ### Data Collection
 
-Data collection is the first step in training models. LabUtopia supports data collection for multiple task types, and you can also download pre-collected data from our HuggingFace repository.
+Data collection is the first step in training models. LabUtopia supports data collection for multiple task types. You can also download pre-collected data from our [HuggingFace repository](https://huggingface.co/datasets/Ruinwalker/Labutopia-Dataset).
 
 #### 1. Select Configuration File
 There are multiple pre-configured task files in the `config` folder:
@@ -124,7 +124,7 @@ There are multiple pre-configured task files in the `config` folder:
 - `level2_StirGlassrod.yaml` - Stir with glass rod
 - `level2_PourLiquid.yaml` - Pour liquid
 - `level2_TransportBeaker.yaml` - Transport beaker
-- `level2_Heat_Liquid.yaml` - Heat liquid
+- `level2_HeatLiquid.yaml` - Heat liquid
 - `level2_openclose.yaml` - Open and close tasks
 
 **Level 3 Generalization Tasks:**
@@ -155,7 +155,7 @@ Each configuration file contains the following main parameters that need to be a
 name: level1_pick                    # Task name
 task_type: "pick"                   # Task type
 controller_type: "pick"             # Controller type
-mode: "collect"                     # Mode: collect or infer
+mode: "collect"                     # Mode: collect | infer | replay
 
 # Scene configuration
 usd_path: "assets/chemistry_lab/pick_task/scene.usd"  # Scene file path
@@ -182,7 +182,7 @@ cameras:
     resolution: [256, 256]         # Resolution
     focal_length: 6                 # Focal length
     orientation: [0.61237, 0.35355, 0.35355, 0.61237]  # Orientation
-    image_type: "rgb"              # Image type, rgb depth, point. You can use rgb+depth to get more than one type of image.
+    image_type: "rgb"              # Image type: rgb, depth, pointcloud. Use "rgb+depth" to get multiple types simultaneously.
 
 # Robot configuration
 robot:
@@ -215,6 +215,8 @@ There are multiple training configurations in the `policy/config/` folder:
 
 - `train_diffusion_unet_image_workspace.yaml` - Diffusion model training (recommended)
 - `train_act_image_workspace.yaml` - ACT model training
+- `train_nav_diffusion.yaml` - Navigation task diffusion model training
+- `train_nav_act.yaml` - Navigation task ACT model training
 
 #### 2. Modify Training Parameters
 
@@ -332,7 +334,7 @@ Inference results will be saved in the `outputs/infer/date/time_taskname/` direc
 
 ### Installation
 
-Download our modified OpenPI code:
+Download our modified OpenPI code, refer to its `README` for environment setup and downloading pretrained weights:
 
 ```
 git clone https://github.com/Rui-li023/openpi.git
@@ -355,7 +357,7 @@ LabUtopia supports using remote servers for model inference.
 #### Installation
 
 ```
-cd openpi/packages/openpi-client
+cd packages/openpi-client
 pip install -e . 
 ```
 

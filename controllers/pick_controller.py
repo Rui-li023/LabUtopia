@@ -1,4 +1,3 @@
-import re
 from typing import Optional
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -142,6 +141,6 @@ class PickTaskController(BaseController):
         Returns:
             Optional[str]: The language instruction or None if not available
         """
-        object_name = re.sub(r'\d+', '', self.state['object_name']).replace('_', ' ').replace('  ', ' ').lower()
+        object_name = self.clean_object_name(self.state['object_name'])
         self._language_instruction = f"Pick up the {object_name} from the table"
         return self._language_instruction

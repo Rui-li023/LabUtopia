@@ -13,14 +13,6 @@ class SingleObjectTask(BaseTask):
     Suitable for: pick, open/close, shake, pour, etc.
     """
 
-    def on_task_complete(self, success: bool) -> None:
-        """Advance object/material indices without triggering a reset.
-
-        Single-object tasks manage their own reset timing (e.g. via
-        ``check_frame_limits``), so only the indices are updated here.
-        """
-        self.update_object_and_material_indices(success)
-
     def reset(self) -> None:
         """Reset the scene: re-apply materials, place active object, hide others."""
         super().reset()

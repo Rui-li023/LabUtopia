@@ -3,6 +3,7 @@ import glob
 import numpy as np
 import h5py
 from typing import List, Dict, Optional
+from loguru import logger
 
 
 class EpisodeData:
@@ -82,13 +83,13 @@ class ReplayDataLoader:
                 self._episodes.append(episode)
                 loaded += 1
 
-        print(f"[ReplayDataLoader] Loaded {loaded} episodes from {self.dataset_path}")
+        logger.info(f"Loaded {loaded} episodes from {self.dataset_path}")
 
     def _load_single(self, ep_idx: int, h5_path: str) -> Optional[EpisodeData]:
         try:
             with h5py.File(h5_path, "r") as f:
                 if "actions" not in f:
-                    print(f"[ReplayDataLoader] Warning: {h5_path} has no 'actions' dataset, skipping.")
+                    logger.warning(f"{h5_path} has no 'actions' dataset, skipping.")
                     return None
 
                 actions = f["actions"][:]
@@ -103,11 +104,11 @@ class ReplayDataLoader:
                         else:
                             init_state[key] = dataset[:]
                 else:
-                    print(f"[ReplayDataLoader] Warning: {h5_path} has no 'init_state' group. "
-                          "Scene will be reset randomly for this episode.")
+                    logger.warning(f"{h5_path} has no 'init_state' group. "
+                                   "Scene will be reset randomly for this episode.")
 
             return EpisodeData(ep_idx, actions, init_state)
 
         except Exception as e:
-            print(f"[ReplayDataLoader] Error loading {h5_path}: {e}")
+            logger.error(f"Error loading {h5_path}: {e}")
             return None

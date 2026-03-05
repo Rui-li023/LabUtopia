@@ -1,13 +1,14 @@
 import torch
 import numpy as np
 from typing import Dict
+from loguru import logger
 
 from .base_inference_engine import BaseInferenceEngine
 
 try:
     from openpi_client.websocket_client_policy import WebsocketClientPolicy
 except ModuleNotFoundError:
-    print("OpenPI client not found. Please follow the instruction to install openpi-client'")
+    logger.warning("OpenPI client not found. Please follow the instruction to install openpi-client")
 
 class RemoteInferenceEngine(BaseInferenceEngine):
     """
@@ -38,13 +39,11 @@ class RemoteInferenceEngine(BaseInferenceEngine):
             # Get server metadata
             self.server_metadata = self.client.get_server_metadata()
             
-            print(f"✓ OpenPI client initialized successfully")
-            print(f"  - Host: {self.host}")
-            print(f"  - Port: {self.port}")
-            print(f"  - Server metadata: {self.server_metadata}")
+            logger.success("OpenPI client initialized successfully")
+            logger.info(f"Host: {self.host}, Port: {self.port}, Server metadata: {self.server_metadata}")
             
         except Exception as e:
-            print(f"❌ Failed to initialize OpenPI client: {e}")
+            logger.error(f"Failed to initialize OpenPI client: {e}")
             raise
     
     def _prepare_observation(self, obs_dict: Dict[str, torch.Tensor]) -> Dict:
@@ -126,7 +125,7 @@ class RemoteInferenceEngine(BaseInferenceEngine):
             return action
             
         except Exception as e:
-            print(f"❌ OpenPI inference failed: {e}")
+            logger.error(f"OpenPI inference failed: {e}")
             # Return zero action as fallback
             return np.zeros((8, 8))  # Default action shape
     
@@ -135,6 +134,6 @@ class RemoteInferenceEngine(BaseInferenceEngine):
         try:
             if hasattr(self, 'client'):
                 self.client.reset()
-            print("✓ OpenPI client closed successfully")
+            logger.success("OpenPI client closed successfully")
         except Exception as e:
-            print(f"⚠ Error closing OpenPI client: {e}")
+            logger.warning(f"Error closing OpenPI client: {e}")

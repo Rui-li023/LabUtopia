@@ -29,7 +29,7 @@ def register_controller(name: str, controller_class: Type[BaseController]):
 
 def create_controller(controller_name: str, *args, **kwargs) -> BaseController:
     if controller_name not in _controller_registry:
-        raise ValueError(f": {controller_name}")
+        raise ValueError(f"Unknown controller type: '{controller_name}'. Available: {list(_controller_registry.keys())}")
     return _controller_registry[controller_name](*args, **kwargs)
 
 register_controller("pickpour", PickPourTaskController)

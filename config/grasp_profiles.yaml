@@ -1,0 +1,205 @@
+# =============================================================================
+# Grasp Profiles Configuration
+# =============================================================================
+# Unified configuration for object grasping parameters.
+# Replaces hardcoded lookup tables in pick_controller.py.
+#
+# Grasp Geometry Types:
+#   - axial_symmetric : Round/cylindrical objects, can be grasped from any
+#                       horizontal angle around the Z axis.
+#   - bilateral       : 180-degree rotational symmetry (two equivalent directions).
+#   - fixed           : Only one valid approach direction.
+#   - handle          : Grasp from the handle side.
+#
+# Height Specification:
+#   - grasp_height (float)       : Absolute offset in meters from object bottom.
+#   - grasp_height_ratio (float) : Fraction of object height (0.0 ~ 1.0).
+#   Absolute value takes priority over ratio. Same rule for pre_grasp_height.
+#
+# Inheritance:
+#   Use "inherit: <object_name>" to copy another object's profile,
+#   then override only the fields that differ.
+# =============================================================================
+
+defaults:
+  gripper_width: 0.02
+  grasp_height_ratio: 0.4         # 40% of object height
+  pre_grasp_height_ratio: 0.667   # 66.7% of object height
+  pre_offset_x: 0.05              # Horizontal approach offset (m)
+  pre_offset_z: 0.12              # Vertical pre-approach clearance (m)
+  lift_height: 0.25               # Lift height after grasping (m)
+  orientation:
+    euler_xyz: [0, 90, 0]         # Degrees
+  grasp_geometry:
+    type: axial_symmetric
+    preferred_angle: auto
+
+# =============================================================================
+# Object Grasp Profiles
+# =============================================================================
+objects:
+
+  # ---------------------------------------------------------------------------
+  # Beakers (axial symmetric, grasp near bottom rim)
+  # ---------------------------------------------------------------------------
+  beaker:
+    grasp_geometry:
+      type: axial_symmetric
+      preferred_angle: auto
+    gripper_width: 0.022
+    grasp_height: 0.0
+    orientation:
+      euler_xyz: [0, 90, 25]
+
+  beaker2:
+    inherit: beaker
+    gripper_width: 0.028
+    pre_grasp_height: 0.05
+
+  beaker_l:
+    inherit: beaker
+    gripper_width: 0.03
+    grasp_height: 0.02
+
+  beaker_2:
+    inherit: beaker
+    gripper_width: 0.022
+
+  beaker_03:
+    inherit: beaker
+    gripper_width: 0.025
+
+  beaker_04:
+    inherit: beaker
+    gripper_width: 0.025
+
+  beaker_05:
+    inherit: beaker
+    gripper_width: 0.025
+
+  # ---------------------------------------------------------------------------
+  # Conical Bottles (axial symmetric, grasp at neck)
+  # ---------------------------------------------------------------------------
+  conical_bottle01:
+    grasp_geometry:
+      type: axial_symmetric
+      preferred_angle: auto
+    gripper_width: 0.01
+    grasp_height: 0.0
+    orientation:
+      euler_xyz: [0, 90, 30]
+
+  conical_bottle02:
+    inherit: conical_bottle01
+    gripper_width: 0.023
+    grasp_height: 0.04
+
+  conical_bottle03:
+    inherit: conical_bottle01
+    gripper_width: 0.03
+    grasp_height: 0.07
+    pre_grasp_height: 0.07
+
+  conical_bottle04:
+    inherit: conical_bottle01
+    gripper_width: 0.03
+    grasp_height: 0.08
+    pre_grasp_height: 0.08
+
+  # ---------------------------------------------------------------------------
+  # Graduated Cylinders (axial symmetric, may avoid scale face)
+  # ---------------------------------------------------------------------------
+  graduated_cylinder_01:
+    grasp_geometry:
+      type: axial_symmetric
+      preferred_angle: auto
+    gripper_width: 0.005
+    grasp_height: 0.0
+    pre_grasp_height: 0.05
+    orientation:
+      euler_xyz: [0, 90, 30]
+
+  graduated_cylinder_02:
+    inherit: graduated_cylinder_01
+    gripper_width: 0.018
+    pre_grasp_height: 0.03
+
+  graduated_cylinder_03:
+    inherit: graduated_cylinder_01
+    gripper_width: 0.024
+    pre_grasp_height: 0.03
+
+  graduated_cylinder_04:
+    inherit: graduated_cylinder_01
+    gripper_width: 0.030
+    pre_grasp_height: 0.03
+
+  # ---------------------------------------------------------------------------
+  # Flasks (axial symmetric)
+  # ---------------------------------------------------------------------------
+  volume_flask:
+    grasp_geometry:
+      type: axial_symmetric
+      preferred_angle: auto
+    gripper_width: 0.02
+    grasp_height: 0.05
+    pre_grasp_height: 0.0
+    orientation:
+      euler_xyz: [0, 90, 25]
+
+  erlenmeyer flask:
+    grasp_geometry:
+      type: axial_symmetric
+      preferred_angle: auto
+    gripper_width: 0.018
+    orientation:
+      euler_xyz: [0, 90, 25]
+
+  # ---------------------------------------------------------------------------
+  # Thin / Flat Objects
+  # ---------------------------------------------------------------------------
+  rod:
+    grasp_geometry:
+      type: bilateral
+      symmetry_axis: [0, 0, 1]
+    gripper_width: 0.003
+    orientation:
+      euler_xyz: [0, 90, 0]
+
+  glass_rod:
+    inherit: rod
+    grasp_height: 0.02
+    lift_height: 0.20
+
+  tube:
+    grasp_geometry:
+      type: axial_symmetric
+      preferred_angle: auto
+    gripper_width: 0.01
+    orientation:
+      euler_xyz: [0, 90, 0]
+
+  pipette:
+    grasp_geometry:
+      type: bilateral
+      symmetry_axis: [0, 0, 1]
+    gripper_width: 0.008
+    orientation:
+      euler_xyz: [0, 90, 0]
+
+  microscope slide:
+    grasp_geometry:
+      type: fixed
+      approach_direction: [0, 1, 0]
+    gripper_width: 0.002
+    orientation:
+      euler_xyz: [0, 90, 0]
+
+  petri dish:
+    grasp_geometry:
+      type: bilateral
+      symmetry_axis: [0, 0, 1]
+    gripper_width: 0.005
+    grasp_height_ratio: 0.3
+    orientation:
+      euler_xyz: [0, 90, 0]

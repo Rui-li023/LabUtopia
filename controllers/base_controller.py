@@ -1,4 +1,5 @@
 import json
+import re
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -183,6 +184,14 @@ class BaseController(ABC):
         if self.mode == "collect":
             return self.data_collector.episode_count
         return self._episode_num
+
+    @staticmethod
+    def clean_object_name(raw_name: str) -> str:
+        """Remove trailing digits and underscores from an object name.
+
+        Example: 'conical_bottle02' -> 'conical bottle'
+        """
+        return re.sub(r'\d+', '', raw_name).replace('_', ' ').replace('  ', ' ').strip().lower()
 
     def print_failure_reason(self) -> None:
         """Print the last failure reason if it exists."""

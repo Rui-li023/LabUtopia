@@ -152,8 +152,8 @@ def _write_episode_data(episode_dir: str, episode_name: str,
                 else:
                     try:
                         grp.create_dataset(key, data=np.array(val, dtype="float32"))
-                    except Exception:
-                        logger.error("")
+                    except Exception as e:
+                        logger.error(f"Failed to serialize init_state key '{key}': {e}")
                         pass  # skip non-serialisable legacy keys
 
     # Save each camera stream as an MP4 video

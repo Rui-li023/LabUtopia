@@ -25,7 +25,7 @@ def register_task(name: str, task_class: Type[BaseTask]):
 def create_task(task_name: str, *args, **kwargs) -> BaseTask:
     
     if task_name not in _task_registry:
-        raise ValueError(f": {task_name}")
+        raise ValueError(f"Unknown task type: '{task_name}'. Available: {list(_task_registry.keys())}")
     return _task_registry[task_name](*args, **kwargs)
 
 

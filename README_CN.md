@@ -9,7 +9,7 @@
 [![Paper](https://img.shields.io/badge/📄_Paper-arXiv-red.svg)](https://arxiv.org/pdf/2505.22634v2.pdf)
 [![arXiv](https://img.shields.io/badge/arXiv-2505.22634-b31b1b.svg)](https://arxiv.org/abs/2505.22634)
 [![Website](https://img.shields.io/badge/🌐_Website-LabUtopia-blue.svg)](https://rui-li023.github.io/labutopia-site/)
-[![Dataset](https://img.shields.io/badge/HuggingFace-Dataset-orange?logo=huggingface)](https://huggingface.co/datasets/Ruinwalker/LabUtopia-Dataset)
+[![Dataset](https://img.shields.io/badge/HuggingFace-Dataset-orange?logo=huggingface)](https://huggingface.co/datasets/Ruinwalker/Labutopia-Dataset)
 
 </div>
 
@@ -31,7 +31,7 @@
 
 ### 1. 代码下载
 
-下载代码并拉去场景资产
+下载代码并拉取场景资产
 
 ```bash
 git clone https://github.com/Rui-li023/LabUtopia.git
@@ -103,7 +103,7 @@ LabUtopia/
 
 ### 数据收集
 
-收集训练数据是训练模型的第一步，Labutopia 支持多种任务类型的数据收集。
+收集训练数据是训练模型的第一步，LabUtopia 支持多种任务类型的数据收集。您也可以从我们的 [HuggingFace 仓库](https://huggingface.co/datasets/Ruinwalker/Labutopia-Dataset) 下载预收集的数据。
 
 #### 1. 选择配置文件
 在`config`文件夹中有多种预配置的任务文件：
@@ -125,9 +125,8 @@ LabUtopia/
 - `level2_StirGlassrod.yaml` - 玻璃棒搅拌
 - `level2_PourLiquid.yaml` - 倾倒液体
 - `level2_TransportBeaker.yaml` - 运输烧杯
-- `level2_Heat_Liquid.yaml` - 加热液体
+- `level2_HeatLiquid.yaml` - 加热液体
 - `level2_openclose.yaml` - 开关任务
-
 
 **Level 3 泛化性任务：**
 - `level3_PourLiquid.yaml` - 倾倒液体（OOD 泛化）
@@ -157,7 +156,7 @@ LabUtopia/
 name: level1_pick             # 任务名称
 task_type: "pick"             # 任务类型，用于在工厂类中创建
 controller_type: "pick"       # 控制器类型，用于在工厂类中创建
-mode: "collect"               # 模式：infer or collect
+mode: "collect"               # 模式：collect | infer | replay
 
 # 场景配置
 usd_path: "assets/chemistry_lab/pick_task/scene.usd" 
@@ -184,7 +183,7 @@ cameras:
     resolution: [256, 256]         # 分辨率
     focal_length: 6                 # 焦距
     orientation: [0.61237, 0.35355, 0.35355, 0.61237]  # 方向
-    image_type: "rgb"              # 图像类，rgb， 深度图和点云，可以使用"rgb+depth"同时获得RGB和点云图像
+    image_type: "rgb"              # 图像类型：rgb、depth、pointcloud，可使用 "rgb+depth" 同时获取多种类型
 
 # 机器人配置
 robot:
@@ -215,8 +214,10 @@ python main.py --config-name level1_pick
 
 在`policy/config/`文件夹中有多种训练配置：
 
-- `train_diffusion_unet_image_workspace.yaml` - 扩散模型训练
+- `train_diffusion_unet_image_workspace.yaml` - 扩散模型训练（推荐）
 - `train_act_image_workspace.yaml` - ACT模型训练
+- `train_nav_diffusion.yaml` - 导航任务扩散模型训练
+- `train_nav_act.yaml` - 导航任务ACT模型训练
 
 #### 2. 修改训练参数
 
@@ -296,7 +297,7 @@ python train.py --config-name=train_act_image_workspace
 
 ```yaml
 # 基本配置
-mode: "infer"                     # 改为推理模式：remote or local
+mode: "infer"                     # 改为推理模式
 
 # 推理配置
 infer:
@@ -349,6 +350,8 @@ git clone https://github.com/Rui-li023/openpi.git
 python scripts/convert_labsim_data_to_lerobot.py --data_dir outputs/collect/xxx/xxx/dataset --num_processes 8 --fps 60 --repo_name labutopia/level3-pick
 ```
 
+**注意：** `--fps` 参数指定转换数据的控制频率。我们收集的演示数据默认以 60Hz 采样。如果您希望转换后的数据集与原始收集行为一致，请确保将 `--fps` 设置为 60。
+
 ### 远程推理
 
 Labutopia 支持使用openpi格式的远程服务器进行模型推理
@@ -368,7 +371,7 @@ infer:
   engine: remote  # 使用远程推理引擎
   host: "0.0.0.0" # OpenPI服务器主机
   port: 8080      # OpenPI服务器端口（可选）
-  n_obs_steps: 1  # Obs步数
+  n_obs_steps: 3  # 观察步数
 ```
 
 #### 使用方法
@@ -415,11 +418,11 @@ OpenPI服务器应返回以下格式之一的动作：
 
 ## 📄 许可
 
-This repository contains both source code and data assets:
+本仓库包含源代码和数据资产两部分：
 
-- **Code**  
-  Released under the [MIT License](./LICENSE).  
+- **代码**
+  基于 [MIT 许可证](./LICENSE) 发布。
 
-- **Data Assets**  
-  Released under the [CC BY-NC 4.0 License](https://creativecommons.org/licenses/by-nc/4.0/).  
-  Free to use and modify for research and educational purposes **only**.  
+- **数据资产**
+  基于 [CC BY-NC 4.0 许可证](https://creativecommons.org/licenses/by-nc/4.0/) 发布。
+  **仅限**用于研究和教育目的的使用与修改。  

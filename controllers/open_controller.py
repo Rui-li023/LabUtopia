@@ -1,4 +1,3 @@
-import re
 from typing import Optional
 from robots.franka.rmpflow_controller import RMPFlowController
 import numpy as np
@@ -200,6 +199,6 @@ class OpenTaskController(BaseController):
         Returns:
             Optional[str]: The language instruction or None if not available
         """
-        object_name = re.sub(r'\d+', '', self.state['object_name']).replace('_', ' ').lower()
+        object_name = self.clean_object_name(self.state['object_name'])
         self._language_instruction = f"Open the door of the {object_name}"
         return self._language_instruction

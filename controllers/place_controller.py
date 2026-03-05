@@ -1,4 +1,3 @@
-import re
 from scipy.spatial.transform import Rotation as R
 import numpy as np
 from enum import Enum
@@ -198,6 +197,6 @@ class PlaceTaskController(BaseController):
         Returns:
             Optional[str]: The language instruction or None if not available
         """
-        object_name = re.sub(r'\d+', '', self.state['object_name']).replace('_', ' ').replace('  ',' ').lower()
+        object_name = self.clean_object_name(self.state['object_name'])
         self._language_instruction = f"Pick up the {object_name} from the table and place it at the target"
         return self._language_instruction

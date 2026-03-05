@@ -3,8 +3,6 @@ import numpy as np
 from enum import Enum
 from typing import Optional
 from utils.task_utils import TaskUtils
-import re
-
 from .atomic_actions.pick_controller import PickController
 from .atomic_actions.pour_controller import PourController
 from .base_controller import BaseController
@@ -289,7 +287,7 @@ class PickPourTaskController(BaseController):
         Returns:
             Optional[str]: The language instruction or None if not available
         """
-        clean_object_name = re.sub(r'\d+', '', self.state['object_name']).replace('_', ' ').lower()
+        clean_object_name = self.clean_object_name(self.state['object_name'])
         if "beaker" in clean_object_name:
             clean_object_name = "small beaker"
         self.language_instruction = f"Pick up the {clean_object_name} from the table and pour it into the big beaker".replace("  ", " ")
