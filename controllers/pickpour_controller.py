@@ -232,6 +232,7 @@ class PickPourTaskController(BaseController):
                     pour_speed=-1,
                     source_name=state['object_name'],
                     gripper_position=state['gripper_position'],
+                    current_joint_positions=state['joint_positions'],
                     target_end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 15])).as_quat()
                 )
             

@@ -159,6 +159,7 @@ class PourController(BaseController):
                 return target_joints, self._build_record_array(target_joints, current_joint_positions)
 
         elif self._event == 1:
+            target_position[0] += 0.02
             target_position[2] += self._random_height_2 + self.object_size[2] / 2 + self.get_pickz_offset(source_name)
             target_position[1] -= self.object_size[2] / 2 - self.get_pickz_offset(source_name)
             target_joints = self._cspace_controller.forward(

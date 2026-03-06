@@ -2,6 +2,7 @@ from typing import Optional
 from scipy.spatial.transform import Rotation as R
 import numpy as np
 from enum import Enum
+from robots.franka.rmpflow_controller import RMPFlowController
 from utils.task_utils import TaskUtils
 
 from .atomic_actions.pick_controller import PickController
@@ -38,7 +39,11 @@ class PourTaskController(BaseController):
 
         self.pour_controller = PourController(
             name="pour_controller",
-            cspace_controller=self.rmp_controller,
+            cspace_controller=RMPFlowController(
+                name="target_follower_controller",
+                robot_articulation=robot,
+                use_default_config=False
+            ),
             events_dt=[0.006, 0.002, 0.009, 0.01, 0.009, 0.01]
         )
         self.active_controller = self.pick_controller
