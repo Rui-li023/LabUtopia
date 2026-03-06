@@ -5,7 +5,7 @@ controller_type: "pickplace"
 
 mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
-max_episodes: 50
+max_episodes: 100
 
 # ── Replay mode ─────────────────────────────────────────────────────────────
 # Set mode: "replay" above to activate.

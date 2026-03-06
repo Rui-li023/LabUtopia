@@ -304,7 +304,6 @@ class PickController(BaseController):
             "rod": 0.003,
             "tube": 0.01,
             "beaker": 0.022,
-            "beaker2": 0.028,
             "beaker_l": 0.03,
             "beaker_04": 0.025,
             "beaker_05": 0.025,
