@@ -16,8 +16,8 @@ replay:
   # episode_indices: [0, 1, 2]
 
 infer:
-  type: "local"
-  obs_names: {"camera_1_rgb": 'camera_1_rgb', "camera_2_rgb": 'camera_2_rgb'}
+  type: "remote"
+  obs_names: {"camera_1_rgb": 'camera_1_rgb', "camera_2_rgb": 'camera_2_rgb', "camera_3_rgb": 'camera_3_rgb'}
   policy_model_path: ""
   policy_config_path: ""
   normalizer_path: ""
@@ -39,17 +39,17 @@ task:
 cameras:
   - prim_path: "/World/Camera1"
     name: "camera_1"
-    translation: [2, 0, 2]
+    translation: [1.6, 0, 1.85]
     resolution: [256, 256]
-    focal_length: 6
+    focal_length: 4
     orientation: [0.61237, 0.35355, 0.35355, 0.61237]
     image_type: "rgb"
 
   - prim_path: "/World/Camera2"
     name: "camera_2"
-    translation: [0.1, 0, 2.5]
+    translation: [0.17, 0, 2.3]
     resolution: [256, 256]
-    focal_length: 6
+    focal_length: 4
     orientation: [0.70711, 0, 0, -0.70711]
     image_type: "rgb"
 

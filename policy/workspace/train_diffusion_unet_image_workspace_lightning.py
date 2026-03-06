@@ -15,7 +15,8 @@ import pathlib
 from policy.workspace.lightning_workspace import LightningWorkspace, create_lightning_trainer
 from policy.model.diffusion.ema_model import EMAModel
 
-OmegaConf.register_new_resolver("eval", eval, replace=True)
+if not OmegaConf.has_resolver("eval"):
+    OmegaConf.register_new_resolver("eval", eval)
 
 class TrainDiffusionUnetImageWorkspaceLightning(LightningWorkspace):
     """

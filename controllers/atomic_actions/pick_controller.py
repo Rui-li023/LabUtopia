@@ -313,13 +313,9 @@ class PickController(BaseController):
             "Petri dish": 0.005,
             "pipette": 0.008,
             "microscope slide": 0.002,
-            "conical_bottle01": 0.01,
-            "conical_bottle02": 0.023,
-            "conical_bottle03": 0.03,
-            "conical_bottle04": 0.03,
             "graduated_cylinder_01": 0.005,
             "graduated_cylinder_02": 0.018,
-            "graduated_cylinder_03": 0.024,
+            # "graduated_cylinder_03": 0.024,
             "graduated_cylinder_04": 0.030,
         }
 
@@ -327,7 +323,7 @@ class PickController(BaseController):
             if key == item_name.lower():
                 return gripper_distances[key]
 
-        return 0.02
+        return 0.0
 
     def get_pickz_offset(self, item_name):
         """Calculates the vertical offset for the final grasp position.
@@ -339,7 +335,7 @@ class PickController(BaseController):
             float: Vertical offset in meters.
         """
         offsets = {
-            "conical_bottle02": 0.04,
+            "conical_bottle02": 0.06,
             "conical_bottle03": 0.07,
             "conical_bottle04": 0.08,
             "beaker": 0.0,

@@ -28,7 +28,8 @@ from policy.common.pytorch_util import dict_apply, optimizer_to
 from policy.model.diffusion.ema_model import EMAModel
 from policy.model.common.lr_scheduler import get_scheduler
 
-OmegaConf.register_new_resolver("eval", eval, replace=True)
+if not OmegaConf.has_resolver("eval"):
+    OmegaConf.register_new_resolver("eval", eval)
 
 class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'epoch']

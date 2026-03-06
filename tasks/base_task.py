@@ -461,7 +461,6 @@ class BaseTask(ABC):
             return False
         if max_steps is None:
             max_steps = getattr(getattr(self.cfg, "task", None), "max_steps", float("inf"))
-        logger.info(f"Frame idx: {self.frame_idx}, max steps: {max_steps}")
         
         if self.frame_idx > max_steps:
             self.on_task_complete(True)

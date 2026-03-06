@@ -27,7 +27,8 @@ from policy.model.diffusion.ema_model import EMAModel
 from policy.model.common.lr_scheduler import get_scheduler
 from policy.policy.act_image_policy import ACTImagePolicy
 
-OmegaConf.register_new_resolver("eval", eval, replace=True)
+if not OmegaConf.has_resolver("eval"):
+    OmegaConf.register_new_resolver("eval", eval)
 
 class TrainACTImageWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'epoch']
