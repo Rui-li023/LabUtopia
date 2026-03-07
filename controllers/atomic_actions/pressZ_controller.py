@@ -40,14 +40,11 @@ class PressZController(BaseController):
             if self._last_record_positions is not None:
                 return self._last_record_positions.copy()
             return current_joint_positions.copy()
-        positions = current_joint_positions.copy().astype(np.float64)
+        fallback = self._last_record_positions if self._last_record_positions is not None else current_joint_positions
+        positions = fallback.copy().astype(np.float64)
         for i in range(min(len(jp), n)):
             if jp[i] is not None:
                 positions[i] = float(jp[i])
-            else:
-                positions[i] = current_joint_positions[i]
-        if len(jp) < n:
-            positions[len(jp):] = current_joint_positions[len(jp):]
         self._last_record_positions = positions
         return positions
 
