@@ -306,12 +306,10 @@ class PickController(BaseController):
             "beaker_05": 0.025,
             "beaker_03": 0.025,
             "Erlenmeyer flask": 0.018,
-            "Petri dish": 0.005,
             "pipette": 0.008,
             "microscope slide": 0.002,
             "graduated_cylinder_01": 0.005,
             "graduated_cylinder_02": 0.018,
-            # "graduated_cylinder_03": 0.024,
             "graduated_cylinder_04": 0.030,
         }
 
@@ -331,7 +329,7 @@ class PickController(BaseController):
             float: Vertical offset in meters.
         """
         offsets = {
-            "conical_bottle02": 0.06,
+            "conical_bottle02": 0.065,
             "conical_bottle03": 0.07,
             "conical_bottle04": 0.08,
             "beaker": 0.0,
