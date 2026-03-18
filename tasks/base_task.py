@@ -7,6 +7,7 @@ from utils.object_utils import ObjectUtils
 from isaacsim.core.utils.semantics import add_update_semantics
 from utils.camera_utils import process_camera_image
 from isaacsim.core.utils.prims import set_prim_visibility
+from utils.lighting_utils import LightingRandomizer
 from pxr import UsdShade
 from loguru import logger
 
@@ -47,6 +48,7 @@ class BaseTask(ABC):
         self.setup_cameras()
         self.setup_objects()
         self.setup_materials()
+        self.setup_lighting()
 
         self.current_material_idx = 0
         self.episodes_per_obj = int(cfg.max_episodes / len(self.obj_configs)) if self.obj_configs else 0
@@ -70,6 +72,7 @@ class BaseTask(ABC):
         self.reset_needed = False
         self.frame_idx = 0
         self._episode_init_state = {"object_poses": {}, "object_materials": {}, "extra": {}}
+        self._randomize_lighting()
         self.apply_materials()
 
     def reset_with_init_state(self, init_state: dict) -> None:
@@ -239,6 +242,88 @@ class BaseTask(ABC):
                 "materials": materials,
                 "random":   bool(getattr(mat_cfg, "random", False)),
             })
+
+    def setup_lighting(self) -> None:
+        """Parse lighting randomization config from ``cfg.lighting``.
+
+        Lighting randomization is **disabled by default**.  Enable it in the
+        YAML config::
+
+            lighting:
+              enabled: true
+              scenario: "standard_lab"       # optional preset
+              num_lights: 3                  # lights to create if scene has none
+              intensity_range: [500, 5000]
+              exposure_range: [-2, 4]
+              color_temp_range: [4000, 9000]
+              randomize_position: false
+              position_range:
+                x: [-1.0, 1.0]
+                y: [-1.0, 1.0]
+                z: [1.5, 3.0]
+        """
+        lighting_cfg = getattr(self.cfg, "lighting", None)
+        self._lighting_enabled = bool(getattr(lighting_cfg, "enabled", False)) if lighting_cfg else False
+        self._lighting_randomizer: Optional[LightingRandomizer] = None
+        self._lighting_cfg = lighting_cfg
+
+        if self._lighting_enabled:
+            self._lighting_randomizer = LightingRandomizer(self.stage)
+            logger.info("Lighting randomization enabled")
+
+    def _randomize_lighting(self) -> None:
+        """Apply lighting randomization if enabled.  Called during ``reset()``.
+
+        If the scene already contains light prims, randomizes their properties.
+        Otherwise, creates ``num_lights`` new lights (default 3) with random
+        parameters each episode.
+        """
+        if not self._lighting_enabled or self._lighting_randomizer is None:
+            return
+
+        cfg = self._lighting_cfg
+        scenario = getattr(cfg, "scenario", None)
+        num_lights = int(getattr(cfg, "num_lights", 3))
+
+        # Build position range dict if configured
+        position_range = None
+        if getattr(cfg, "randomize_position", False):
+            pos_cfg = getattr(cfg, "position_range", None)
+            if pos_cfg is not None:
+                position_range = {
+                    "x": tuple(getattr(pos_cfg, "x", [-1.0, 1.0])),
+                    "y": tuple(getattr(pos_cfg, "y", [-1.0, 1.0])),
+                    "z": tuple(getattr(pos_cfg, "z", [1.5, 3.0])),
+                }
+
+        # Check whether the scene already has lights
+        existing_lights = self._lighting_randomizer.find_scene_lights()
+
+        if existing_lights:
+            # Randomize existing scene lights
+            if scenario:
+                self._lighting_randomizer.randomize_scene_for_episode(
+                    scenario=scenario,
+                    position_range=position_range,
+                )
+            else:
+                intensity_range = tuple(getattr(cfg, "intensity_range", [500.0, 5000.0]))
+                exposure_range = tuple(getattr(cfg, "exposure_range", [-2.0, 4.0]))
+                color_temp_range = tuple(getattr(cfg, "color_temp_range", [2700.0, 6500.0]))
+                self._lighting_randomizer.randomize_all(
+                    intensity_range=intensity_range,
+                    exposure_range=exposure_range,
+                    color_temp_range=color_temp_range,
+                    position_range=position_range,
+                    randomize_position_flag=position_range is not None,
+                )
+        else:
+            # No lights in scene — create a randomized light setup
+            self._lighting_randomizer.create_random_light_setup(
+                num_lights=num_lights,
+                scenario=scenario,
+                position_range=position_range,
+            )
 
     def apply_materials(self) -> None:
         """Apply configured materials and record them in ``_episode_init_state``."""
