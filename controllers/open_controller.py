@@ -193,12 +193,11 @@ class OpenTaskController(BaseController):
         return success
 
     def get_language_instruction(self) -> Optional[str]:
-        """Get the language instruction for the current task.
-        Override to provide dynamic instructions based on the current state.
-        
-        Returns:
-            Optional[str]: The language instruction or None if not available
-        """
         object_name = self.clean_object_name(self.state['object_name'])
-        self._language_instruction = f"Open the door of the {object_name}"
-        return self._language_instruction
+        return self._get_cached_instruction(
+            'open',
+            self._build_instruction_templates(
+                f"Open the door of the {object_name}",
+                f"Open the door of the {object_name} by pulling the handle until it swings open",
+            ),
+        )

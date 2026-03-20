@@ -297,11 +297,20 @@ class CleanBeakerTaskController(BaseController):
         return False
 
     def get_language_instruction(self) -> Optional[str]:
-        """Get the language instruction for the current task.
-        Override to provide dynamic instructions based on the current state.
-        
-        Returns:
-            Optional[str]: The language instruction or None if not available
-        """
-        self._language_instruction = "First, pick up the second beaker from the table. Next, pour its contents into the first beaker. Then, place the now-empty second beaker on the second platform. After that, pick up the first beaker from the table and shake it to mix the contents thoroughly. Once mixed, pour the contents from the first beaker into the target beaker. Finally, place the empty first beaker on the first platform."
-        return self._language_instruction
+        step_instructions = {
+            1: ('Pick up the second beaker', 'Pick up the second beaker from the table and lift it clear of the surface'),
+            2: ('Pour the second beaker into the first beaker', 'Pour the contents of the second beaker into the first beaker carefully'),
+            3: ('Place the second beaker on the second platform', 'Move the second beaker to the second platform and set it down carefully'),
+            4: ('Pick up the first beaker', 'Pick up the first beaker from the table and lift it clear of the surface'),
+            5: ('Shake the first beaker', 'Shake the first beaker to mix the contents thoroughly'),
+            6: ('Pour the first beaker into the target beaker', 'Pour the contents of the first beaker into the target beaker carefully'),
+            7: ('Place the first beaker on the first platform', 'Move the first beaker to the first platform and set it down carefully'),
+        }
+        direct, detailed = step_instructions.get(
+            self._current_step,
+            ('Clean the beakers', 'Complete the current cleaning step carefully'),
+        )
+        return self._get_cached_instruction(
+            f"cleanbeaker:{self._current_step}",
+            self._build_instruction_templates(direct, detailed),
+        )

@@ -1,17 +1,33 @@
-from scipy.spatial.transform import Rotation as R
-import numpy as np
+import random
 from enum import Enum
+from typing import Optional
+
+import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 from .atomic_actions.pick_controller import PickController
 from .atomic_actions.place_controller import PlaceController
 from .base_controller import BaseController
+
 
 class Phase(Enum):
     PICKING = "picking"
     PLACING = "placing"
     FINISHED = "finished"
 
+
 class PickPlaceTaskController(BaseController):
+    PICK_TEMPLATES = [
+        "Pick up the {object_name}.",
+        "Please help me pick up the {object_name}.",
+        "Pick up the {object_name} from the table and lift it clear of the surface.",
+    ]
+    PLACE_TEMPLATES = [
+        "Place the {object_name} at the target.",
+        "Please help me place the {object_name} at the target.",
+        "Move the {object_name} to the target position and release it there.",
+    ]
+
     def __init__(self, cfg, robot):
         """Initialize the pick and pour task controller.
         
@@ -23,7 +39,9 @@ class PickPlaceTaskController(BaseController):
         self.initial_position = None
         self.initial_size = None
         self.current_phase = Phase.PICKING
-            
+        self._phase_instructions: dict[Phase, str] = {}
+        self._phase_task_indices: dict[Phase, int] = {}
+
     def _init_collect_mode(self, cfg, robot):
         """Initialize controller for data collection mode."""
         super()._init_collect_mode(cfg, robot)
@@ -48,7 +66,9 @@ class PickPlaceTaskController(BaseController):
         self.current_phase = Phase.PICKING
         self.initial_position = None
         self.initial_size = None
-        
+        self._phase_instructions = {}
+        self._phase_task_indices = {}
+
         if self.mode == "collect":
             self.active_controller = self.pick_controller
             self.pick_controller.reset()
@@ -93,6 +113,25 @@ class PickPlaceTaskController(BaseController):
         else:
             return self._step_infer(state)
 
+    def _sample_phase_instruction(self, phase: Phase) -> str:
+        object_name = self.clean_object_name(self.state["object_name"])
+        templates = self.PICK_TEMPLATES if phase == Phase.PICKING else self.PLACE_TEMPLATES
+        return random.choice(templates).format(object_name=object_name)
+
+    def get_language_instruction(self) -> str:
+        if self.current_phase not in self._phase_instructions:
+            self._phase_instructions[self.current_phase] = self._sample_phase_instruction(self.current_phase)
+        self._language_instruction = self._phase_instructions[self.current_phase]
+        return self._language_instruction
+
+    def get_task_index(self) -> Optional[int]:
+        if self.mode != "collect" or self.current_phase == Phase.FINISHED:
+            return None
+        if self.current_phase not in self._phase_task_indices:
+            instruction = self.get_language_instruction()
+            self._phase_task_indices[self.current_phase] = self.data_collector.register_task_instruction(instruction)
+        return self._phase_task_indices[self.current_phase]
+
     def _step_collect(self, state):
         """Execute collection mode step."""
         success = self._check_phase_success()
@@ -122,12 +161,15 @@ class PickPlaceTaskController(BaseController):
                     end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 20])).as_quat(),
                     gripper_position=state['gripper_position']
                 )
-            if 'camera_data' in state:
+
+            if "camera_data" in state:
+                instruction = self.get_language_instruction()
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
                     joint_angles=state['joint_positions'][:-1],
                     action=record_array,
-                    language_instruction=self.get_language_instruction()
+                    language_instruction=instruction,
+                    task_index=self.get_task_index(),
                 )
             
             return action, False, False
@@ -177,14 +219,3 @@ class PickPlaceTaskController(BaseController):
             self.current_phase = Phase.FINISHED
             return True
         return False
-
-    def get_language_instruction(self) -> str:
-        """Get the language instruction for the current task.
-        Override to provide dynamic instructions based on the current state.
-        
-        Returns:
-            Optional[str]: The language instruction or None if not available
-        """
-        object_name = self.clean_object_name(self.state['object_name'])
-        self._language_instruction = f"Pick up the {object_name} from the table and place it at the target"
-        return self._language_instruction

@@ -207,25 +207,27 @@ class LiquidMixingController(BaseController):
         return False
         
     def get_language_instruction(self) -> Optional[str]:
-        """Get the language instruction for the current phase
-        
-        Returns:
-            Optional[str]: Language instruction for the current phase
-        """
         phase_instructions = {
-            TaskPhase.PICKING1: "Pick up the beaker from the table", 
-            TaskPhase.PICKING2: "Pick up the conical bottle",
-            TaskPhase.PICKING3: "Pick up the beaker from the table",
-            TaskPhase.POURING1: "Pour the contents into the beaker",
-            TaskPhase.POURING2: "Pour the contents into the beaker",
-            TaskPhase.POURING3: "Pour the contents into the beaker",
-            TaskPhase.PLACEING1: "Place the beaker on the table",
-            TaskPhase.PLACEING2: "Place the conical bottle on the table",
-            TaskPhase.PLACEING3: "Place the beaker on the table",
-            TaskPhase.PRESS: "Press the beaker"
+            TaskPhase.PICKING1: 'Pick up the beaker from the table',
+            TaskPhase.PICKING2: 'Pick up the conical bottle',
+            TaskPhase.PICKING3: 'Pick up the beaker from the table',
+            TaskPhase.POURING1: 'Pour the contents into the beaker',
+            TaskPhase.POURING2: 'Pour the contents into the beaker',
+            TaskPhase.POURING3: 'Pour the contents into the beaker',
+            TaskPhase.PLACEING1: 'Place the beaker on the table',
+            TaskPhase.PLACEING2: 'Place the conical bottle on the table',
+            TaskPhase.PLACEING3: 'Place the beaker on the table',
+            TaskPhase.PRESS: 'Press the beaker',
         }
-        return phase_instructions.get(self.current_phase, "Complete the laboratory task")
-        
+        direct = phase_instructions.get(self.current_phase, 'Complete the laboratory task')
+        return self._get_cached_instruction(
+            f"liquid_mixing:{self.current_phase.value}",
+            self._build_instruction_templates(
+                direct,
+                f"{self._normalize_instruction(direct)} carefully and complete this phase accurately",
+            ),
+        )
+
     def step(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
         """Execute one step of control
         
@@ -285,7 +287,7 @@ class LiquidMixingController(BaseController):
             
     def _step_infer(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
         """Step in inference mode"""
-        state['language_instruction'] = ""
+        state['language_instruction'] = self.get_language_instruction()
         # Use the inference engine to get the action
         action = self.inference_engine.step_inference(state)
         

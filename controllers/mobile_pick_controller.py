@@ -279,15 +279,18 @@ class MobilePickController(BaseController):
             return self._pick_phase(state)
     
     def get_language_instruction(self) -> Optional[str]:
-        """
-        Get the language instruction for the task.
-
-        Returns:
-            str: The language instruction
-        """
         if not self.navigation_done:
-            self._language_instruction = "Navigate to the pick location"
-        else:
-            self._language_instruction = f"Pick up the object"
-        return self._language_instruction
-
+            return self._get_cached_instruction(
+                'mobile_pick:navigate',
+                self._build_instruction_templates(
+                    'Navigate to the pick location',
+                    'Navigate the robot to the pick location and stop beside the target object',
+                ),
+            )
+        return self._get_cached_instruction(
+            'mobile_pick:pick',
+            self._build_instruction_templates(
+                'Pick up the object',
+                'Pick up the object from the table and lift it clear of the surface',
+            ),
+        )

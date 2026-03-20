@@ -361,11 +361,20 @@ class DeviceOperateController(BaseController):
         return len(self.success_steps) == 7
 
     def get_language_instruction(self) -> Optional[str]:
-        """Get the language instruction for the current task.
-        Override to provide dynamic instructions based on the current state.
-        
-        Returns:
-            Optional[str]: The language instruction or None if not available
-        """
-        self._language_instruction = "First, open the device door by pulling the handle. Then, move the robot arm higher to avoid obstacles. Next, pick up the first beaker from the table and place it inside the device. After that, pick up the second beaker and place it in its designated position. Finally, press the device button to activate the operation."
-        return self._language_instruction
+        phase_instructions = {
+            Phase.OPEN_DOOR: ('Open the device door', 'Open the device door by pulling the handle until it swings open'),
+            Phase.MOVE_HIGHER: ('Move the robot arm higher', 'Raise the robot arm to a higher position to avoid obstacles'),
+            Phase.PICK_BEAKER: ('Pick up the first beaker', 'Pick up the first beaker from the table and lift it clear of the surface'),
+            Phase.PLACE_BEAKER: ('Place the first beaker inside the device', 'Move the first beaker into the device and set it down carefully'),
+            Phase.PICK_BEAKER3: ('Pick up the second beaker', 'Pick up the second beaker from the table and lift it clear of the surface'),
+            Phase.PLACE_BEAKER3: ('Place the second beaker inside the device', 'Move the second beaker into its designated position inside the device'),
+            Phase.PRESS_BUTTON: ('Press the device button', 'Press the device button to start the operation'),
+        }
+        direct, detailed = phase_instructions.get(
+            self.current_phase,
+            ('Operate the laboratory device', 'Complete the current step of the laboratory device operation carefully'),
+        )
+        return self._get_cached_instruction(
+            f"device_operate:{self.current_phase.value}",
+            self._build_instruction_templates(direct, detailed),
+        )

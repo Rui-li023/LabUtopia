@@ -95,6 +95,12 @@ class PressTaskController(BaseController):
         return action, False, False
 
     def get_language_instruction(self) -> Optional[str]:
-        if self._language_instruction is None:
-            return "Press the different color button"
-        return self._language_instruction
+        if self._language_instruction:
+            return self._language_instruction
+        return self._get_cached_instruction(
+            'press',
+            self._build_instruction_templates(
+                'Press the button',
+                'Press the button until it is fully activated',
+            ),
+        )

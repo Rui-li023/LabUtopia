@@ -191,12 +191,11 @@ class CloseTaskController(BaseController):
             return success    
 
     def get_language_instruction(self) -> Optional[str]:
-        """Get the language instruction for the current task.
-        Override to provide dynamic instructions based on the current state.
-        
-        Returns:
-            Optional[str]: The language instruction or None if not available
-        """
         object_name = self.clean_object_name(self.state['object_name'])
-        self._language_instruction = f"Close the {self.operate_type} of the {object_name}"
-        return self._language_instruction
+        return self._get_cached_instruction(
+            f"close:{self.operate_type}",
+            self._build_instruction_templates(
+                f"Close the {self.operate_type} of the {object_name}",
+                f"Close the {self.operate_type} of the {object_name} by pushing it shut",
+            ),
+        )

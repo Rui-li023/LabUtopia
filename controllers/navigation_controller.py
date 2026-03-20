@@ -207,12 +207,10 @@ class NavigationController(BaseController):
         pass
     
     def get_language_instruction(self) -> Optional[str]:
-        """
-        Get the language instruction for the task.
-
-        Returns:
-            str: The language instruction
-        """
-        self._language_instruction = "Navigate to the target position"
-        return self._language_instruction
-
+        return self._get_cached_instruction(
+            'navigate',
+            self._build_instruction_templates(
+                'Navigate to the target position',
+                'Move the robot to the target position and stop there accurately',
+            ),
+        )

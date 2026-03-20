@@ -2,23 +2,27 @@
 Convert LabUtopia dataset to LeRobot format.
 
 Structure:
-  dataset/episode_XXXX/episode_XXXX.h5  - state, action, language
-  dataset/episode_XXXX/camera_N_rgb.mp4 - camera videos
-  dataset/meta/episode.jsonl            - episode metadata
+  dataset/episode_XXXX/episode_XXXX.h5   - state, action, language/task_index
+  dataset/episode_XXXX/camera_N_rgb.mp4  - camera videos
+  dataset/meta/episode.jsonl             - episode metadata
+  dataset/meta/task_instruction_map.json - task_index to instruction mapping
 
 Usage:
   python scripts/convert_labutopia_to_lerobot.py --data_dir /path/to/run_dir --repo_name my/dataset
 """
 
+import json
+import shutil
+from pathlib import Path
+
+import cv2
 import h5py
 import numpy as np
 import tyro
-import shutil
-import cv2
-from pathlib import Path
 
 try:
     from lerobot.datasets.lerobot_dataset import HF_LEROBOT_HOME, LeRobotDataset
+
     LEROBOT_AVAILABLE = True
 except ImportError:
     LEROBOT_AVAILABLE = False
@@ -36,6 +40,19 @@ def read_video_frames(video_path: Path) -> np.ndarray:
         frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
     cap.release()
     return np.array(frames)
+
+
+def _load_task_map(dataset_path: Path) -> dict[int, str]:
+    map_path = dataset_path / "meta" / "task_instruction_map.json"
+    if not map_path.exists():
+        return {}
+    with open(map_path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    return {int(k): v for k, v in raw.items()}
+
+
+def _decode_scalar_string(value) -> str:
+    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
 
 def main(data_dir: str, repo_name: str, *, push_to_hub: bool = False, fps: int = 60, robot_type: str = "franka"):
@@ -56,12 +73,11 @@ def main(data_dir: str, repo_name: str, *, push_to_hub: bool = False, fps: int =
 
     print(f"Found {len(episode_dirs)} episodes")
 
-    # Detect cameras and shapes from first episode
     first_ep = episode_dirs[0]
     camera_names = sorted(p.stem for p in first_ep.glob("*.mp4"))
     print(f"Cameras: {camera_names}")
 
-    with h5py.File(first_ep / f"{first_ep.name}.h5", 'r') as f:
+    with h5py.File(first_ep / f"{first_ep.name}.h5", "r") as f:
         state_shape = (f["agent_pose"].shape[1],)
         action_shape = (f["actions"].shape[1],)
 
@@ -89,31 +105,40 @@ def main(data_dir: str, repo_name: str, *, push_to_hub: bool = False, fps: int =
         image_writer_processes=4,
     )
 
+    task_map = _load_task_map(dataset_path)
+
     for ep_dir in episode_dirs:
         h5_file = ep_dir / f"{ep_dir.name}.h5"
         if not h5_file.exists():
             print(f"Skipping {ep_dir.name}: no h5 file")
             continue
 
-        with h5py.File(h5_file, 'r') as f:
+        with h5py.File(h5_file, "r") as f:
             agent_pose = f["agent_pose"][:]
             actions = f["actions"][:]
-            lang = f["language_instruction"][()]
-            task = lang.decode("utf-8") if isinstance(lang, bytes) else str(lang)
+            if "task_index" in f:
+                task_indices = f["task_index"][:].astype(np.int32)
+                tasks = [task_map.get(int(idx), f"unknown task index {int(idx)}") for idx in task_indices]
+            elif "language_instruction" in f:
+                task = _decode_scalar_string(f["language_instruction"][()])
+                tasks = [task] * len(agent_pose)
+            else:
+                tasks = [""] * len(agent_pose)
 
-        T = len(agent_pose)
+        total_steps = len(agent_pose)
         cam_frames = {}
         for cam in camera_names:
             video_path = ep_dir / f"{cam}.mp4"
-            cam_frames[cam] = read_video_frames(video_path) if video_path.exists() else np.zeros((T, *image_shape), dtype=np.uint8)
+            cam_frames[cam] = read_video_frames(video_path) if video_path.exists() else np.zeros((total_steps, *image_shape), dtype=np.uint8)
 
-        print(f"Processing {ep_dir.name}: {T} frames, task='{task}'")
+        preview_task = tasks[0] if tasks else ""
+        print(f"Processing {ep_dir.name}: {total_steps} frames, first_task='{preview_task}'")
 
-        for t in range(T):
+        for t in range(total_steps):
             frame_data = {
                 "state": agent_pose[t].astype(np.float32),
                 "actions": actions[t].astype(np.float32),
-                "task": task,
+                "task": tasks[t],
             }
             for cam in camera_names:
                 frames = cam_frames[cam]

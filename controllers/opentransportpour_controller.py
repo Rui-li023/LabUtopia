@@ -171,15 +171,22 @@ class OpenTransportPourController(BaseController):
         
     def get_language_instruction(self) -> Optional[str]:
         phase_instructions = {
-            TaskPhase.OPENING: "Open the door of the device",
-            TaskPhase.PICKING1: "Pick up the beaker from the table", 
-            TaskPhase.TRANSPORTING: "Transport the beaker to the target platform",
-            TaskPhase.PICKING2: "Pick up the conical bottle",
-            TaskPhase.POURING: "Pour the contents into the beaker",
-            TaskPhase.TRANSPORTING2: "Transport the conical bottle to the target platform"
+            TaskPhase.OPENING: 'Open the door of the device',
+            TaskPhase.PICKING1: 'Pick up the beaker from the table',
+            TaskPhase.TRANSPORTING: 'Transport the beaker to the target platform',
+            TaskPhase.PICKING2: 'Pick up the conical bottle',
+            TaskPhase.POURING: 'Pour the contents into the beaker',
+            TaskPhase.TRANSPORTING2: 'Transport the conical bottle to the target platform',
         }
-        return phase_instructions.get(self.current_phase, "Complete the laboratory task")
-        
+        direct = phase_instructions.get(self.current_phase, 'Complete the laboratory task')
+        return self._get_cached_instruction(
+            f"opentransportpour:{self.current_phase.value}",
+            self._build_instruction_templates(
+                direct,
+                f"{self._normalize_instruction(direct)} carefully and complete this phase accurately",
+            ),
+        )
+
     def step(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
         self.every_controller_index += 1
         if self.mode == "collect":
@@ -220,7 +227,7 @@ class OpenTransportPourController(BaseController):
             
     def _step_infer(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
         """Step in inference mode"""
-        state['language_instruction'] = ""
+        state['language_instruction'] = self.get_language_instruction()
         # Use inference engine to get action
         action = self.inference_engine.step_inference(state)
         

@@ -282,14 +282,21 @@ class PickPourTaskController(BaseController):
         return action, False, False
 
     def get_language_instruction(self) -> Optional[str]:
-        """Get the language instruction for the current task.
-        Override to provide dynamic instructions based on the current state.
-        
-        Returns:
-            Optional[str]: The language instruction or None if not available
-        """
-        clean_object_name = self.clean_object_name(self.state['object_name'])
-        if "beaker" in clean_object_name:
-            clean_object_name = "small beaker"
-        self.language_instruction = f"Pick up the {clean_object_name} from the table and pour it into the big beaker".replace("  ", " ")
-        return self.language_instruction
+        object_name = self.clean_object_name(self.state['object_name'])
+        if 'beaker' in object_name:
+            object_name = 'small beaker'
+        if self.current_phase == Phase.PICKING:
+            return self._get_cached_instruction(
+                'pickpour:picking',
+                self._build_instruction_templates(
+                    f"Pick up the {object_name}",
+                    f"Pick up the {object_name} from the table and prepare it for pouring into the big beaker",
+                ),
+            )
+        return self._get_cached_instruction(
+            'pickpour:pouring',
+            self._build_instruction_templates(
+                f"Pour the contents of the {object_name} into the big beaker",
+                f"Move the {object_name} over the big beaker and pour its contents carefully",
+            ),
+        )

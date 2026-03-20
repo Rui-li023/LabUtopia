@@ -191,12 +191,11 @@ class PlaceTaskController(BaseController):
         return False
 
     def get_language_instruction(self) -> str:
-        """Get the language instruction for the current task.
-        Override to provide dynamic instructions based on the current state.
-        
-        Returns:
-            Optional[str]: The language instruction or None if not available
-        """
         object_name = self.clean_object_name(self.state['object_name'])
-        self._language_instruction = f"Pick up the {object_name} from the table and place it at the target"
-        return self._language_instruction
+        return self._get_cached_instruction(
+            'place',
+            self._build_instruction_templates(
+                f"Place the {object_name} at the target",
+                f"Move the {object_name} to the target position and set it down carefully",
+            ),
+        )

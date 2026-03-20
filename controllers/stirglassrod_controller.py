@@ -153,12 +153,10 @@ class StirGlassrodTaskController(BaseController):
         return False
     
     def get_language_instruction(self) -> Optional[str]:
-        """Get the language instruction for the current task.
-        Override to provide dynamic instructions based on the current state.
-        
-        Returns:
-            Optional[str]: The language instruction or None if not available
-        """
-        # Default instruction for shake tasks
-        self._language_instruction = "Use the glass rod to stir the liquid."
-        return self._language_instruction
+        return self._get_cached_instruction(
+            'stir_glass_rod',
+            self._build_instruction_templates(
+                'Use the glass rod to stir the liquid',
+                'Use the glass rod to stir the liquid inside the container until it is well mixed',
+            ),
+        )

@@ -268,18 +268,22 @@ class OpenCloseTaskController(BaseController):
             )
 
     def get_language_instruction(self) -> Optional[str]:
-        """Get the language instruction for the current task.
-        Override to provide dynamic instructions based on the current state.
-        
-        Returns:
-            Optional[str]: The language instruction or None if not available
-        """
         object_name = self.clean_object_name(self.state['object_name'])
         operate_type = self.cfg.task.get("operate_type", "door")
-        
+
         if self.current_phase == "open":
-            self._language_instruction = f"Open the {operate_type} of the {object_name}"
-        else:  # close phase
-            self._language_instruction = f"Close the {operate_type} of the {object_name}"
-        
-        return self._language_instruction
+            return self._get_cached_instruction(
+                f"open:{operate_type}",
+                self._build_instruction_templates(
+                    f"Open the {operate_type} of the {object_name}",
+                    f"Open the {operate_type} of the {object_name} by pulling the handle until it is fully open",
+                ),
+            )
+
+        return self._get_cached_instruction(
+            f"close:{operate_type}",
+            self._build_instruction_templates(
+                f"Close the {operate_type} of the {object_name}",
+                f"Close the {operate_type} of the {object_name} by pushing it back into place",
+            ),
+        )

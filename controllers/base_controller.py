@@ -1,4 +1,5 @@
 import json
+import random
 import re
 from abc import ABC, abstractmethod
 from typing import Any
@@ -45,6 +46,7 @@ class BaseController(ABC):
         self.REQUIRED_SUCCESS_STEPS = 60
         self.check_success_counter = 0
         self._last_failure_reason = ""
+        self._instruction_cache: dict[str, str] = {}
 
         self.rmp_controller = FrankaRMPFlowController(
             name="target_follower_controller", robot_articulation=robot, use_default_config=use_default_config
@@ -89,6 +91,29 @@ class BaseController(ABC):
         Returns:
             Optional[str]: The language instruction or None if not available
         """
+        return self._language_instruction
+
+    @staticmethod
+    def _normalize_instruction(text: str) -> str:
+        return text.strip().rstrip(".")
+
+    @staticmethod
+    def _lowercase_first(text: str) -> str:
+        if not text:
+            return text
+        return text[0].lower() + text[1:]
+
+    def _build_instruction_templates(self, direct: str, detailed: str | None = None) -> list[str]:
+        direct = self._normalize_instruction(direct)
+        detailed = self._normalize_instruction(detailed or direct)
+        request = f"Please help me {self._lowercase_first(direct)}"
+        return [f"{direct}.", f"{request}.", f"{detailed}."]
+
+    def _get_cached_instruction(self, cache_key: str, templates: list[str], **kwargs) -> str:
+        if cache_key not in self._instruction_cache:
+            template = random.choice(templates)
+            self._instruction_cache[cache_key] = template.format(**kwargs)
+        self._language_instruction = self._instruction_cache[cache_key]
         return self._language_instruction
 
     def step(self, state: dict[str, Any]) -> tuple[Any, bool, bool]:
@@ -222,6 +247,8 @@ class BaseController(ABC):
         self.reset_needed = False
         self._last_success = False
         self._last_failure_reason = ""
+        self._instruction_cache = {}
+        self._language_instruction = ""
         if self.mode == "collect":
             self._init_state_captured = False
             self.data_collector.clear_cache()

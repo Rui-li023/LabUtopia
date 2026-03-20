@@ -152,5 +152,10 @@ class ShakeTaskController(BaseController):
             return True
 
     def get_language_instruction(self) -> str:
-        self._language_instruction = "Pick up the container and shake it"
-        return self._language_instruction
+        return self._get_cached_instruction(
+            'shake',
+            self._build_instruction_templates(
+                'Shake the container',
+                'Pick up the container and shake it to mix the contents thoroughly',
+            ),
+        )

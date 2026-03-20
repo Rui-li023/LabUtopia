@@ -229,4 +229,27 @@ class PlacePressTaskController(BaseController):
         return False
 
     def get_language_instruction(self):
-        return "Pick up the beaker and place the beaker on the target and press the button"
+        object_name = self.clean_object_name(self.state['object_name'])
+        if self.current_phase == Phase.PICKING:
+            return self._get_cached_instruction(
+                'placepress:picking',
+                self._build_instruction_templates(
+                    f"Pick up the {object_name}",
+                    f"Pick up the {object_name} from the table and lift it clear of the surface",
+                ),
+            )
+        if self.current_phase == Phase.PLACING:
+            return self._get_cached_instruction(
+                'placepress:placing',
+                self._build_instruction_templates(
+                    f"Place the {object_name} at the target",
+                    f"Move the {object_name} to the target position and set it down carefully",
+                ),
+            )
+        return self._get_cached_instruction(
+            'placepress:pressing',
+            self._build_instruction_templates(
+                'Press the button',
+                'Press the button after placing the object at the target position',
+            ),
+        )

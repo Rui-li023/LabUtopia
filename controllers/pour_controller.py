@@ -296,5 +296,18 @@ class PourTaskController(BaseController):
 
     def get_language_instruction(self) -> Optional[str]:
         object_name = self.clean_object_name(self.state['object_name'])
-        self.language_instruction = f"Pick up the {object_name} from the table and pour it into the target".replace("  ", " ")
-        return self.language_instruction
+        if self.current_phase == Phase.PICKING:
+            return self._get_cached_instruction(
+                'pour:picking',
+                self._build_instruction_templates(
+                    f"Pick up the {object_name}",
+                    f"Pick up the {object_name} from the table and prepare it for pouring",
+                ),
+            )
+        return self._get_cached_instruction(
+            'pour:pouring',
+            self._build_instruction_templates(
+                f"Pour the contents of the {object_name} into the target",
+                f"Move the {object_name} over the target container and pour its contents carefully",
+            ),
+        )
