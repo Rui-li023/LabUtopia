@@ -13,11 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import carb
 import numpy as np
-from isaacsim.core.api.robots.robot import Robot
 from isaacsim.core.prims import SingleRigidPrim
 from isaacsim.core.utils.prims import get_prim_at_path
 from isaacsim.core.utils.stage import add_reference_to_stage, get_stage_units
@@ -26,26 +25,39 @@ from isaacsim.storage.native import get_assets_root_path
 from isaacsim.sensors.physics import ContactSensor
 from isaacsim.sensors.camera import Camera
 
+from robots.base_robot import BaseRobot
 from utils.object_utils import ObjectUtils
 
 
-class Franka(Robot):
-    """[summary]
+class Franka(BaseRobot):
+    """Franka Panda robot arm with parallel gripper.
+
+    A 7-DOF robotic arm with a 2-finger parallel gripper, commonly used for
+    manipulation tasks.
 
     Args:
-        prim_path (str): [description]
-        name (str, optional): [description]. Defaults to "franka_robot".
-        usd_path (Optional[str], optional): [description]. Defaults to None.
-        position (Optional[np.ndarray], optional): [description]. Defaults to None.
-        orientation (Optional[np.ndarray], optional): [description]. Defaults to None.
-        end_effector_prim_name (Optional[str], optional): [description]. Defaults to None.
-        gripper_dof_names (Optional[List[str]], optional): [description]. Defaults to None.
-        gripper_open_position (Optional[np.ndarray], optional): [description]. Defaults to None.
-        gripper_closed_position (Optional[np.ndarray], optional): [description]. Defaults to None.
+        prim_path: USD prim path for the robot.
+        name: Robot name. Defaults to "franka".
+        usd_path: Path to USD file. Defaults to None (uses Isaac Sim assets).
+        position: Robot base position. Defaults to None.
+        orientation: Robot base orientation. Defaults to None.
+        end_effector_prim_name: End effector prim name. Defaults to None.
+        gripper_dof_names: Gripper joint names. Defaults to None.
+        gripper_open_position: Gripper open position. Defaults to None.
+        gripper_closed_position: Gripper closed position. Defaults to None.
+        deltas: Gripper action deltas. Defaults to None.
+        default_joint_positions: Default joint positions. Defaults to None.
     """
 
     # Standard Franka Panda home position: arm in a natural upright-ready pose
     DEFAULT_JOINT_POSITIONS = np.array([0.0, -0.785398, 0.0, -2.356194, 0.0, 1.570796, 0.785398, 0.04, 0.04])
+
+    # Franka-specific joint names
+    _ARM_JOINT_NAMES = [
+        "panda_joint1", "panda_joint2", "panda_joint3", "panda_joint4",
+        "panda_joint5", "panda_joint6", "panda_joint7"
+    ]
+    _GRIPPER_JOINT_NAMES = ["panda_finger_joint1", "panda_finger_joint2"]
 
     def __init__(
         self,
@@ -62,15 +74,12 @@ class Franka(Robot):
         default_joint_positions: Optional[np.ndarray] = None,
     ) -> None:
         prim = get_prim_at_path(prim_path)
-        self._end_effector = None
-        self._gripper = None
         self._end_effector_prim_name = end_effector_prim_name
-        self.prim_path_str = prim_path
         self._default_joint_positions = (
             default_joint_positions if default_joint_positions is not None
             else self.DEFAULT_JOINT_POSITIONS.copy()
         )
-        
+
         if not prim.IsValid():
             if usd_path:
                 add_reference_to_stage(usd_path=usd_path, prim_path=prim_path)
@@ -101,22 +110,27 @@ class Franka(Robot):
                 gripper_open_position = np.array([0.05, 0.05]) / get_stage_units()
             if gripper_closed_position is None:
                 gripper_closed_position = np.array([0.0, 0.0])
-                
-        super().__init__(
-            prim_path=prim_path, name=name, position=position, orientation=orientation, articulation_controller=None
+
+        # Initialize base robot
+        super().__init__(prim_path=prim_path, name=name, position=position, orientation=orientation)
+
+        # Store gripper configuration for later initialization
+        self._gripper_dof_names = gripper_dof_names
+        self._gripper_open_position = gripper_open_position
+        self._gripper_closed_position = gripper_closed_position
+        self._deltas = deltas
+
+        if deltas is None:
+            deltas = np.array([0.05, 0.05]) / get_stage_units()
+        self._gripper = ParallelGripper(
+            end_effector_prim_path=self._end_effector_prim_path,
+            joint_prim_names=gripper_dof_names,
+            joint_opened_positions=gripper_open_position,
+            joint_closed_positions=gripper_closed_position,
+            action_deltas=deltas,
         )
-        
-        if gripper_dof_names is not None:
-            if deltas is None:
-                deltas = np.array([0.05, 0.05]) / get_stage_units()
-            self._gripper = ParallelGripper(
-                end_effector_prim_path=self._end_effector_prim_path,
-                joint_prim_names=gripper_dof_names,
-                joint_opened_positions=gripper_open_position,
-                joint_closed_positions=gripper_closed_position,
-                action_deltas=deltas,
-            )
-        
+
+        # Contact sensors for gripper fingers
         self.left_contact_sensor = ContactSensor(
             prim_path=prim_path + "/panda_leftfinger" + "/contact_sensor",
             name="contact_sensor_{}".format(1),
@@ -124,7 +138,7 @@ class Franka(Robot):
             max_threshold=10000000,
             radius=0.1,
         )
-        
+
         self.right_contact_sensor = ContactSensor(
             prim_path=prim_path + "/panda_rightfinger" + "/contact_sensor",
             name="contact_sensor_{}".format(0),
@@ -132,50 +146,75 @@ class Franka(Robot):
             max_threshold=10000000,
             radius=0.1,
         )
-        self.camera = Camera(
+
+        # Wrist camera mounted on panda_hand
+        self._camera = Camera(
             prim_path=prim_path + "/panda_hand/arm_camera",
             translation=np.array([-0.2, -0, -0.02]),
             frequency=60,
             resolution=(256, 256),
             orientation=np.array([0.20083, 0.67799, -0.67799, -0.20083]),
         )
-        self.camera.set_local_pose(orientation=np.array([0.20083, 0.67799, -0.67799, -0.20083]), camera_axes="usd")
-        self.camera.set_clipping_range(near_distance=0.05)
-        self.camera.set_focal_length(1.)
-        return
+        self._camera.set_local_pose(orientation=np.array([0.20083, 0.67799, -0.67799, -0.20083]), camera_axes="usd")
+        self._camera.set_clipping_range(near_distance=0.05)
+        self._camera.set_focal_length(1.)
 
-    def get_contact_sensor(self):
-        """Get contact sensors
-        
+    # ── Implement abstract properties from BaseRobot ─────────────────────────
+
+    @property
+    def arm_joint_names(self) -> List[str]:
+        """Ordered list of arm joint names."""
+        return self._ARM_JOINT_NAMES
+
+    @property
+    def gripper_joint_names(self) -> List[str]:
+        """Ordered list of gripper joint names."""
+        return self._GRIPPER_JOINT_NAMES
+
+    @property
+    def end_effector_prim_path(self) -> str:
+        """USD prim path of the end effector."""
+        return self._end_effector_prim_path
+
+    @property
+    def gripper_center_prim_path(self) -> str:
+        """USD prim path of the gripper center (tool center point)."""
+        return self.prim_path_str + "/panda_hand/tool_center"
+
+    @property
+    def camera(self) -> Optional[Camera]:
+        """Wrist-mounted camera."""
+        return self._camera
+
+    # ── Override get_contact_sensor ─────────────────────────────────────────
+
+    def get_contact_sensor(self) -> Tuple[ContactSensor, ContactSensor]:
+        """Get contact sensors for gripper fingers.
+
         Returns:
-            tuple: (left_contact_sensor, right_contact_sensor)
-            left_contact_sensor: Left contact sensor
-            right_contact_sensor: Right contact sensor
+            Tuple of (left_contact_sensor, right_contact_sensor).
         """
         return self.left_contact_sensor, self.right_contact_sensor
-        
-    @property
-    def end_effector(self) -> SingleRigidPrim:
-        """[summary]
+
+    # ── Implement abstract methods from BaseRobot ───────────────────────────
+
+    def get_gripper_position(self) -> np.ndarray:
+        """Get gripper position in world coordinates.
 
         Returns:
-            SingleRigidPrim: [description]
+            np.ndarray: Gripper position [x, y, z].
         """
-        return self._end_effector
-
-    @property
-    def gripper(self) -> ParallelGripper:
-        """[summary]
-
-        Returns:
-            ParallelGripper: [description]
-        """
-        return self._gripper
+        return ObjectUtils.get_instance().get_object_xform_position(
+            object_path=self.gripper_center_prim_path
+        )
 
     def initialize(self, physics_sim_view=None) -> None:
-        """[summary]"""
+        """Initialize robot components."""
         super().initialize(physics_sim_view)
-        self._end_effector = SingleRigidPrim(prim_path=self._end_effector_prim_path, name=self.name + "_end_effector")
+        self._end_effector = SingleRigidPrim(
+            prim_path=self._end_effector_prim_path,
+            name=self.name + "_end_effector"
+        )
         self._end_effector.initialize(physics_sim_view)
         self._gripper.initialize(
             physics_sim_view=physics_sim_view,
@@ -185,10 +224,9 @@ class Franka(Robot):
             dof_names=self.dof_names,
         )
         self.set_joint_positions(self._default_joint_positions)
-        return
 
     def post_reset(self) -> None:
-        """[summary]"""
+        """Post reset callback."""
         super().post_reset()
         self._gripper.post_reset()
         self._articulation_controller.switch_dof_control_mode(
@@ -198,14 +236,3 @@ class Franka(Robot):
             dof_index=self.gripper.joint_dof_indicies[1], mode="position"
         )
         self.set_joint_positions(self._default_joint_positions)
-        return
-
-    def get_gripper_position(self) -> np.ndarray:
-        """[summary]
-
-        Returns:
-            np.ndarray: [description]
-        """
-        return ObjectUtils.get_instance().get_object_xform_position(
-                object_path=self.prim_path_str + "/panda_hand/tool_center"
-            )

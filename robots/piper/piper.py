@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+"""Agilex Piper Robot - 6-DOF robotic arm with parallel gripper."""
+
 import os
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import carb
 import numpy as np
-from isaacsim.core.api.robots.robot import Robot
 from isaacsim.core.prims import SingleRigidPrim
 from isaacsim.core.utils.prims import get_prim_at_path
 from isaacsim.core.utils.stage import add_reference_to_stage, get_stage_units
@@ -14,10 +15,11 @@ from isaacsim.robot.manipulators.grippers.parallel_gripper import ParallelGrippe
 from isaacsim.sensors.physics import ContactSensor
 from isaacsim.sensors.camera import Camera
 
+from robots.base_robot import BaseRobot
 from utils.object_utils import ObjectUtils
 
 
-class Piper(Robot):
+class Piper(BaseRobot):
     """Agilex Piper Robot
 
     6-DOF robotic arm with parallel gripper.
@@ -39,6 +41,10 @@ class Piper(Robot):
     # Default home position: 6 arm joints + 2 gripper joints
     DEFAULT_JOINT_POSITIONS = np.array([0.0, 1.57, -1.57, 0.0, 0.0, 0.0, 0.035, -0.035])
 
+    # Piper-specific joint names
+    _ARM_JOINT_NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+    _GRIPPER_JOINT_NAMES = ["joint7", "joint8"]
+
     def __init__(
         self,
         prim_path: str = "/World/Piper",
@@ -54,10 +60,7 @@ class Piper(Robot):
         default_joint_positions: Optional[np.ndarray] = None,
     ) -> None:
         prim = get_prim_at_path(prim_path)
-        self._end_effector = None
-        self._gripper = None
         self._end_effector_prim_name = end_effector_prim_name
-        self.prim_path_str = prim_path
         self._default_joint_positions = (
             default_joint_positions if default_joint_positions is not None
             else self.DEFAULT_JOINT_POSITIONS.copy()
@@ -82,15 +85,14 @@ class Piper(Robot):
 
         # Default gripper configuration: 2 gripper joints (joint7, joint8)
         if gripper_dof_names is None:
-            gripper_dof_names = ["joint7", "joint8"]
+            gripper_dof_names = self._GRIPPER_JOINT_NAMES.copy()
         if gripper_open_position is None:
             gripper_open_position = np.array([0.035, -0.035])
         if gripper_closed_position is None:
             gripper_closed_position = np.array([0.0, 0.0])
 
-        super().__init__(
-            prim_path=prim_path, name=name, position=position, orientation=orientation, articulation_controller=None
-        )
+        # Initialize base robot
+        super().__init__(prim_path=prim_path, name=name, position=position, orientation=orientation)
 
         if deltas is None:
             deltas = np.array([0.01, 0.01]) / get_stage_units()
@@ -120,52 +122,77 @@ class Piper(Robot):
         )
 
         # Wrist camera mounted on gripper base
-        self.camera = Camera(
+        self._camera = Camera(
             prim_path=prim_path + "/gripper_base/arm_camera",
             translation=np.array([-0.5, 0.0, -0.1]),
             frequency=60,
             resolution=(256, 256),
             orientation=np.array([0.20083, 0.67799, -0.67799, -0.20083]),
         )
-        self.camera.set_local_pose(
+        self._camera.set_local_pose(
             translation=np.array([-0.5, 0.0, -0.1]),
             orientation=np.array([0.20083, 0.67799, -0.67799, -0.20083]),
             camera_axes="usd"
         )
-        self.camera.set_clipping_range(near_distance=0.01)
-        self.camera.set_focal_length(1.)
-        return
+        self._camera.set_clipping_range(near_distance=0.01)
+        self._camera.set_focal_length(1.)
 
-    def get_contact_sensor(self):
-        """Get contact sensors.
+    # ── Implement abstract properties from BaseRobot ─────────────────────────
+
+    @property
+    def arm_joint_names(self) -> List[str]:
+        """Ordered list of arm joint names."""
+        return self._ARM_JOINT_NAMES
+
+    @property
+    def gripper_joint_names(self) -> List[str]:
+        """Ordered list of gripper joint names."""
+        return self._GRIPPER_JOINT_NAMES
+
+    @property
+    def end_effector_prim_path(self) -> str:
+        """USD prim path of the end effector."""
+        return self._end_effector_prim_path
+
+    @property
+    def gripper_center_prim_path(self) -> str:
+        """USD prim path of the gripper center (tool center point)."""
+        return self.prim_path_str + "/gripper_base"
+
+    @property
+    def camera(self) -> Optional[Camera]:
+        """Wrist-mounted camera."""
+        return self._camera
+
+    # ── Override get_contact_sensor ─────────────────────────────────────────
+
+    def get_contact_sensor(self) -> Tuple[ContactSensor, ContactSensor]:
+        """Get contact sensors for gripper fingers.
 
         Returns:
-            tuple: (left_contact_sensor, right_contact_sensor)
+            Tuple of (left_contact_sensor, right_contact_sensor).
         """
         return self.left_contact_sensor, self.right_contact_sensor
 
-    @property
-    def end_effector(self) -> SingleRigidPrim:
-        """Get end effector rigid body.
+    # ── Implement abstract methods from BaseRobot ───────────────────────────
+
+    def get_gripper_position(self) -> np.ndarray:
+        """Get gripper position in world coordinates.
 
         Returns:
-            SingleRigidPrim: End effector prim.
+            np.ndarray: Gripper position [x, y, z].
         """
-        return self._end_effector
-
-    @property
-    def gripper(self) -> ParallelGripper:
-        """Get gripper controller.
-
-        Returns:
-            ParallelGripper: Gripper controller.
-        """
-        return self._gripper
+        return ObjectUtils.get_instance().get_object_xform_position(
+            object_path=self.gripper_center_prim_path
+        )
 
     def initialize(self, physics_sim_view=None) -> None:
-        """Initialize robot."""
+        """Initialize robot components."""
         super().initialize(physics_sim_view)
-        self._end_effector = SingleRigidPrim(prim_path=self._end_effector_prim_path, name=self.name + "_end_effector")
+        self._end_effector = SingleRigidPrim(
+            prim_path=self._end_effector_prim_path,
+            name=self.name + "_end_effector"
+        )
         self._end_effector.initialize(physics_sim_view)
 
         self._gripper.initialize(
@@ -176,7 +203,6 @@ class Piper(Robot):
             dof_names=self.dof_names,
         )
         self.set_joint_positions(self._default_joint_positions)
-        return
 
     def post_reset(self) -> None:
         """Post reset callback."""
@@ -189,14 +215,3 @@ class Piper(Robot):
             dof_index=self.gripper.joint_dof_indicies[1], mode="position"
         )
         self.set_joint_positions(self._default_joint_positions)
-        return
-
-    def get_gripper_position(self) -> np.ndarray:
-        """Get gripper position in world coordinates.
-
-        Returns:
-            np.ndarray: Gripper position [x, y, z].
-        """
-        return ObjectUtils.get_instance().get_object_xform_position(
-            object_path=self.prim_path_str + "/gripper_base"
-        )
