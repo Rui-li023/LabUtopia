@@ -1,6 +1,7 @@
 from typing import Dict, Type
 from isaacsim.core.api.robots.robot import Robot
 from robots.franka.franka import Franka
+from robots.piper.piper import Piper
 from robots.ridgebase_franka.ridgebase import Ridgebase
 
 _robot_registry: Dict[str, Type[Robot]] = {}
@@ -18,3 +19,4 @@ def create_robot(robot_type: str, *args, **kwargs) -> Robot:
 
 register_robot("franka", Franka)
 register_robot("ridgebase", Ridgebase)
+register_robot("piper", Piper)

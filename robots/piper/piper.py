@@ -70,8 +70,8 @@ class Piper(BaseRobot):
             if usd_path:
                 add_reference_to_stage(usd_path=usd_path, prim_path=prim_path)
             else:
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                usd_path = os.path.join(current_dir, "piper.usd")
+                current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                usd_path = os.path.join(current_dir, "assets/robots/piper.usd")
                 if not os.path.exists(usd_path):
                     carb.log_error(f"Could not find Piper USD file at {usd_path}")
                     raise FileNotFoundError(f"Piper USD file not found: {usd_path}")
@@ -150,6 +150,11 @@ class Piper(BaseRobot):
         return self._GRIPPER_JOINT_NAMES
 
     @property
+    def gripper_distance_multipliers(self) -> List[float]:
+        """Map scalar gripper distance to Piper finger joint directions."""
+        return [1.0, -1.0]
+
+    @property
     def end_effector_prim_path(self) -> str:
         """USD prim path of the end effector."""
         return self._end_effector_prim_path
@@ -195,12 +200,15 @@ class Piper(BaseRobot):
         )
         self._end_effector.initialize(physics_sim_view)
 
+        dof_names = self.dof_names if self.dof_names is not None else self.get_all_joint_names()
+        gripper_default_state = np.array(self._default_joint_positions[-self.num_gripper_joints:], dtype=np.float64)
+        self._gripper.set_default_state(gripper_default_state)
         self._gripper.initialize(
             physics_sim_view=physics_sim_view,
             articulation_apply_action_func=self.apply_action,
             get_joint_positions_func=self.get_joint_positions,
             set_joint_positions_func=self.set_joint_positions,
-            dof_names=self.dof_names,
+            dof_names=dof_names,
         )
         self.set_joint_positions(self._default_joint_positions)
 

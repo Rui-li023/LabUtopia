@@ -5,6 +5,9 @@ from isaacsim.core.utils.rotations import euler_angles_to_quat
 import numpy as np
 import typing
 
+from robots.base_robot import BaseRobot
+
+
 class PickController(BaseController):
     """A state machine controller for picking up objects.
 
@@ -21,9 +24,11 @@ class PickController(BaseController):
         name (str): Identifier for the controller.
         cspace_controller (BaseController): Cartesian space controller that returns ArticulationAction.
         events_dt (List[float], optional): Duration for each phase. Defaults to [0.004, 0.002, 0.01, 0.2, 0.05, 0.004, 0.006].
+        robot (BaseRobot, optional): Robot articulation. If not provided, it is inferred from ``cspace_controller``.
 
     Raises:
         Exception: If events_dt is not a list or numpy array, or if its length is not 7.
+        ValueError: If robot cannot be inferred from ``cspace_controller``.
     """
 
     def __init__(
@@ -32,6 +37,7 @@ class PickController(BaseController):
         cspace_controller: BaseController,
         events_dt: typing.Optional[typing.List[float]] = None,
         position_threshold: float = 0.01,
+        robot: typing.Optional[BaseRobot] = None,
     ) -> None:
         super().__init__(name=name)
         self._event = 0
@@ -55,6 +61,53 @@ class PickController(BaseController):
         self._robot_position = None
         self._last_record_positions = None
 
+        self._robot = self._resolve_robot(robot=robot, cspace_controller=cspace_controller)
+        if self._robot.num_gripper_joints <= 0:
+            raise ValueError(
+                f"PickController requires at least one gripper joint, got {self._robot.num_gripper_joints} "
+                f"for robot '{self._robot.name}'."
+            )
+
+    def _resolve_robot(
+        self,
+        robot: typing.Optional[BaseRobot],
+        cspace_controller: BaseController,
+    ) -> BaseRobot:
+        if robot is not None:
+            if not isinstance(robot, BaseRobot):
+                raise TypeError(f"robot must be BaseRobot, got {type(robot)}")
+            return robot
+
+        candidates = []
+
+        for attr in ("robot", "robot_articulation", "_robot", "_robot_articulation"):
+            candidate = getattr(cspace_controller, attr, None)
+            if candidate is not None:
+                candidates.append(candidate)
+
+        articulation_motion_policy = getattr(cspace_controller, "_articulation_motion_policy", None)
+        if articulation_motion_policy is not None:
+            for attr in ("_robot_articulation", "robot_articulation", "_robot", "robot"):
+                candidate = getattr(articulation_motion_policy, attr, None)
+                if candidate is not None:
+                    candidates.append(candidate)
+
+        articulation_rmp = getattr(cspace_controller, "articulation_rmp", None)
+        if articulation_rmp is not None:
+            for attr in ("_robot_articulation", "robot_articulation", "_robot", "robot"):
+                candidate = getattr(articulation_rmp, attr, None)
+                if candidate is not None:
+                    candidates.append(candidate)
+
+        for candidate in candidates:
+            if isinstance(candidate, BaseRobot):
+                return candidate
+
+        raise ValueError(
+            "PickController could not resolve a BaseRobot instance from cspace_controller. "
+            "Please pass robot=... explicitly when constructing PickController."
+        )
+
     def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
         n = len(current_joint_positions)
         jp = action.joint_positions
@@ -70,15 +123,41 @@ class PickController(BaseController):
         self._last_record_positions = positions
         return positions
 
+    def _get_gripper_joint_indices(self, current_joint_positions: np.ndarray) -> typing.List[int]:
+        num_joints = int(current_joint_positions.shape[0])
+        num_gripper = int(self._robot.num_gripper_joints)
+        if num_gripper <= 0 or num_gripper > num_joints:
+            raise ValueError(
+                f"Invalid gripper joint count for current action vector: num_gripper_joints={num_gripper}, "
+                f"action_joints={num_joints}, robot='{self._robot.name}'."
+            )
+        return list(range(num_joints - num_gripper, num_joints))
+
+    def _set_gripper_targets_from_distance(
+        self,
+        target_joint_positions: typing.List[typing.Optional[float]],
+        current_joint_positions: np.ndarray,
+        distance: float,
+    ) -> None:
+        indices = self._get_gripper_joint_indices(current_joint_positions)
+        targets = self._robot.get_gripper_joint_targets_from_distance(distance)
+        if len(targets) != len(indices):
+            raise ValueError(
+                f"Gripper target length mismatch: got {len(targets)} targets for {len(indices)} indices "
+                f"on robot '{self._robot.name}'."
+            )
+        for i, idx in enumerate(indices):
+            target_joint_positions[idx] = float(targets[i])
+
     def set_robot_position(self, position: np.ndarray):
         self._robot_position = position
 
     def _calculate_approach_direction(self, picking_position: np.ndarray) -> np.ndarray:
         if self._robot_position is None:
-            return np.array([-1, 0, 0])  
+            return np.array([-1, 0, 0])
 
         relative_pos = picking_position - self._robot_position
-        
+
         horizontal_vec = relative_pos.copy()
         horizontal_vec[2] = 0
 
@@ -128,7 +207,7 @@ class PickController(BaseController):
         self.pre_offset_z = pre_offset_z
         self.after_offset_z = after_offset_z
         self.pre_offset_x = pre_offset_x
-        
+
         target_joint_positions = self._execute_phase(
             picking_position,
             end_effector_orientation,
@@ -159,8 +238,8 @@ class PickController(BaseController):
         """
         self._start = False
         target_joint_positions = [None] * current_joint_positions.shape[0]
-        target_joint_positions[7] = 0.04 / get_stage_units()
-        target_joint_positions[8] = 0.04 / get_stage_units()
+        open_distance = self._robot.default_pick_gripper_distance / get_stage_units()
+        self._set_gripper_targets_from_distance(target_joint_positions, current_joint_positions, open_distance)
         return ArticulationAction(joint_positions=target_joint_positions)
 
     def _execute_phase(self, picking_position, end_effector_orientation, current_joint_positions, object_name, gripper_control, gripper_position, gripper_distances):
@@ -177,9 +256,9 @@ class PickController(BaseController):
         Returns:
             ArticulationAction: Joint position targets for robot control.
         """
-        
+
         approach_dir = self._calculate_approach_direction(picking_position)
-        
+
         if self._event == 0:
             picking_position = picking_position + approach_dir * (self.pre_offset_x / get_stage_units())
             picking_position[2] += self.object_size[2] + self.pre_offset_z
@@ -226,13 +305,12 @@ class PickController(BaseController):
             target_joint_positions = [None] * current_joint_positions.shape[0]
             if gripper_distances is None:
                 gripper_distances = self.get_gripper_distance(object_name) / get_stage_units()
-            target_joint_positions[7] = gripper_distances
-            target_joint_positions[8] = gripper_distances
+            self._set_gripper_targets_from_distance(target_joint_positions, current_joint_positions, gripper_distances)
             target_joint_positions = ArticulationAction(joint_positions=target_joint_positions)
-            self.target_position = picking_position
+            self.target_position = picking_position.copy()
             self.target_position[2] += self.after_offset_z / get_stage_units()
             if "glass" in object_name:
-                gripper_control.add_object_to_gripper("/World/glass_rod/Cylinder", "/World/Franka/panda_hand/tool_center")
+                gripper_control.add_object_to_gripper("/World/glass_rod/Cylinder", self._robot.gripper_center_prim_path)
             return target_joint_positions
 
         elif self._event == 5:

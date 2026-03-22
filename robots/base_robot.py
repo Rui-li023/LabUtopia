@@ -188,6 +188,57 @@ class BaseRobot(Robot, ABC):
         """
         return self.base_joint_names + self.arm_joint_names + self.gripper_joint_names
 
+    @property
+    def gripper_distance_multipliers(self) -> List[float]:
+        """Per-joint multipliers for mapping a scalar gripper distance.
+
+        By default all gripper joints use the same sign/magnitude (+1).
+        Subclasses can override this for mirrored grippers (e.g., +d/-d).
+        """
+        return [1.0] * self.num_gripper_joints
+
+    @property
+    def default_pick_gripper_distance(self) -> float:
+        """Default scalar distance used for opening the gripper in pick.
+
+        The scalar is inferred from default joint positions and the
+        ``gripper_distance_multipliers`` mapping.
+        """
+        if self.num_gripper_joints == 0:
+            return 0.0
+
+        default_positions = getattr(self, "_default_joint_positions", None)
+        if default_positions is None or len(default_positions) < self.num_gripper_joints:
+            default_positions = self.DEFAULT_JOINT_POSITIONS
+        if default_positions is None or len(default_positions) < self.num_gripper_joints:
+            return 0.0
+
+        gripper_defaults = np.array(default_positions[-self.num_gripper_joints :], dtype=np.float64)
+        multipliers = np.array(self.gripper_distance_multipliers, dtype=np.float64)
+        if len(multipliers) != self.num_gripper_joints:
+            raise ValueError(
+                f"gripper_distance_multipliers length ({len(multipliers)}) does not match "
+                f"num_gripper_joints ({self.num_gripper_joints}) for robot '{self.name}'."
+            )
+
+        nonzero = np.abs(multipliers) > 1e-8
+        if not np.any(nonzero):
+            return 0.0
+        inferred = np.abs(gripper_defaults[nonzero] / multipliers[nonzero])
+        return float(np.mean(inferred))
+
+    def get_gripper_joint_targets_from_distance(self, distance: float) -> np.ndarray:
+        """Map a scalar gripper distance to per-joint position targets."""
+        if self.num_gripper_joints == 0:
+            return np.array([], dtype=np.float64)
+        multipliers = np.array(self.gripper_distance_multipliers, dtype=np.float64)
+        if len(multipliers) != self.num_gripper_joints:
+            raise ValueError(
+                f"gripper_distance_multipliers length ({len(multipliers)}) does not match "
+                f"num_gripper_joints ({self.num_gripper_joints}) for robot '{self.name}'."
+            )
+        return multipliers * float(distance)
+
     # ── Common accessors ─────────────────────────────────────────────────────
 
     @property
@@ -241,7 +292,6 @@ class BaseRobot(Robot, ABC):
         """
         ...
 
-    @abstractmethod
     def initialize(self, physics_sim_view=None) -> None:
         """Initialize robot components.
 
@@ -255,7 +305,7 @@ class BaseRobot(Robot, ABC):
         Args:
             physics_sim_view: Physics simulation view from Isaac Sim.
         """
-        ...
+        super().initialize(physics_sim_view)
 
     @abstractmethod
     def post_reset(self) -> None:

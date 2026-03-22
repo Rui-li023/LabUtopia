@@ -95,7 +95,7 @@ cameras:
     image_type: "rgb"
 
 robot:
-  type: "franka"
+  type: "piper"
   position: [-0.4, -0, 0.71]
 
 collector:

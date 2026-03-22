@@ -172,6 +172,11 @@ class Franka(BaseRobot):
         return self._GRIPPER_JOINT_NAMES
 
     @property
+    def gripper_distance_multipliers(self) -> List[float]:
+        """Map scalar gripper distance to Franka finger joint directions."""
+        return [1.0, 1.0]
+
+    @property
     def end_effector_prim_path(self) -> str:
         """USD prim path of the end effector."""
         return self._end_effector_prim_path
@@ -216,12 +221,15 @@ class Franka(BaseRobot):
             name=self.name + "_end_effector"
         )
         self._end_effector.initialize(physics_sim_view)
+        dof_names = self.dof_names if self.dof_names is not None else self.get_all_joint_names()
+        gripper_default_state = np.array(self._default_joint_positions[-self.num_gripper_joints:], dtype=np.float64)
+        self._gripper.set_default_state(gripper_default_state)
         self._gripper.initialize(
             physics_sim_view=physics_sim_view,
             articulation_apply_action_func=self.apply_action,
             get_joint_positions_func=self.get_joint_positions,
             set_joint_positions_func=self.set_joint_positions,
-            dof_names=self.dof_names,
+            dof_names=dof_names,
         )
         self.set_joint_positions(self._default_joint_positions)
 
