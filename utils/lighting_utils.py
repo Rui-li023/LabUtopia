@@ -33,26 +33,26 @@ COLOR_TEMP_PRESETS: Dict[str, Tuple[float, float]] = {
 LAB_LIGHTING_SCENARIOS: Dict[str, Dict] = {
     "standard_lab": {
         "color_temp_range": (4500.0, 8500.0),
-        "intensity_range": (500.0, 2500.0),
-        "exposure_range": (0.0, 2.0),
+        "intensity_range": (500.0, 2000.0),
+        "exposure_range": (0.0, 1.0),
         "light_types": ["RectLight", "SphereLight"],
     },
     "warm_lab": {
         "color_temp_range": (4000.0, 6000.0),
         "intensity_range": (300.0, 1500.0),
-        "exposure_range": (-1.0, 1.0),
+        "exposure_range": (-0.5, 0.5),
         "light_types": ["SphereLight", "RectLight"],
     },
     "cool_lab": {
         "color_temp_range": (5000.0, 8500.0),
-        "intensity_range": (800.0, 3000.0),
-        "exposure_range": (0.0, 3.0),
+        "intensity_range": (800.0, 1500.0),
+        "exposure_range": (0.0, 1.0),
         "light_types": ["RectLight", "DistantLight"],
     },
     "natural_daylight": {
         "color_temp_range": (5000.0, 6500.0),
-        "intensity_range": (1000.0, 5000.0),
-        "exposure_range": (1.0, 4.0),
+        "intensity_range": (1000.0, 1500.0),
+        "exposure_range": (1.0, 1.0),
         "light_types": ["DistantLight", "DomeLight"],
     },
 }

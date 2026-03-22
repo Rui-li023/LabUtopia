@@ -89,10 +89,34 @@ cameras:
     orientation: [0.70711, 0, 0, -0.70711]
     image_type: "rgb"
 
-  - prim_path: "/World/Franka/panda_hand/arm_camera"
+  - prim_path: ${robot_camera_profiles.${robot.type}.arm_camera_prim_path}
     name: "camera_3"
-    resolution: [256, 256]
+    translation: ${robot_camera_profiles.${robot.type}.arm_camera_translation}
+    orientation: ${robot_camera_profiles.${robot.type}.arm_camera_orientation}
+    focal_length: ${robot_camera_profiles.${robot.type}.arm_camera_focal_length}
+    resolution: ${robot_camera_profiles.${robot.type}.arm_camera_resolution}
     image_type: "rgb"
+
+# Per-robot wrist camera overrides.
+robot_camera_profiles:
+  franka:
+    arm_camera_prim_path: "/World/Franka/panda_hand/arm_camera"
+    arm_camera_translation: [-0.2, 0.0, -0.02]
+    arm_camera_orientation: [0.20083, 0.67799, -0.67799, -0.20083]
+    arm_camera_focal_length: 1.0
+    arm_camera_resolution: [256, 256]
+  piper:
+    arm_camera_prim_path: "/World/Piper/gripper_base/arm_camera"
+    arm_camera_translation: [-0.5, 0.0, -0.1]
+    arm_camera_orientation: [0.20083, 0.67799, -0.67799, -0.20083]
+    arm_camera_focal_length: 1.0
+    arm_camera_resolution: [256, 256]
+  ridgebase:
+    arm_camera_prim_path: "/World/Ridgebase/panda_hand/arm_camera"
+    arm_camera_translation: [-0.2, 0.0, -0.02]
+    arm_camera_orientation: [0.20083, 0.67799, -0.67799, -0.20083]
+    arm_camera_focal_length: 1.0
+    arm_camera_resolution: [256, 256]
 
 robot:
   type: "piper"

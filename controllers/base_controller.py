@@ -14,11 +14,20 @@ from controllers.robot_controllers.grapper_manager import Gripper
 from controllers.robot_controllers.trajectory_controller import FrankaTrajectoryController
 from factories.collector_factory import create_collector
 from robots.franka.rmpflow_controller import RMPFlowController as FrankaRMPFlowController
+from robots.piper.rmpflow_controller import RMPFlowController as PiperRMPFlowController
 from utils.object_utils import ObjectUtils
 from utils.replay_data_loader import ReplayDataLoader
 
 
 class BaseController(ABC):
+    
+    @staticmethod
+    def _select_rmp_controller_cls(robot):
+        robot_name = str(getattr(robot, "name", "")).lower()
+        if "piper" in robot_name:
+            return PiperRMPFlowController
+        return FrankaRMPFlowController
+
     """Base class for all controllers in the chemistry lab simulator.
 
     Provides common functionality for robot control, state management,
@@ -48,7 +57,8 @@ class BaseController(ABC):
         self._last_failure_reason = ""
         self._instruction_cache: dict[str, str] = {}
 
-        self.rmp_controller = FrankaRMPFlowController(
+        rmp_controller_cls = self._select_rmp_controller_cls(robot)
+        self.rmp_controller = rmp_controller_cls(
             name="target_follower_controller", robot_articulation=robot, use_default_config=use_default_config
         )
 

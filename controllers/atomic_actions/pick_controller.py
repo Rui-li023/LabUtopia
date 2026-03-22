@@ -60,6 +60,11 @@ class PickController(BaseController):
         self._position_threshold = position_threshold
         self._robot_position = None
         self._last_record_positions = None
+        self._randomization_sampled = False
+        self._pre_offset_z_noise = 0.0
+        self._after_offset_z_noise = 0.0
+        self._orientation_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        self._orientation_angle_deg = 0.0
 
         self._robot = self._resolve_robot(robot=robot, cspace_controller=cspace_controller)
         if self._robot.num_gripper_joints <= 0:
@@ -167,6 +172,60 @@ class PickController(BaseController):
             horizontal_vec = np.array([-1, 0, 0])
         return horizontal_vec
 
+    def _sample_episode_randomization(self) -> None:
+        """Sample per-episode randomization values once."""
+        self._pre_offset_z_noise = float(np.random.uniform(-0.04, 0.04))
+        self._after_offset_z_noise = float(np.random.uniform(-0.04, 0.04))
+
+        axis_choices = (
+            np.array([1.0, 0.0, 0.0], dtype=np.float64),
+            np.array([0.0, 1.0, 0.0], dtype=np.float64),
+            np.array([0.0, 0.0, 1.0], dtype=np.float64),
+        )
+        self._orientation_axis = axis_choices[int(np.random.randint(0, len(axis_choices)))]
+        self._orientation_angle_deg = float(np.random.uniform(-15.0, 15.0))
+        self._randomization_sampled = True
+
+    def _quat_multiply(self, q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+        """Quaternion multiplication for [x, y, z, w] format."""
+        x1, y1, z1, w1 = q1
+        x2, y2, z2, w2 = q2
+        return np.array(
+            [
+                w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+                w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+                w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+                w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+            ],
+            dtype=np.float64,
+        )
+
+    def _apply_axis_rotation_to_quat(
+        self,
+        quat: np.ndarray,
+        axis: np.ndarray,
+        angle_deg: float,
+    ) -> np.ndarray:
+        """Apply an axis-angle rotation to a quaternion in [x, y, z, w] format."""
+        quat = np.asarray(quat, dtype=np.float64)
+        axis = np.asarray(axis, dtype=np.float64)
+        axis_norm = np.linalg.norm(axis)
+        if axis_norm <= 0:
+            return quat
+        axis = axis / axis_norm
+
+        half_angle = np.deg2rad(angle_deg) / 2.0
+        sin_half = np.sin(half_angle)
+        delta_quat = np.array(
+            [axis[0] * sin_half, axis[1] * sin_half, axis[2] * sin_half, np.cos(half_angle)],
+            dtype=np.float64,
+        )
+        rotated = self._quat_multiply(delta_quat, quat)
+        norm = np.linalg.norm(rotated)
+        if norm > 0:
+            rotated = rotated / norm
+        return rotated
+
     def forward(
         self,
         picking_position: np.ndarray,
@@ -204,9 +263,17 @@ class PickController(BaseController):
         if end_effector_orientation is None:
             end_effector_orientation = euler_angles_to_quat(np.array([0, np.pi, 0]))
 
-        self.pre_offset_z = pre_offset_z
-        self.after_offset_z = after_offset_z
+        if not self._randomization_sampled:
+            self._sample_episode_randomization()
+
+        self.pre_offset_z = max(0.0, pre_offset_z + self._pre_offset_z_noise)
+        self.after_offset_z = max(0.0, after_offset_z + self._after_offset_z_noise)
         self.pre_offset_x = pre_offset_x
+        end_effector_orientation = self._apply_axis_rotation_to_quat(
+            quat=end_effector_orientation,
+            axis=self._orientation_axis,
+            angle_deg=self._orientation_angle_deg,
+        )
 
         target_joint_positions = self._execute_phase(
             picking_position,
@@ -273,7 +340,7 @@ class PickController(BaseController):
             return target_joint_positions
 
         elif self._event == 1:
-            picking_position = picking_position + approach_dir * (0.1 / get_stage_units())
+            picking_position = picking_position + approach_dir * (self.pre_offset_x / get_stage_units())
             picking_position[2] += self.get_pickprez_offset(object_name) / get_stage_units()
             target_joint_positions = self._cspace_controller.forward(
                 target_end_effector_position=picking_position,
@@ -293,7 +360,7 @@ class PickController(BaseController):
             )
             xy_distance = np.linalg.norm(gripper_position[:2] - picking_position[:2])
             z_distance = abs(gripper_position[2] - picking_position[2])
-            if xy_distance < 0.005 and z_distance < 0.005:
+            if xy_distance < self._position_threshold and z_distance < self._position_threshold:
                 self._event += 1
                 self._t = 0
             return target_joint_positions
@@ -357,6 +424,11 @@ class PickController(BaseController):
         self.object_size = None
         self._robot_position = None
         self._last_record_positions = None
+        self._randomization_sampled = False
+        self._pre_offset_z_noise = 0.0
+        self._after_offset_z_noise = 0.0
+        self._orientation_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        self._orientation_angle_deg = 0.0
 
     def is_done(self) -> bool:
         """Checks if the picking sequence is complete.

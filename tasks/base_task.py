@@ -137,15 +137,21 @@ class BaseTask(ABC):
                     resolution=tuple(cam_cfg.resolution),
                 )
             else:
+                # For camera prims that do not exist in USD, allow config defaults so
+                # wrist cameras can be configured per robot without hard requirements.
+                translation = np.array(getattr(cam_cfg, "translation", [0.0, 0.0, 0.0]))
+                orientation = np.array(getattr(cam_cfg, "orientation", [1.0, 0.0, 0.0, 0.0]))
+                focal_length = float(getattr(cam_cfg, "focal_length", 1.0))
+
                 camera = Camera(
                     prim_path=cam_cfg.prim_path,
-                    translation=np.array(cam_cfg.translation),
+                    translation=translation,
                     name=cam_cfg.name,
                     frequency=60,
                     resolution=tuple(cam_cfg.resolution),
                 )
-                camera.set_local_pose(orientation=np.array(cam_cfg.orientation), camera_axes="usd")
-                camera.set_focal_length(cam_cfg.focal_length)
+                camera.set_local_pose(orientation=orientation, camera_axes="usd")
+                camera.set_focal_length(focal_length)
 
             clipping = getattr(cam_cfg, "clipping_range", None)
             camera.set_clipping_range(
