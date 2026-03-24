@@ -1,9 +1,9 @@
-from isaacsim.core.api.controllers import BaseController
 from isaacsim.core.api.controllers.articulation_controller import ArticulationController
 from isaacsim.core.utils.types import ArticulationAction
 
 import numpy as np
 import typing
+from .atomic_base_controller import AtomicBaseController
 from scipy.spatial.transform import Rotation as R
 
 # Control frequency 60 Hz: pour action uses velocity control, record positions are integrated with dt = 1/60
@@ -11,7 +11,7 @@ CONTROL_FREQUENCY = 60
 PHYSICS_DT = 1.0 / CONTROL_FREQUENCY
 
 
-class PourController(BaseController):
+class PourController(AtomicBaseController):
     """
     PourController implements a state machine for pouring liquid. The state transitions are as follows:
 
@@ -29,13 +29,13 @@ class PourController(BaseController):
     def __init__(
         self,
         name: str,
-        cspace_controller: BaseController,
+        cspace_controller: typing.Any,
         events_dt: typing.Optional[typing.List[float]] = None,
         speed: float = 1,
         position_threshold: float = 0.006,
         control_frequency: float = CONTROL_FREQUENCY,
     ) -> None:
-        BaseController.__init__(self, name=name)
+        super().__init__(name=name)
         self._event = 0
         self._t = 0
         self._events_dt = events_dt
@@ -57,7 +57,7 @@ class PourController(BaseController):
         self._height_range_2 = (0.1, 0.2)
         self._random_height_1 = np.random.uniform(*self._height_range_1)
         self._random_height_2 = np.random.uniform(*self._height_range_2)
-        self._last_record_positions = None
+        self._reset_record_state()
         return
 
     def _build_record_array(
@@ -213,7 +213,7 @@ class PourController(BaseController):
             Exception: If 'events_dt' is not a list or numpy array.
             Exception: If 'events_dt' length is greater than 3.
         """
-        BaseController.reset(self)
+        super().reset()
         self._cspace_controller.reset()
         self._event = 0
         self._t = 0
@@ -230,18 +230,9 @@ class PourController(BaseController):
 
         self._random_height_1 = np.random.uniform(*self._height_range_1)
         self._random_height_2 = np.random.uniform(*self._height_range_2)
-        self._last_record_positions = None
+        self._reset_record_state()
         return
 
-    def is_done(self) -> bool:
-        """
-        Check if the state machine has reached the last phase.
-
-        Returns:
-            bool: True if the last phase is reached, False otherwise.
-        """
-        return self._event >= len(self._events_dt)
-    
     def get_pickz_offset(self, item_name):
         """Calculates the vertical offset for the final grasp position.
 

@@ -1,14 +1,14 @@
-from isaacsim.core.api.controllers import BaseController
 from isaacsim.core.utils.stage import get_stage_units
 from isaacsim.core.utils.types import ArticulationAction
 from isaacsim.core.utils.rotations import euler_angles_to_quat
 import numpy as np
 import typing
+from .atomic_base_controller import AtomicBaseController
 
 from robots.base_robot import BaseRobot
 
 
-class PickController(BaseController):
+class PickController(AtomicBaseController):
     """A state machine controller for picking up objects.
 
     Manages the process of picking an object through multiple phases:
@@ -22,7 +22,7 @@ class PickController(BaseController):
 
     Args:
         name (str): Identifier for the controller.
-        cspace_controller (BaseController): Cartesian space controller that returns ArticulationAction.
+        cspace_controller (typing.Any): Cartesian space controller that returns ArticulationAction.
         events_dt (List[float], optional): Duration for each phase. Defaults to [0.004, 0.002, 0.01, 0.2, 0.05, 0.004, 0.006].
         robot (BaseRobot, optional): Robot articulation. If not provided, it is inferred from ``cspace_controller``.
 
@@ -34,7 +34,7 @@ class PickController(BaseController):
     def __init__(
         self,
         name: str,
-        cspace_controller: BaseController,
+        cspace_controller: typing.Any,
         events_dt: typing.Optional[typing.List[float]] = None,
         position_threshold: float = 0.01,
         robot: typing.Optional[BaseRobot] = None,
@@ -59,7 +59,7 @@ class PickController(BaseController):
         self.object_size = None
         self._position_threshold = position_threshold
         self._robot_position = None
-        self._last_record_positions = None
+        self._reset_record_state()
         self._randomization_sampled = False
         self._pre_offset_z_noise = 0.0
         self._after_offset_z_noise = 0.0
@@ -76,7 +76,7 @@ class PickController(BaseController):
     def _resolve_robot(
         self,
         robot: typing.Optional[BaseRobot],
-        cspace_controller: BaseController,
+        cspace_controller: typing.Any,
     ) -> BaseRobot:
         if robot is not None:
             if not isinstance(robot, BaseRobot):
@@ -112,21 +112,6 @@ class PickController(BaseController):
             "PickController could not resolve a BaseRobot instance from cspace_controller. "
             "Please pass robot=... explicitly when constructing PickController."
         )
-
-    def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
-        n = len(current_joint_positions)
-        jp = action.joint_positions
-        if jp is None:
-            if self._last_record_positions is not None:
-                return self._last_record_positions.copy()
-            return current_joint_positions.copy()
-        fallback = self._last_record_positions if self._last_record_positions is not None else current_joint_positions
-        positions = fallback.copy().astype(np.float64)
-        for i in range(min(len(jp), n)):
-            if jp[i] is not None:
-                positions[i] = float(jp[i])
-        self._last_record_positions = positions
-        return positions
 
     def _get_gripper_joint_indices(self, current_joint_positions: np.ndarray) -> typing.List[int]:
         num_joints = int(current_joint_positions.shape[0])
@@ -423,20 +408,12 @@ class PickController(BaseController):
         self._start = True
         self.object_size = None
         self._robot_position = None
-        self._last_record_positions = None
+        self._reset_record_state()
         self._randomization_sampled = False
         self._pre_offset_z_noise = 0.0
         self._after_offset_z_noise = 0.0
         self._orientation_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         self._orientation_angle_deg = 0.0
-
-    def is_done(self) -> bool:
-        """Checks if the picking sequence is complete.
-
-        Returns:
-            bool: True if the final phase is reached, False otherwise.
-        """
-        return self._event >= len(self._events_dt)
 
     def get_gripper_distance(self, item_name):
         """Determines the gripper opening distance for the specified object.

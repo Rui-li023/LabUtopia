@@ -1,3 +1,4 @@
+from .atomic_base_controller import AtomicBaseController
 from .pick_controller import PickController
 from .place_controller import PlaceController
 from .stir_controller import StirController
@@ -7,3 +8,4 @@ from .close_controller import CloseController
 from .shake_controller import ShakeController
 from .press_controller import PressController
 from .pressZ_controller import PressZController
+from .move_controller import MoveController

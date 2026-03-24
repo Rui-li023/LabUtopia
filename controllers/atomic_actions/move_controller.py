@@ -1,10 +1,10 @@
-from isaacsim.core.api.controllers import BaseController
 from isaacsim.core.utils.types import ArticulationAction
 from isaacsim.core.utils.rotations import euler_angles_to_quat
 import numpy as np
 import typing
+from .atomic_base_controller import AtomicBaseController
 
-class MoveController(BaseController):
+class MoveController(AtomicBaseController):
     """A simple controller for moving the robot to a target position and orientation.
 
     This controller moves the robot's end effector to a specified position and orientation
@@ -12,7 +12,7 @@ class MoveController(BaseController):
 
     Args:
         name (str): Identifier for the controller.
-        cspace_controller (BaseController): Cartesian space controller that returns ArticulationAction.
+        cspace_controller (typing.Any): Cartesian space controller that returns ArticulationAction.
         position_threshold (float, optional): Position threshold for considering the target reached. Defaults to 0.01.
         orientation_threshold (float, optional): Orientation threshold for considering the target reached. Defaults to 0.1.
     """
@@ -20,7 +20,7 @@ class MoveController(BaseController):
     def __init__(
         self,
         name: str,
-        cspace_controller: BaseController,
+        cspace_controller: typing.Any,
         position_threshold: float = 0.02,
         orientation_threshold: float = 0.1,
     ) -> None:
@@ -34,22 +34,7 @@ class MoveController(BaseController):
         self._waypoints = []
         self._current_waypoint_index = 0
         self._multi_segment_mode = False
-        self._last_record_positions = None
-
-    def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
-        n = len(current_joint_positions)
-        jp = action.joint_positions
-        if jp is None:
-            if self._last_record_positions is not None:
-                return self._last_record_positions.copy()
-            return current_joint_positions.copy()
-        fallback = self._last_record_positions if self._last_record_positions is not None else current_joint_positions
-        positions = fallback.copy().astype(np.float64)
-        for i in range(min(len(jp), n)):
-            if jp[i] is not None:
-                positions[i] = float(jp[i])
-        self._last_record_positions = positions
-        return positions
+        self._reset_record_state()
 
     def forward(
         self,
@@ -199,7 +184,7 @@ class MoveController(BaseController):
         self._waypoints = []
         self._current_waypoint_index = 0
         self._multi_segment_mode = False
-        self._last_record_positions = None
+        self._reset_record_state()
 
     def is_done(self) -> bool:
         """Check if the target position and angle have been reached.

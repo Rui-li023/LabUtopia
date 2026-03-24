@@ -1,21 +1,21 @@
-from isaacsim.core.api.controllers import BaseController
 from isaacsim.core.utils.stage import get_stage_units, get_current_stage
 from isaacsim.core.utils.types import ArticulationAction
 from isaacsim.core.utils.rotations import euler_angles_to_quat
 import numpy as np
 import typing
+from .atomic_base_controller import AtomicBaseController
 from isaacsim.robot.manipulators.grippers.gripper import Gripper
 
-class PlaceController(BaseController):
+class PlaceController(AtomicBaseController):
     def __init__(
         self,
         name: str,
-        cspace_controller: BaseController,
+        cspace_controller: typing.Any,
         gripper: Gripper = None,
         events_dt: typing.Optional[typing.List[float]] = None,
         _position_threshold: float = 0.01
     ) -> None:
-        BaseController.__init__(self, name=name)
+        super().__init__(name=name)
         self._event = 0
         self._t = 0
 
@@ -34,23 +34,8 @@ class PlaceController(BaseController):
         self._gripper = gripper
         self._start = True
         self.target_position = None
-        self._last_record_positions = None
+        self._reset_record_state()
         return
-
-    def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
-        n = len(current_joint_positions)
-        jp = action.joint_positions
-        if jp is None:
-            if self._last_record_positions is not None:
-                return self._last_record_positions.copy()
-            return current_joint_positions.copy()
-        fallback = self._last_record_positions if self._last_record_positions is not None else current_joint_positions
-        positions = fallback.copy().astype(np.float64)
-        for i in range(min(len(jp), n)):
-            if jp[i] is not None:
-                positions[i] = float(jp[i])
-        self._last_record_positions = positions
-        return positions
 
     def forward(
         self,
@@ -130,11 +115,11 @@ class PlaceController(BaseController):
         self,
         events_dt: typing.Optional[typing.List[float]] = None,
     ) -> None:
-        BaseController.reset(self)
+        super().reset()
         self._cspace_controller.reset()
         self._event = 0
         self._t = 0
-        self._last_record_positions = None
+        self._reset_record_state()
         if events_dt is not None:
             self._events_dt = events_dt
             if not isinstance(self._events_dt, np.ndarray) and not isinstance(self._events_dt, list):
@@ -145,5 +130,3 @@ class PlaceController(BaseController):
                 raise Exception("events dt  6")
         return
 
-    def is_done(self) -> bool:
-        return self._event >= len(self._events_dt)

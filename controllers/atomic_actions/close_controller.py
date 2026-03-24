@@ -1,25 +1,25 @@
 from controllers.robot_controllers.grapper_manager import Gripper
-from isaacsim.core.api.controllers import BaseController
 from isaacsim.core.utils.stage import get_stage_units
 from isaacsim.core.utils.types import ArticulationAction
 import numpy as np
 import typing
+from .atomic_base_controller import AtomicBaseController
 from isaacsim.core.utils.rotations import euler_angles_to_quat
 from scipy.spatial.transform import Slerp
 from scipy.spatial.transform import Rotation as R
 
-class CloseController(BaseController):
+class CloseController(AtomicBaseController):
     def __init__(
         self,
         name: str,
-        cspace_controller: BaseController,
+        cspace_controller: typing.Any,
         gripper: Gripper = None,
         events_dt: typing.Optional[typing.List[float]] = None,
         furniture_type: str = "drawer",
         door_width: float = 0.3,
         door_open_direction: str = None
     ) -> None:
-        BaseController.__init__(self, name=name)
+        super().__init__(name=name)
         self._event = 0
         self._t = 0
         self._cspace_controller = cspace_controller
@@ -46,22 +46,7 @@ class CloseController(BaseController):
                 raise Exception(f"events_dt length must be 3, got {len(self._events_dt)}")
         
         self._position_threshold = 0.01 / get_stage_units()
-        self._last_record_positions = None
-
-    def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
-        n = len(current_joint_positions)
-        jp = action.joint_positions
-        if jp is None:
-            if self._last_record_positions is not None:
-                return self._last_record_positions.copy()
-            return current_joint_positions.copy()
-        fallback = self._last_record_positions if self._last_record_positions is not None else current_joint_positions
-        positions = fallback.copy().astype(np.float64)
-        for i in range(min(len(jp), n)):
-            if jp[i] is not None:
-                positions[i] = float(jp[i])
-        self._last_record_positions = positions
-        return positions
+        self._reset_record_state()
 
     def forward(
         self,
@@ -198,16 +183,12 @@ class CloseController(BaseController):
     
     def reset(self) -> None:
         """Reset controller state"""
-        BaseController.reset(self)
+        super().reset()
         self._event = 0
         self._t = 0
         self.position_rotation_interp_iter = None
-        self._last_record_positions = None
+        self._reset_record_state()
 
-    def is_done(self) -> bool:
-        """Check if controller has completed all states"""
-        return self._event >= len(self._events_dt)
-        
     def action_interpolation(self, trans_previous, rotation_previous, trans_target, rotation_target, alphas, joint_pos=None):
         """
         Interpolate between two poses for smooth motion.

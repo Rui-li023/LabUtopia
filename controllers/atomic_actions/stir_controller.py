@@ -1,11 +1,11 @@
-from isaacsim.core.api.controllers import BaseController
 from isaacsim.core.utils.stage import get_stage_units
 from isaacsim.core.utils.types import ArticulationAction
 from isaacsim.core.utils.rotations import euler_angles_to_quat
 import numpy as np
 import typing
+from .atomic_base_controller import AtomicBaseController
 
-class StirController(BaseController):
+class StirController(AtomicBaseController):
     """
     A position-based controller for performing stirring actions with time-based fallback.
 
@@ -18,7 +18,7 @@ class StirController(BaseController):
 
     Args:
         name (str): Controller identifier
-        cspace_controller (BaseController): Cartesian space controller
+        cspace_controller (typing.Any): Cartesian space controller
         events_dt (List[float], optional): Duration for each phase as backup
         position_threshold (float): Distance threshold for phase transitions
         stir_radius (float): Radius of stirring motion in meters
@@ -28,7 +28,7 @@ class StirController(BaseController):
     def __init__(
         self,
         name: str,
-        cspace_controller: BaseController,
+        cspace_controller: typing.Any,
         events_dt: typing.Optional[typing.List[float]] = None,
         position_threshold: float = 0.005,
         stir_radius: float = 0.009,
@@ -56,22 +56,7 @@ class StirController(BaseController):
         self._stir_speed = stir_speed
         self._start = True
         self._current_stir_angle = 0.0
-        self._last_record_positions = None
-
-    def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
-        n = len(current_joint_positions)
-        jp = action.joint_positions
-        if jp is None:
-            if self._last_record_positions is not None:
-                return self._last_record_positions.copy()
-            return current_joint_positions.copy()
-        fallback = self._last_record_positions if self._last_record_positions is not None else current_joint_positions
-        positions = fallback.copy().astype(np.float64)
-        for i in range(min(len(jp), n)):
-            if jp[i] is not None:
-                positions[i] = float(jp[i])
-        self._last_record_positions = positions
-        return positions
+        self._reset_record_state()
 
     def forward(
         self,
@@ -217,7 +202,7 @@ class StirController(BaseController):
         self._t = 0
         self._start = True
         self._current_stir_angle = 0.0
-        self._last_record_positions = None
+        self._reset_record_state()
         
         if events_dt is not None:
             if not isinstance(events_dt, (np.ndarray, list)):
@@ -229,7 +214,4 @@ class StirController(BaseController):
             if len(self._events_dt) != 5:
                 raise Exception(f"events_dt length must be 5, got {len(self._events_dt)}")
 
-    def is_done(self) -> bool:
-        """Check if stirring sequence is complete."""
-        return self._event >= len(self._events_dt)
 

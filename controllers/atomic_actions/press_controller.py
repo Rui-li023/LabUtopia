@@ -1,12 +1,12 @@
-from isaacsim.core.api.controllers import BaseController
 from isaacsim.core.utils.stage import get_stage_units
 from isaacsim.core.utils.types import ArticulationAction
 from isaacsim.core.utils.rotations import euler_angles_to_quat
 import numpy as np
 import typing
+from .atomic_base_controller import AtomicBaseController
 from isaacsim.robot.manipulators.grippers.gripper import Gripper
 
-class PressController(BaseController):
+class PressController(AtomicBaseController):
     """
     A pressing state machine controller.
     
@@ -17,7 +17,7 @@ class PressController(BaseController):
     
     Args:
         name (str): Identifier for the controller.
-        cspace_controller (BaseController): Cartesian space controller that returns ArticulationAction.
+        cspace_controller (typing.Any): Cartesian space controller that returns ArticulationAction.
         gripper (Gripper): Controller for opening/closing the gripper.
         initial_offset (float, optional): Initial offset distance (along X-axis), defaults to 0.1 meters.
         events_dt (list of float, optional): Duration for each phase, defaults to [0.01, 0.01, 0.01].
@@ -26,14 +26,14 @@ class PressController(BaseController):
     def __init__(
         self,
         name: str,
-        cspace_controller: BaseController,
+        cspace_controller: typing.Any,
         gripper: Gripper = None,
         end_effector_initial_height: typing.Optional[float] = None,
         initial_offset: typing.Optional[float] = None,
         events_dt: typing.Optional[typing.List[float]] = None,
     ) -> None:
-        # Initialize parent BaseController
-        BaseController.__init__(self, name=name)
+        # Initialize parent controller
+        super().__init__(name=name)
         
         self._event = 0  # Current phase number
         self._t = 0  # Current phase time counter
@@ -53,22 +53,7 @@ class PressController(BaseController):
         
         self._cspace_controller = cspace_controller
         self._start = True
-        self._last_record_positions = None
-
-    def _build_record_array(self, action: ArticulationAction, current_joint_positions: np.ndarray) -> np.ndarray:
-        n = len(current_joint_positions)
-        jp = action.joint_positions
-        if jp is None:
-            if self._last_record_positions is not None:
-                return self._last_record_positions.copy()
-            return current_joint_positions.copy()
-        fallback = self._last_record_positions if self._last_record_positions is not None else current_joint_positions
-        positions = fallback.copy().astype(np.float64)
-        for i in range(min(len(jp), n)):
-            if jp[i] is not None:
-                positions[i] = float(jp[i])
-        self._last_record_positions = positions
-        return positions
+        self._reset_record_state()
 
     def get_current_event(self) -> int:
         """
@@ -158,7 +143,7 @@ class PressController(BaseController):
             initial_offset (float, optional): New initial offset distance.
             events_dt (list of float, optional): New list of phase durations.
         """
-        BaseController.reset(self)
+        super().reset()
         self._cspace_controller.reset()
         self._event = 0
         self._t = 0
@@ -173,9 +158,5 @@ class PressController(BaseController):
             if len(self._events_dt) != 3:
                 raise Exception("events_dt length must be exactly 3")
         self._start = True
-        self._last_record_positions = None
-    
-    def is_done(self) -> bool:
-        # Check if the state machine is done
-        return self._event >= len(self._events_dt)
+        self._reset_record_state()
     
