@@ -3,9 +3,10 @@ from isaacsim.core.utils.types import ArticulationAction
 from isaacsim.core.utils.rotations import euler_angles_to_quat
 import numpy as np
 import typing
-from .atomic_base_controller import AtomicBaseController
+from scipy.spatial.transform import Rotation as R
 
-from robots.base_robot import BaseRobot
+from .atomic_base_controller import AtomicBaseController
+from robots.base_robot import BaseRobot, GRIPPER_CLOSED, GRIPPER_OPEN
 
 
 class PickController(AtomicBaseController):
@@ -59,12 +60,12 @@ class PickController(AtomicBaseController):
         self.object_size = None
         self._position_threshold = position_threshold
         self._robot_position = None
-        self._reset_record_state()
         self._randomization_sampled = False
         self._pre_offset_z_noise = 0.0
         self._after_offset_z_noise = 0.0
         self._orientation_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         self._orientation_angle_deg = 0.0
+        self._current_gripper_state = GRIPPER_OPEN
 
         self._robot = self._resolve_robot(robot=robot, cspace_controller=cspace_controller)
         if self._robot.num_gripper_joints <= 0:
@@ -112,35 +113,6 @@ class PickController(AtomicBaseController):
             "PickController could not resolve a BaseRobot instance from cspace_controller. "
             "Please pass robot=... explicitly when constructing PickController."
         )
-
-    def _get_gripper_joint_indices(self, current_joint_positions: np.ndarray) -> typing.List[int]:
-        num_joints = int(current_joint_positions.shape[0])
-        num_gripper = int(self._robot.num_gripper_joints)
-        if num_gripper <= 0 or num_gripper > num_joints:
-            raise ValueError(
-                f"Invalid gripper joint count for current action vector: num_gripper_joints={num_gripper}, "
-                f"action_joints={num_joints}, robot='{self._robot.name}'."
-            )
-        return list(range(num_joints - num_gripper, num_joints))
-
-    def _set_gripper_targets_from_distance(
-        self,
-        target_joint_positions: typing.List[typing.Optional[float]],
-        current_joint_positions: np.ndarray,
-        distance: float,
-    ) -> None:
-        indices = self._get_gripper_joint_indices(current_joint_positions)
-        targets = self._robot.get_gripper_joint_targets_from_distance(distance)
-        if len(targets) != len(indices):
-            raise ValueError(
-                f"Gripper target length mismatch: got {len(targets)} targets for {len(indices)} indices "
-                f"on robot '{self._robot.name}'."
-            )
-        for i, idx in enumerate(indices):
-            target_joint_positions[idx] = float(targets[i])
-
-    def set_robot_position(self, position: np.ndarray):
-        self._robot_position = position
 
     def _calculate_approach_direction(self, picking_position: np.ndarray) -> np.ndarray:
         if self._robot_position is None:
@@ -237,13 +209,17 @@ class PickController(AtomicBaseController):
             end_effector_orientation (np.ndarray, optional): Target orientation for the end effector. Defaults to [0, pi, 0] Euler angles.
 
         Returns:
-            ArticulationAction: Joint positions for the robot to execute.
+            Tuple[ArticulationAction, np.ndarray]: Joint positions for the robot to execute and 8-dim record array.
         """
         self.object_size = object_size
 
         if self._start:
-            action = self._handle_start_state(current_joint_positions)
-            return action, self._build_record_array(action, current_joint_positions)
+            self._start = False
+            self._robot.open_gripper()
+            self._current_gripper_state = GRIPPER_OPEN
+            action = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
+            record_array = self._build_record_array(action, current_joint_positions, gripper_state=GRIPPER_OPEN)
+            return action, record_array
 
         if end_effector_orientation is None:
             end_effector_orientation = euler_angles_to_quat(np.array([0, np.pi, 0]))
@@ -276,23 +252,8 @@ class PickController(AtomicBaseController):
                 self._event += 1
                 self._t = 0
 
-        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions, gripper_state=self._current_gripper_state)
         return target_joint_positions, record_array
-
-    def _handle_start_state(self, current_joint_positions):
-        """Handles the initial state by opening the gripper.
-
-        Args:
-            current_joint_positions (np.ndarray): Current joint positions of the robot.
-
-        Returns:
-            ArticulationAction: Joint positions with gripper opened.
-        """
-        self._start = False
-        target_joint_positions = [None] * current_joint_positions.shape[0]
-        open_distance = self._robot.default_pick_gripper_distance / get_stage_units()
-        self._set_gripper_targets_from_distance(target_joint_positions, current_joint_positions, open_distance)
-        return ArticulationAction(joint_positions=target_joint_positions)
 
     def _execute_phase(self, picking_position, end_effector_orientation, current_joint_positions, object_name, gripper_control, gripper_position, gripper_distances):
         """Executes the current phase of the picking sequence.
@@ -354,16 +315,14 @@ class PickController(AtomicBaseController):
             return ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
 
         elif self._event == 4:
-            target_joint_positions = [None] * current_joint_positions.shape[0]
-            if gripper_distances is None:
-                gripper_distances = self.get_gripper_distance(object_name) / get_stage_units()
-            self._set_gripper_targets_from_distance(target_joint_positions, current_joint_positions, gripper_distances)
-            target_joint_positions = ArticulationAction(joint_positions=target_joint_positions)
+            # Close gripper to grasp
+            self._robot.close_gripper()
+            self._current_gripper_state = GRIPPER_CLOSED
             self.target_position = picking_position.copy()
             self.target_position[2] += self.after_offset_z / get_stage_units()
             if "glass" in object_name:
                 gripper_control.add_object_to_gripper("/World/glass_rod/Cylinder", self._robot.gripper_center_prim_path)
-            return target_joint_positions
+            return ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
 
         elif self._event == 5:
             target_joint_positions = self._cspace_controller.forward(
@@ -414,6 +373,7 @@ class PickController(AtomicBaseController):
         self._after_offset_z_noise = 0.0
         self._orientation_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         self._orientation_angle_deg = 0.0
+        self._current_gripper_state = GRIPPER_OPEN
 
     def get_gripper_distance(self, item_name):
         """Determines the gripper opening distance for the specified object.

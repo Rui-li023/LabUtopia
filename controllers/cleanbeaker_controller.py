@@ -60,7 +60,8 @@ class CleanBeakerTaskController(BaseController):
             name="place_beaker2",
             cspace_controller=self.rmp_controller,
             gripper=robot.gripper,
-            events_dt=[0.003, 0.008, 1, 0.05, 0.01, 1]
+            events_dt=[0.003, 0.008, 1, 0.05, 0.01, 1],
+            robot=robot,
         )
 
         # 4. Pick beaker1
@@ -88,7 +89,8 @@ class CleanBeakerTaskController(BaseController):
             name="place_beaker1",
             cspace_controller=self.rmp_controller,
             gripper=robot.gripper,
-            events_dt=[0.003, 0.008, 1, 0.05, 0.01, 1]
+            events_dt=[0.003, 0.008, 1, 0.05, 0.01, 1],
+            robot=robot,
         )
 
     def reset(self):

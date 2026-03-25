@@ -62,7 +62,8 @@ class OpenTransportPourController(BaseController):
         self.place_controller = PlaceController(
             name="place_controller",
             cspace_controller=rmp_controller,
-            gripper=robot.gripper
+            gripper=robot.gripper,
+            robot=robot,
         )
         
         self.pick_controller2 = PickController(
@@ -80,7 +81,8 @@ class OpenTransportPourController(BaseController):
         self.place_controller2 = PlaceController(
             name="place_controller",
             cspace_controller=rmp_controller,
-            gripper=robot.gripper
+            gripper=robot.gripper,
+            robot=robot,
         )
         
         self.task_group_a = [TaskPhase.OPENING]

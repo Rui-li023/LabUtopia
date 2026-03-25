@@ -17,6 +17,11 @@ from isaacsim.robot.manipulators.grippers.parallel_gripper import ParallelGrippe
 from isaacsim.sensors.physics import ContactSensor
 
 
+# Gripper state constants
+GRIPPER_CLOSED = 0
+GRIPPER_OPEN = 1
+
+
 class BaseRobot(Robot, ABC):
     """Abstract base class for all robots in LabUtopia.
 
@@ -70,6 +75,7 @@ class BaseRobot(Robot, ABC):
         self.prim_path_str = prim_path
         self._end_effector: Optional[SingleRigidPrim] = None
         self._gripper: Optional[ParallelGripper] = None
+        self._gripper_state: int = GRIPPER_OPEN  # Track current gripper state
 
     # ── Abstract properties (must be implemented by subclasses) ─────────────
 
@@ -280,6 +286,49 @@ class BaseRobot(Robot, ABC):
             Default returns (None, None).
         """
         return None, None
+
+    # ── Gripper control methods ───────────────────────────────────────────────
+
+    def open_gripper(self) -> None:
+        """Open the gripper.
+
+        Uses the ParallelGripper's forward method with action="open".
+        """
+        if self._gripper is not None:
+            action = self._gripper.forward(action="open")
+            self.apply_action(action)
+            self._gripper_state = GRIPPER_OPEN
+
+    def close_gripper(self) -> None:
+        """Close the gripper.
+
+        Uses the ParallelGripper's forward method with action="close".
+        """
+        if self._gripper is not None:
+            action = self._gripper.forward(action="close")
+            self.apply_action(action)
+            self._gripper_state = GRIPPER_CLOSED
+
+    def set_gripper_state(self, state: int) -> None:
+        """Set gripper state using discrete signal.
+
+        Args:
+            state: 0 = closed, 1 = open
+        """
+        if state == GRIPPER_CLOSED:
+            self.close_gripper()
+        elif state == GRIPPER_OPEN:
+            self.open_gripper()
+        else:
+            raise ValueError(f"Invalid gripper state: {state}. Must be 0 (closed) or 1 (open).")
+
+    def get_gripper_state(self) -> int:
+        """Get current gripper state.
+
+        Returns:
+            int: 0 = closed, 1 = open
+        """
+        return self._gripper_state
 
     # ── Abstract methods ─────────────────────────────────────────────────────
 

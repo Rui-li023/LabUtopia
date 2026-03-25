@@ -69,6 +69,7 @@ class DeviceOperateController(BaseController):
             name="place_controller",
             cspace_controller=rmp_controller,
             gripper=robot.gripper,
+            robot=robot,
         )
         
         self.close_controller = CloseController(

@@ -32,6 +32,7 @@ class PlaceTaskController(BaseController):
             name="place_controller",
             cspace_controller=self.rmp_controller,
             gripper=robot.gripper,
+            robot=robot,
         )
         self.pick_controller = PickController(
             name="pick_controller",
@@ -137,7 +138,7 @@ class PlaceTaskController(BaseController):
 
         if success:
             if self.current_phase == Phase.PICKING:
-                print("Pick task success! Switching to pour...")
+                print("Pick task success! Switching to place...")
                 self.current_phase = Phase.PLACING
                 self.active_controller = self.place_controller
                 return None, False, False

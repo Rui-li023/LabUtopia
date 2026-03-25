@@ -102,7 +102,8 @@ class CleanBeaker7PolicyTaskController(BaseController):
             name="place_beaker2",
             cspace_controller=self.rmp_controller,
             gripper=robot.gripper,
-            events_dt=[0.005, 0.01, 0.08, 0.05, 0.01, 0.1]
+            events_dt=[0.005, 0.01, 0.08, 0.05, 0.01, 0.1],
+            robot=robot,
         )
 
         self.pick_beaker1 = PickController(
@@ -124,6 +125,7 @@ class CleanBeaker7PolicyTaskController(BaseController):
             name="place_beaker1",
             cspace_controller=self.rmp_controller,
             gripper=robot.gripper,
+            robot=robot,
         )
         
         self._current_step = 1  

@@ -220,7 +220,12 @@ class DataCollector:
         language_instruction: Optional[str] = None,
         task_index: Optional[int] = None,
     ):
-        """Cache each step's data in temporary lists."""
+        """Cache each step's data in temporary lists.
+
+        Note: joint_angles and action should be 8-dimensional:
+            - indices 0-6: arm joint positions
+            - index 7: gripper state (0 = closed, 1 = open)
+        """
         if task_index is None and language_instruction is not None:
             task_index = self.register_task_instruction(language_instruction)
         if self.task_instructions is None and language_instruction is not None:
@@ -228,9 +233,24 @@ class DataCollector:
 
         for camera_name, image in camera_images.items():
             self.temp_cameras[camera_name].append(image)
-        self.temp_agent_pose.append(joint_angles)
+
+        # Discretize gripper state (last dimension) to 0 or 1
+        # 0 = closed (value < 0.02), 1 = open (value >= 0.02)
+        joint_angles_discretized = np.asarray(joint_angles, dtype=np.float32).copy()
+        if len(joint_angles_discretized) >= 8:
+            gripper_value = joint_angles_discretized[7]
+            joint_angles_discretized[7] = 0.0 if gripper_value < 0.02 else 1.0
+
+        self.temp_agent_pose.append(joint_angles_discretized)
+
         if action is not None:
-            self.temp_actions.append(action)
+            # Ensure action has discretized gripper state
+            action_discretized = np.asarray(action, dtype=np.float32).copy()
+            if len(action_discretized) >= 8:
+                gripper_value = action_discretized[7]
+                action_discretized[7] = 0.0 if gripper_value < 0.02 else 1.0
+            self.temp_actions.append(action_discretized)
+
         if language_instruction is not None:
             self.temp_language_instruction = language_instruction
             if isinstance(self.task_instructions, list) and language_instruction not in self.task_instructions:

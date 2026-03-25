@@ -41,6 +41,7 @@ class PlacePressTaskController(BaseController):
             name="place_controller",
             cspace_controller=self.rmp_controller,
             gripper=robot.gripper,
+            robot=robot,
         )
 
         self.press_controller = PressZController(

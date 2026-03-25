@@ -95,9 +95,13 @@ class PickTaskController(BaseController):
 
             if "camera_data" in state:
                 instruction = self.get_language_instruction()
+                # Build 8-dim joint_angles: 7 arm joints + 1 gripper state (0 or 1)
+                joint_angles_8dim = np.zeros(8, dtype=np.float32)
+                joint_angles_8dim[:7] = state["joint_positions"][:7]
+                joint_angles_8dim[7] = record_array[7]  # Use gripper state from record_array
                 self.data_collector.cache_step(
                     camera_images=state["camera_data"],
-                    joint_angles=state["joint_positions"][:-1],
+                    joint_angles=joint_angles_8dim,
                     action=record_array,
                     language_instruction=instruction,
                     task_index=self.get_task_index(),

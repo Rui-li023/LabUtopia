@@ -61,6 +61,7 @@ class LiquidMixingController(BaseController):
             name="place_controller",
             cspace_controller=self.rmp_controller,
             gripper=robot.gripper,
+            robot=robot,
         )
         
         self.pick_controller2 = PickController(
@@ -80,6 +81,7 @@ class LiquidMixingController(BaseController):
             name="place_controller",
             cspace_controller=self.rmp_controller,
             gripper=robot.gripper,
+            robot=robot,
         )
         
         self.pick_controller3 = PickController(
@@ -99,6 +101,7 @@ class LiquidMixingController(BaseController):
             name="place_controller",
             cspace_controller=self.rmp_controller,
             gripper=robot.gripper,
+            robot=robot,
         )
         
         self.press_controller = PressZController(
