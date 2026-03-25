@@ -51,6 +51,7 @@ class PlacePressTaskController(BaseController):
                 robot_articulation=robot
             ),
             events_dt=[0.004, 0.02, 0.01],
+            robot=robot,
         )
         
         self.active_controller = self.pick_controller

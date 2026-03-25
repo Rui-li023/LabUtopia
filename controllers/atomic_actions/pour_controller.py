@@ -4,6 +4,7 @@ from isaacsim.core.utils.types import ArticulationAction
 import numpy as np
 import typing
 from .atomic_base_controller import AtomicBaseController
+from robots.base_robot import GRIPPER_CLOSED
 from scipy.spatial.transform import Rotation as R
 
 # Control frequency 60 Hz: pour action uses velocity control, record positions are integrated with dt = 1/60
@@ -57,6 +58,7 @@ class PourController(AtomicBaseController):
         self._height_range_2 = (0.1, 0.2)
         self._random_height_1 = np.random.uniform(*self._height_range_1)
         self._random_height_2 = np.random.uniform(*self._height_range_2)
+        self._last_arm_positions = None
         self._reset_record_state()
         return
 
@@ -64,49 +66,66 @@ class PourController(AtomicBaseController):
         self,
         action: ArticulationAction,
         current_joint_positions: typing.Optional[np.ndarray] = None,
+        gripper_state: int = None,
     ) -> typing.Optional[np.ndarray]:
-        """Build 9-dim record array. For position actions use/copy positions; for velocity-only actions integrate at 60 Hz."""
+        """Build 8-dim record array (7 arm joints + 1 gripper state).
+
+        For position actions: extract arm positions from action.
+        For velocity-only actions (pour phase): integrate position = base + velocity * dt at 60 Hz.
+        Gripper state is always GRIPPER_CLOSED during pour (holding object).
+        """
+        if gripper_state is None:
+            gripper_state = GRIPPER_CLOSED
+        self._last_gripper_state = gripper_state
+
         jp = action.joint_positions
         jv = action.joint_velocities
 
+        # Determine arm positions (first 7 joints)
         if jp is not None and current_joint_positions is not None:
-            n = len(current_joint_positions)
-            fallback = self._last_record_positions if self._last_record_positions is not None else current_joint_positions
-            positions = fallback.copy().astype(np.float64)
-            for i in range(min(len(jp), n)):
+            fallback = self._last_arm_positions if self._last_arm_positions is not None else current_joint_positions[:7]
+            arm_positions = fallback.copy().astype(np.float64)
+            for i in range(min(len(jp), 7)):
                 if jp[i] is not None:
-                    positions[i] = float(jp[i])
-            self._last_record_positions = positions
-            return positions
-        if jp is not None:
-            positions = np.array([float(p) if p is not None else 0.0 for p in jp])
-            if self._last_record_positions is not None and len(positions) < len(self._last_record_positions):
-                full = self._last_record_positions.copy().astype(np.float64)
-                full[:len(positions)] = positions
-                positions = full
-            elif current_joint_positions is not None and len(positions) < len(current_joint_positions):
-                full = current_joint_positions.copy().astype(np.float64)
-                full[:len(positions)] = positions
-                positions = full
-            self._last_record_positions = positions
-            return positions
-        # Velocity-only action (pour phase): integrate position = base + velocity * dt at 60 Hz
-        if jv is not None:
-            base = self._last_record_positions if self._last_record_positions is not None else current_joint_positions
+                    arm_positions[i] = float(jp[i])
+            self._last_arm_positions = arm_positions
+        elif jp is not None:
+            arm_positions = np.array([float(p) if p is not None else 0.0 for p in jp[:7]])
+            if self._last_arm_positions is not None:
+                full = self._last_arm_positions.copy().astype(np.float64)
+                for i in range(min(len(arm_positions), 7)):
+                    full[i] = arm_positions[i]
+                arm_positions = full
+            self._last_arm_positions = arm_positions
+        elif jv is not None:
+            # Velocity-only action (pour phase): integrate
+            base = self._last_arm_positions if self._last_arm_positions is not None else (
+                current_joint_positions[:7] if current_joint_positions is not None else None
+            )
             if base is not None:
                 base = np.asarray(base, dtype=np.float64)
-                n_base = len(base)
-                positions = base.copy()
-                for i in range(min(len(jv), n_base)):
+                arm_positions = base.copy()
+                for i in range(min(len(jv), 7)):
                     if jv[i] is not None:
-                        positions[i] = positions[i] + float(jv[i]) * self._physics_dt
-                self._last_record_positions = positions
-                return positions
-        if self._last_record_positions is not None:
-            return self._last_record_positions.copy()
-        if current_joint_positions is not None:
-            return current_joint_positions.copy()
-        return None
+                        arm_positions[i] = arm_positions[i] + float(jv[i]) * self._physics_dt
+                self._last_arm_positions = arm_positions
+            elif self._last_arm_positions is not None:
+                arm_positions = self._last_arm_positions.copy()
+            else:
+                return None
+        elif self._last_arm_positions is not None:
+            arm_positions = self._last_arm_positions.copy()
+        elif current_joint_positions is not None:
+            arm_positions = current_joint_positions[:7].copy()
+            self._last_arm_positions = arm_positions
+        else:
+            return None
+
+        # Build 8-dim output: 7 arm joints + 1 gripper state
+        record = np.zeros(8, dtype=np.float64)
+        record[:7] = arm_positions[:7]
+        record[7] = float(gripper_state)
+        return record
 
     def forward(
         self,
@@ -230,6 +249,7 @@ class PourController(AtomicBaseController):
 
         self._random_height_1 = np.random.uniform(*self._height_range_1)
         self._random_height_2 = np.random.uniform(*self._height_range_2)
+        self._last_arm_positions = None
         self._reset_record_state()
         return
 

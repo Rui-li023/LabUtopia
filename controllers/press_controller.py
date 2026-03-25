@@ -16,7 +16,8 @@ class PressTaskController(BaseController):
             name="press_controller",
             cspace_controller=self.rmp_controller,
             gripper=robot.gripper,
-            events_dt = [0.005, 0.1, 0.005]  # Default phase durations
+            events_dt = [0.005, 0.1, 0.005],  # Default phase durations
+            robot=robot,
         )
 
     def reset(self):

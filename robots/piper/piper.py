@@ -94,6 +94,10 @@ class Piper(BaseRobot):
         # Initialize base robot
         super().__init__(prim_path=prim_path, name=name, position=position, orientation=orientation)
 
+        # Store gripper positions for 0/1 mapping
+        self._gripper_open_position = gripper_open_position
+        self._gripper_closed_position = gripper_closed_position
+
         if deltas is None:
             deltas = np.array([0.01, 0.01]) / get_stage_units()
         self._gripper = ParallelGripper(

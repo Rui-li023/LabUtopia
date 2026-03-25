@@ -4,6 +4,7 @@ from isaacsim.core.utils.rotations import euler_angles_to_quat
 import numpy as np
 import typing
 from .atomic_base_controller import AtomicBaseController
+from robots.base_robot import BaseRobot, GRIPPER_OPEN, GRIPPER_CLOSED
 class PressZController(AtomicBaseController):
     def __init__(
         self,
@@ -11,8 +12,29 @@ class PressZController(AtomicBaseController):
         cspace_controller: typing.Any,
         initial_offset: typing.Optional[float] = None,
         events_dt: typing.Optional[typing.List[float]] = None,
+        robot: typing.Optional[BaseRobot] = None,
     ) -> None:
         super().__init__(name=name)
+        self._current_gripper_state = GRIPPER_OPEN
+
+        # Resolve robot for gripper control
+        self._robot = None
+        if robot is not None:
+            self._robot = robot
+        else:
+            for attr in ("robot", "robot_articulation", "_robot", "_robot_articulation"):
+                candidate = getattr(cspace_controller, attr, None)
+                if candidate is not None and isinstance(candidate, BaseRobot):
+                    self._robot = candidate
+                    break
+            if self._robot is None:
+                amp = getattr(cspace_controller, "_articulation_motion_policy", None)
+                if amp is not None:
+                    for attr in ("_robot_articulation", "robot_articulation"):
+                        candidate = getattr(amp, attr, None)
+                        if candidate is not None and isinstance(candidate, BaseRobot):
+                            self._robot = candidate
+                            break
         self._event = 0  
         self._t = 0  
         self._initial_offset = initial_offset if initial_offset is not None else 0.2 / get_stage_units()
@@ -45,11 +67,11 @@ class PressZController(AtomicBaseController):
         if self._start:
             self._start = False
             action = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
-            return action, self._build_record_array(action, current_joint_positions)
+            return action, self._build_record_array(action, current_joint_positions, gripper_state=self._current_gripper_state)
 
         if self.is_done():
             action = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
-            return action, self._build_record_array(action, current_joint_positions)
+            return action, self._build_record_array(action, current_joint_positions, gripper_state=self._current_gripper_state)
 
         if end_effector_orientation is None:
             end_effector_orientation = euler_angles_to_quat(np.array([0, np.pi, 0]))  
@@ -62,7 +84,7 @@ class PressZController(AtomicBaseController):
             gripper_position
         )
         self._update_state()
-        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions, gripper_state=self._current_gripper_state)
         return target_joint_positions, record_array
 
     def _execute_phase(self, target_position, end_effector_orientation, current_joint_positions, gripper_control, gripper_position):
@@ -77,11 +99,10 @@ class PressZController(AtomicBaseController):
                 self._event += 1
                 self._t = 0
         elif self._event == 1:
-            target_joint_positions = [None] * current_joint_positions.shape[0]
-            gripper_distance = 0.0015 / get_stage_units()
-            target_joint_positions[7] = gripper_distance
-            target_joint_positions[8] = gripper_distance
-            target_joint_positions = ArticulationAction(joint_positions=target_joint_positions)
+            self._current_gripper_state = GRIPPER_CLOSED
+            if self._robot is not None:
+                self._robot.close_gripper()
+            target_joint_positions = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
         elif self._event == 2:
             target_position[2] += 0.025 / get_stage_units()
             target_joint_positions = self._cspace_controller.forward(
@@ -116,5 +137,6 @@ class PressZController(AtomicBaseController):
             if len(self._events_dt) != 3:
                 raise Exception("events_dt  3")
         self._start = True
+        self._current_gripper_state = GRIPPER_OPEN
         self._reset_record_state()
 

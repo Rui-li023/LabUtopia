@@ -396,6 +396,16 @@ class BaseRobot(Robot, ABC):
                 indices.append(self.dof_names.index(name))
         return indices
 
+    @property
+    def gripper_open_positions(self) -> np.ndarray:
+        """Joint positions for fully open gripper."""
+        return getattr(self, "_gripper_open_position", np.zeros(self.num_gripper_joints))
+
+    @property
+    def gripper_closed_positions(self) -> np.ndarray:
+        """Joint positions for fully closed gripper."""
+        return getattr(self, "_gripper_closed_position", np.zeros(self.num_gripper_joints))
+
     def get_base_joint_indices(self) -> List[int]:
         """Get articulation indices for base joints.
 

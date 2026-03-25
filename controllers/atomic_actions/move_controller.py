@@ -3,6 +3,7 @@ from isaacsim.core.utils.rotations import euler_angles_to_quat
 import numpy as np
 import typing
 from .atomic_base_controller import AtomicBaseController
+from robots.base_robot import GRIPPER_OPEN
 
 class MoveController(AtomicBaseController):
     """A simple controller for moving the robot to a target position and orientation.
@@ -42,6 +43,7 @@ class MoveController(AtomicBaseController):
         current_joint_positions: np.ndarray,
         gripper_position: np.ndarray,
         target_orientation: typing.Optional[np.ndarray] = None,
+        gripper_state: typing.Optional[int] = None,
     ) -> typing.Tuple[ArticulationAction, np.ndarray]:
         """Computes the joint positions to move to the target position and orientation.
 
@@ -74,7 +76,7 @@ class MoveController(AtomicBaseController):
         else:
             self._is_done = False
 
-        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions, gripper_state=gripper_state)
         return target_joint_positions, record_array
 
     def forward_multi_segment(
@@ -110,7 +112,7 @@ class MoveController(AtomicBaseController):
                 target_end_effector_position=self._waypoints[-1],
                 target_end_effector_orientation=target_orientation
             )
-            return action, self._build_record_array(action, current_joint_positions)
+            return action, self._build_record_array(action, current_joint_positions, gripper_state=gripper_state)
         current_target = self._waypoints[self._current_waypoint_index]
         self._target_position = current_target
         self._target_orientation = target_orientation
@@ -131,7 +133,7 @@ class MoveController(AtomicBaseController):
         if self._current_waypoint_index >= len(self._waypoints):
             self._is_done = True
 
-        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions, gripper_state=gripper_state)
         return target_joint_positions, record_array
 
     def forward_two_points(

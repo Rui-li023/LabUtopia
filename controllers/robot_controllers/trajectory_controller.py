@@ -6,6 +6,7 @@ import isaacsim.robot_motion.motion_generation as mg
 from isaacsim.core.utils.extensions import get_extension_path_from_name
 from isaacsim.core.prims.impl import Articulation
 from isaacsim.core.utils.types import ArticulationAction
+from robots.base_robot import BaseRobot, GRIPPER_CLOSED
 from robots.franka.rmpflow_controller import RMPFlowController
 
 
@@ -40,6 +41,32 @@ class FrankaTrajectoryController(RMPFlowController):
         self._physics_dt = physics_dt
         self._use_interpolation = use_interpolation
 
+        # Resolve gripper open/close joint positions from robot
+        self._gripper_open_joint_pos = np.array([0.04, 0.04])  # default Franka
+        self._gripper_closed_joint_pos = np.array([0.0, 0.0])
+        robot = robot_articulation
+        if isinstance(robot, BaseRobot):
+            if hasattr(robot, 'gripper_open_positions'):
+                open_pos = robot.gripper_open_positions
+                close_pos = robot.gripper_closed_positions
+                if len(open_pos) >= 2:
+                    self._gripper_open_joint_pos = np.array(open_pos[:2], dtype=np.float64)
+                    self._gripper_closed_joint_pos = np.array(close_pos[:2], dtype=np.float64)
+
+    def _map_gripper_state_to_positions(self, state: float) -> np.ndarray:
+        """Map 0/1 gripper state to actual joint positions.
+
+        Args:
+            state: 0.0 = open, 1.0 = closed
+
+        Returns:
+            np.ndarray: 2-element array of gripper joint positions
+        """
+        if state >= 0.5:  # closed
+            return self._gripper_closed_joint_pos.copy()
+        else:  # open
+            return self._gripper_open_joint_pos.copy()
+
     def generate_trajectory(
         self, 
         waypoints: np.ndarray,
@@ -57,8 +84,9 @@ class FrankaTrajectoryController(RMPFlowController):
         if np.allclose(joint_waypoints, joint_waypoints[0]):
             self._action_sequence = []
             for i in range(len(joint_waypoints)):
+                gripper_joints = self._map_gripper_state_to_positions(self.gripper_positions[i])
                 action = ArticulationAction(
-                    joint_positions=np.concatenate([joint_waypoints[0], [self.gripper_positions[i], self.gripper_positions[i]]]),
+                    joint_positions=np.concatenate([joint_waypoints[0], gripper_joints]),
                     joint_velocities=None,
                     joint_efforts=None
                 )
@@ -102,8 +130,9 @@ class FrankaTrajectoryController(RMPFlowController):
             
             self._action_sequence = []
             for i in range(len(joint_waypoints)):
+                gripper_joints = self._map_gripper_state_to_positions(self.gripper_positions[i])
                 action = ArticulationAction(
-                    joint_positions=np.concatenate([joint_waypoints[i], [self.gripper_positions[i], self.gripper_positions[i]]]),
+                    joint_positions=np.concatenate([joint_waypoints[i], gripper_joints]),
                     joint_velocities=None,
                     joint_efforts=None
                 )
@@ -128,11 +157,12 @@ class FrankaTrajectoryController(RMPFlowController):
             # Add gripper position to interpolated trajectory actions
             if hasattr(self, 'gripper_positions') and len(self.gripper_positions) > 0:
                 gripper_idx = self.gripper_indices[self._action_sequence_index]
-                gripper_position = self.gripper_positions[gripper_idx]
+                gripper_state = self.gripper_positions[gripper_idx]
+                gripper_joints = self._map_gripper_state_to_positions(gripper_state)
                 
                 joint_positions = np.concatenate([
                     action.joint_positions,
-                    np.array([gripper_position, gripper_position], dtype=np.float32)
+                    gripper_joints.astype(np.float32)
                 ])
                 if action.joint_velocities is not None:
                     joint_velocities = np.concatenate([

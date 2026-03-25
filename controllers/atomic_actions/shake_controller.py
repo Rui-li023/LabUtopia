@@ -6,6 +6,7 @@ from pxr import Gf
 import numpy as np
 import typing
 from .atomic_base_controller import AtomicBaseController
+from robots.base_robot import GRIPPER_CLOSED
 
 class ShakeController(AtomicBaseController):
     def __init__(
@@ -113,7 +114,7 @@ class ShakeController(AtomicBaseController):
                 self._event += 1
                 self._t = 0
 
-        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions, gripper_state=GRIPPER_CLOSED)
         return target_joint_positions, record_array
 
     def reset(self, events_dt: typing.Optional[typing.List[float]] = None) -> None:

@@ -50,7 +50,8 @@ class OpenTransportPourController(BaseController):
             gripper=robot.gripper,
             events_dt=[0.0025, 0.005, 0.08, 0.002, 0.05, 0.05, 0.01, 0.008],
             furniture_type="door",
-            door_open_direction="clockwise"
+            door_open_direction="clockwise",
+            robot=robot,
         )
         
         self.pick_controller1 = PickController(

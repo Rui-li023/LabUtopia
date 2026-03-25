@@ -4,6 +4,7 @@ from isaacsim.core.utils.rotations import euler_angles_to_quat
 import numpy as np
 import typing
 from .atomic_base_controller import AtomicBaseController
+from robots.base_robot import GRIPPER_CLOSED
 
 class StirController(AtomicBaseController):
     """
@@ -87,7 +88,7 @@ class StirController(AtomicBaseController):
 
         if self._event >= len(self._events_dt):
             action = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
-            return action, self._build_record_array(action, current_joint_positions)
+            return action, self._build_record_array(action, current_joint_positions, gripper_state=GRIPPER_CLOSED)
 
         target_joint_positions = self._execute_phase(
             center_position, gripper_position, end_effector_orientation, current_joint_positions
@@ -100,7 +101,7 @@ class StirController(AtomicBaseController):
                 self._event += 1
                 self._t = 0
 
-        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions, gripper_state=GRIPPER_CLOSED)
         return target_joint_positions, record_array
 
     def _execute_phase(self, center_position, gripper_position, end_effector_orientation, current_joint_positions):

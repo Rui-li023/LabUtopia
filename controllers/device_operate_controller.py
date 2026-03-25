@@ -56,7 +56,8 @@ class DeviceOperateController(BaseController):
             name="open_controller",
             cspace_controller=rmp_controller,
             gripper=robot.gripper,
-            furniture_type="door"
+            furniture_type="door",
+            robot=robot,
         )
         
         self.pick_controller = PickController(
@@ -75,7 +76,8 @@ class DeviceOperateController(BaseController):
         self.close_controller = CloseController(
             name="close_controller",
             cspace_controller=rmp_controller,
-            furniture_type="door"
+            furniture_type="door",
+            robot=robot,
         )
         
         self.press_controller = PressController(
@@ -83,6 +85,7 @@ class DeviceOperateController(BaseController):
             cspace_controller=rmp_controller,
             events_dt=[0.004, 0.05, 0.02],
             initial_offset=0.05,
+            robot=robot,
         )
         
         self.move_controller = MoveController(

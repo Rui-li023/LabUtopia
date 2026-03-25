@@ -40,6 +40,7 @@ class OpenCloseTaskController(BaseController):
             ),
             gripper=robot.gripper,
             furniture_type=self.cfg.task.get("operate_type"),
+            robot=robot,
         )
         
         self.close_controller = CloseController(
@@ -50,7 +51,8 @@ class OpenCloseTaskController(BaseController):
             ),
             gripper=robot.gripper,
             furniture_type=self.cfg.task.get("operate_type"),
-            door_open_direction="clockwise"
+            door_open_direction="clockwise",
+            robot=robot,
         )
         
     def reset(self):

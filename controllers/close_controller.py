@@ -36,11 +36,11 @@ class CloseTaskController(BaseController):
             cspace_controller=RMPFlowController(
                 name="target_follower_controller",
                 robot_articulation=robot,
-                # use_default_config=False
             ),
             gripper=robot.gripper,
+            robot=robot,
             furniture_type=self.operate_type,
-            door_open_direction="clockwise"
+            door_open_direction="clockwise",
         )
 
     def reset(self):

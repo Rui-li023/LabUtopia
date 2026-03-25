@@ -105,6 +105,7 @@ class LiquidMixingController(BaseController):
         )
         
         self.press_controller = PressZController(
+            robot=robot,
             name="press_controller",
             cspace_controller=RMPFlowController(
                 name="press_controller",

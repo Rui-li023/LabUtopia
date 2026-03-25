@@ -5,6 +5,7 @@ import numpy as np
 import typing
 from .atomic_base_controller import AtomicBaseController
 from isaacsim.core.utils.rotations import euler_angles_to_quat
+from robots.base_robot import BaseRobot, GRIPPER_OPEN, GRIPPER_CLOSED
 from scipy.spatial.transform import Slerp
 from scipy.spatial.transform import Rotation as R
 
@@ -13,13 +14,15 @@ class OpenController(AtomicBaseController):
         self,
         name: str,
         cspace_controller: typing.Any,
-        gripper: Gripper,
+        gripper: Gripper = None,
         events_dt: typing.Optional[typing.List[float]] = None,
         furniture_type: str = "drawer",
         door_width: float = 0.3,
-        door_open_direction: str = "counterclockwise"
+        door_open_direction: str = "counterclockwise",
+        robot: typing.Optional[BaseRobot] = None,
     ) -> None:
         super().__init__(name=name)
+        self._current_gripper_state = GRIPPER_OPEN
         self._event = 0
         self._t = 0
         self._cspace_controller = cspace_controller
@@ -43,6 +46,25 @@ class OpenController(AtomicBaseController):
 
         self._position_threshold = 0.01 / get_stage_units()
         self._reset_record_state()
+
+        # Resolve robot for gripper control
+        self._robot = None
+        if robot is not None:
+            self._robot = robot
+        else:
+            for attr in ("robot", "robot_articulation", "_robot", "_robot_articulation"):
+                candidate = getattr(cspace_controller, attr, None)
+                if candidate is not None and isinstance(candidate, BaseRobot):
+                    self._robot = candidate
+                    break
+            if self._robot is None:
+                amp = getattr(cspace_controller, "_articulation_motion_policy", None)
+                if amp is not None:
+                    for attr in ("_robot_articulation", "robot_articulation"):
+                        candidate = getattr(amp, attr, None)
+                        if candidate is not None and isinstance(candidate, BaseRobot):
+                            self._robot = candidate
+                            break
 
     def forward(
         self,
@@ -71,7 +93,7 @@ class OpenController(AtomicBaseController):
 
         if self._start:
             action = self._handle_start_state(current_joint_positions)
-            return action, self._build_record_array(action, current_joint_positions)
+            return action, self._build_record_array(action, current_joint_positions, gripper_state=self._current_gripper_state)
 
         if end_effector_orientation is None:
             end_effector_orientation = euler_angles_to_quat([0, 110, 0], degrees=True, extrinsic=False)
@@ -90,7 +112,7 @@ class OpenController(AtomicBaseController):
         if self._t >= 1.0:
             self._event += 1
             self._t = 0
-        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions, gripper_state=self._current_gripper_state)
         return target_joint_positions, record_array
     
     def _handle_start_state(self, current_joint_positions):
@@ -103,10 +125,10 @@ class OpenController(AtomicBaseController):
             ArticulationAction: Joint positions with gripper opened.
         """
         self._start = False
-        target_joint_positions = [None] * current_joint_positions.shape[0]
-        target_joint_positions[7] = 0.04 / get_stage_units()
-        target_joint_positions[8] = 0.04 / get_stage_units()
-        return ArticulationAction(joint_positions=target_joint_positions)
+        self._current_gripper_state = GRIPPER_OPEN
+        if self._robot is not None:
+            self._robot.open_gripper()
+        return ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
     
     def _execute_phase(self, handle_position, end_effector_orientation, current_joint_positions, gripper_position, revolute_joint_position = None, angle = 50, close_gripper_distance = 0.023):
         """Execute current phase of grasping action"""
@@ -138,11 +160,10 @@ class OpenController(AtomicBaseController):
                 self._t = 0
                 return target_joint_positions
         elif self._event == 2:
-            target_joint_positions = [None] * current_joint_positions.shape[0]
-            gripper_distance = 0.01 / get_stage_units()
-            target_joint_positions[7] = gripper_distance
-            target_joint_positions[8] = gripper_distance
-            target_joint_positions = ArticulationAction(joint_positions=target_joint_positions)
+            self._current_gripper_state = GRIPPER_CLOSED
+            if self._robot is not None:
+                self._robot.close_gripper()
+            target_joint_positions = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
             self.target_position = handle_position
             self.target_position[0] -= 0.1 / get_stage_units()
         elif self._event == 3:
@@ -155,11 +176,10 @@ class OpenController(AtomicBaseController):
             target_joint_positions = [None] * current_joint_positions.shape[0]
             target_joint_positions = ArticulationAction(joint_positions=target_joint_positions)
         elif self._event == 5:
-            target_joint_positions = [None] * current_joint_positions.shape[0]
-            gripper_distance = 0.04 / get_stage_units()
-            target_joint_positions[7] = gripper_distance
-            target_joint_positions[8] = gripper_distance
-            target_joint_positions = ArticulationAction(joint_positions=target_joint_positions)
+            self._current_gripper_state = GRIPPER_OPEN
+            if self._robot is not None:
+                self._robot.open_gripper()
+            target_joint_positions = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
         elif self._event == 6:
             handle_position[0] -= 0.12 / get_stage_units()
             handle_position[2] += 0.06
@@ -198,10 +218,10 @@ class OpenController(AtomicBaseController):
                 return target_joint_positions
         elif self._event == 2:
             handle_position[0] -= 0.015
-            target_joint_positions = [None] * current_joint_positions.shape[0]
-            target_joint_positions[7] = close_gripper_distance
-            target_joint_positions[8] = close_gripper_distance
-            target_joint_positions = ArticulationAction(joint_positions=target_joint_positions)
+            self._current_gripper_state = GRIPPER_CLOSED
+            if self._robot is not None:
+                self._robot.close_gripper()
+            target_joint_positions = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
             self.start_position = handle_position.copy()
         elif self._event == 3:
             if self.position_rotation_interp_iter is None:
@@ -230,11 +250,10 @@ class OpenController(AtomicBaseController):
         elif self._event == 4:
             target_joint_positions = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
         elif self._event == 5:
-            target_joint_positions = [None] * current_joint_positions.shape[0]
-            gripper_distance = 0.04
-            target_joint_positions[7] = gripper_distance
-            target_joint_positions[8] = gripper_distance
-            target_joint_positions = ArticulationAction(joint_positions=target_joint_positions)
+            self._current_gripper_state = GRIPPER_OPEN
+            if self._robot is not None:
+                self._robot.open_gripper()
+            target_joint_positions = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
         elif self._event == 6:
             handle_position = self.trans_interp.copy()
             handle_position[0] -= 0.06
@@ -265,6 +284,7 @@ class OpenController(AtomicBaseController):
         self._t = 0
         self.position_rotation_interp_iter = None
         self._start = True
+        self._current_gripper_state = GRIPPER_OPEN
         self._reset_record_state()
 
     def action_interpolation(self, trans_previous, rotation_previous, trans_target, rotation_target, alphas, joint_pos=None):

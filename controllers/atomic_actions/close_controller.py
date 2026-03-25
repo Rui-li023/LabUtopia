@@ -5,6 +5,7 @@ import numpy as np
 import typing
 from .atomic_base_controller import AtomicBaseController
 from isaacsim.core.utils.rotations import euler_angles_to_quat
+from robots.base_robot import GRIPPER_OPEN, GRIPPER_CLOSED
 from scipy.spatial.transform import Slerp
 from scipy.spatial.transform import Rotation as R
 
@@ -17,9 +18,11 @@ class CloseController(AtomicBaseController):
         events_dt: typing.Optional[typing.List[float]] = None,
         furniture_type: str = "drawer",
         door_width: float = 0.3,
-        door_open_direction: str = None
+        door_open_direction: str = None,
+        robot = None,
     ) -> None:
         super().__init__(name=name)
+        self._robot = robot
         self._event = 0
         self._t = 0
         self._cspace_controller = cspace_controller
@@ -46,6 +49,7 @@ class CloseController(AtomicBaseController):
                 raise Exception(f"events_dt length must be 3, got {len(self._events_dt)}")
         
         self._position_threshold = 0.01 / get_stage_units()
+        self._current_gripper_state = GRIPPER_OPEN
         self._reset_record_state()
 
     def forward(
@@ -81,7 +85,7 @@ class CloseController(AtomicBaseController):
         if self._t >= 1.0:
             self._event += 1
             self._t = 0
-        record_array = self._build_record_array(target_joint_positions, current_joint_positions)
+        record_array = self._build_record_array(target_joint_positions, current_joint_positions, gripper_state=self._current_gripper_state)
         return target_joint_positions, record_array
 
     def _execute_phase(self, handle_position, end_effector_orientation, current_joint_positions, revolute_joint_position, gripper_position, angle = 50, push_distance = None, after_move_distance = None):

@@ -36,6 +36,7 @@ class OpenTaskController(BaseController):
                 robot_articulation=robot
             ),
             gripper=robot.gripper,
+                robot=robot,
             events_dt=[0.0025, 0.005, 0.08, 0.004, 0.05, 0.05, 0.01, 0.004],
             furniture_type=self.cfg.task.get("operate_type", "door"),
             door_open_direction="clockwise"
