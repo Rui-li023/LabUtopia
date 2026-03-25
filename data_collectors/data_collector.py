@@ -224,7 +224,7 @@ class DataCollector:
 
         Note: joint_angles and action should be 8-dimensional:
             - indices 0-6: arm joint positions
-            - index 7: gripper state (0 = closed, 1 = open)
+            - index 7: gripper state (0 = open, 1 = closed)
         """
         if task_index is None and language_instruction is not None:
             task_index = self.register_task_instruction(language_instruction)
@@ -235,21 +235,19 @@ class DataCollector:
             self.temp_cameras[camera_name].append(image)
 
         # Discretize gripper state (last dimension) to 0 or 1
-        # 0 = closed (value < 0.02), 1 = open (value >= 0.02)
+        # Control signal semantics: 0 = open (value >= 0.02), 1 = closed (value < 0.02)
         joint_angles_discretized = np.asarray(joint_angles, dtype=np.float32).copy()
         if len(joint_angles_discretized) >= 8:
             gripper_value = joint_angles_discretized[7]
-            joint_angles_discretized[7] = 0.0 if gripper_value < 0.02 else 1.0
+            joint_angles_discretized[7] = 1.0 if gripper_value < 0.02 else 0.0
 
         self.temp_agent_pose.append(joint_angles_discretized)
 
         if action is not None:
-            # Ensure action has discretized gripper state
-            action_discretized = np.asarray(action, dtype=np.float32).copy()
-            if len(action_discretized) >= 8:
-                gripper_value = action_discretized[7]
-                action_discretized[7] = 0.0 if gripper_value < 0.02 else 1.0
-            self.temp_actions.append(action_discretized)
+            # Action already contains discrete gripper state (0=open, 1=closed)
+            # No discretization needed - action comes from AtomicBaseController
+            # which already provides discrete values
+            self.temp_actions.append(np.asarray(action, dtype=np.float32))
 
         if language_instruction is not None:
             self.temp_language_instruction = language_instruction

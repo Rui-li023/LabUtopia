@@ -244,3 +244,13 @@ class Franka(BaseRobot):
             dof_index=self.gripper.joint_dof_indicies[1], mode="position"
         )
         self.set_joint_positions(self._default_joint_positions)
+
+    # ── Gripper control methods ─────────────────────────────────────────────
+
+    def open_gripper(self) -> None:
+        """Open the gripper to the fully open position."""
+        self._gripper.open()
+
+    def close_gripper(self) -> None:
+        """Close the gripper to the fully closed position."""
+        self._gripper.close()

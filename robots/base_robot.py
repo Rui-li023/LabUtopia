@@ -17,9 +17,10 @@ from isaacsim.robot.manipulators.grippers.parallel_gripper import ParallelGrippe
 from isaacsim.sensors.physics import ContactSensor
 
 
-# Gripper state constants
-GRIPPER_CLOSED = 0
-GRIPPER_OPEN = 1
+# Gripper state constants (control signal semantics)
+# 0 = deactivate grip = open, 1 = activate grip = close
+GRIPPER_OPEN = 0
+GRIPPER_CLOSED = 1
 
 
 class BaseRobot(Robot, ABC):
@@ -313,20 +314,20 @@ class BaseRobot(Robot, ABC):
         """Set gripper state using discrete signal.
 
         Args:
-            state: 0 = closed, 1 = open
+            state: 0 = open, 1 = closed
         """
         if state == GRIPPER_CLOSED:
             self.close_gripper()
         elif state == GRIPPER_OPEN:
             self.open_gripper()
         else:
-            raise ValueError(f"Invalid gripper state: {state}. Must be 0 (closed) or 1 (open).")
+            raise ValueError(f"Invalid gripper state: {state}. Must be 0 (open) or 1 (closed).")
 
     def get_gripper_state(self) -> int:
         """Get current gripper state.
 
         Returns:
-            int: 0 = closed, 1 = open
+            int: 0 = open, 1 = closed
         """
         return self._gripper_state
 

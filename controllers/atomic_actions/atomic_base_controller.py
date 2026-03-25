@@ -13,7 +13,7 @@ class AtomicBaseController:
 
     The record array output is 8 dimensions:
         - indices 0-6: arm joint positions
-        - index 7: gripper state (0 = closed, 1 = open)
+        - index 7: gripper state (0 = open, 1 = closed)
     """
 
     def __init__(self, name: str) -> None:
@@ -46,7 +46,7 @@ class AtomicBaseController:
         Args:
             action: ArticulationAction from the controller
             current_joint_positions: Current joint positions (9 dims for Franka)
-            gripper_state: Optional gripper state (0=closed, 1=open).
+            gripper_state: Optional gripper state (0=open, 1=closed).
                           If None, uses the last recorded state.
 
         Returns:

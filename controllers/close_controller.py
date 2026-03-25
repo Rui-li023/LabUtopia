@@ -36,7 +36,7 @@ class CloseTaskController(BaseController):
             cspace_controller=RMPFlowController(
                 name="target_follower_controller",
                 robot_articulation=robot,
-                use_default_config=False
+                # use_default_config=False
             ),
             gripper=robot.gripper,
             furniture_type=self.operate_type,

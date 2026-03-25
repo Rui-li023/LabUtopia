@@ -30,6 +30,55 @@ rmp_params:
     cspace_affine_rmp:
         final_handover_time_std_dev: .25
         weight: 2000.
+    joint_limit_rmp:
+        metric_scalar: 1000.
+        metric_length_scale: .01
+        metric_exploder_eps: 1e-3
+        metric_velocity_gate_length_scale: .01
+        accel_damper_gain: 200.
+        accel_potential_gain: 1.
+        accel_potential_exploder_length_scale: .1
+        accel_potential_exploder_eps: 1e-2
+    joint_velocity_cap_rmp:
+        max_velocity: 4.0
+        velocity_damping_region: 1.5
+        damping_gain: 1000.0
+        metric_weight: 100.
+    target_rmp:
+        accel_p_gain: 100.
+        accel_d_gain: 150.
+        accel_norm_eps: .075
+        metric_alpha_length_scale: .05
+        min_metric_alpha: .01
+        max_metric_scalar: 10000
+        min_metric_scalar: .0001
+        proximity_metric_boost_scalar: 50.
+        proximity_metric_boost_length_scale: .05
+        xi_estimator_gate_std_dev: 40000.
+        accept_user_weights: false
+    axis_target_rmp:
+        accel_p_gain: 200.
+        accel_d_gain: 80.
+        metric_scalar: .01
+        proximity_metric_boost_scalar: 3000.
+        proximity_metric_boost_length_scale: .08
+        xi_estimator_gate_std_dev: 40000.
+        accept_user_weights: false
+    collision_rmp:
+        damping_gain: 50.
+        damping_std_dev: .04
+        damping_robustness_eps: 1e-2
+        damping_velocity_gate_length_scale: .01
+        repulsion_gain: 800.
+        repulsion_std_dev: .01
+        metric_modulation_radius: .5
+        metric_scalar: 1000.
+        metric_exploder_std_dev: .02
+        metric_exploder_eps: .001
+    damping_rmp:
+        accel_d_gain: 30.
+        metric_scalar: 50.
+        inertia: 100.
 
 canonical_resolve:
     max_acceleration_norm: 50.
