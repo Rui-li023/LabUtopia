@@ -3,9 +3,24 @@ from isaacsim.core.utils.types import ArticulationAction
 from isaacsim.core.utils.rotations import euler_angles_to_quat
 import numpy as np
 import typing
+
 from .atomic_base_controller import AtomicBaseController
 from robots.base_robot import BaseRobot, GRIPPER_OPEN, GRIPPER_CLOSED
+
+
 class PressZController(AtomicBaseController):
+    """State machine for vertical pressing (3 phases).
+
+    Phase 0: Move above target.  Phase 1: Close gripper.
+    Phase 2: Press down.
+
+    Per-episode randomization:
+      - initial offset noise (±0.03 m)
+      - press depth noise (±0.008 m)
+    """
+
+    DEFAULT_DT = [0.005, 0.01, 0.01]
+
     def __init__(
         self,
         name: str,
@@ -14,46 +29,28 @@ class PressZController(AtomicBaseController):
         events_dt: typing.Optional[typing.List[float]] = None,
         robot: typing.Optional[BaseRobot] = None,
     ) -> None:
-        super().__init__(name=name)
-        self._current_gripper_state = GRIPPER_OPEN
-
-        # Resolve robot for gripper control
-        self._robot = None
-        if robot is not None:
-            self._robot = robot
-        else:
-            for attr in ("robot", "robot_articulation", "_robot", "_robot_articulation"):
-                candidate = getattr(cspace_controller, attr, None)
-                if candidate is not None and isinstance(candidate, BaseRobot):
-                    self._robot = candidate
-                    break
-            if self._robot is None:
-                amp = getattr(cspace_controller, "_articulation_motion_policy", None)
-                if amp is not None:
-                    for attr in ("_robot_articulation", "robot_articulation"):
-                        candidate = getattr(amp, attr, None)
-                        if candidate is not None and isinstance(candidate, BaseRobot):
-                            self._robot = candidate
-                            break
-        self._event = 0  
-        self._t = 0  
-        self._initial_offset = initial_offset if initial_offset is not None else 0.2 / get_stage_units()
-
-        if events_dt is None:
-            self._events_dt = [0.005, 0.01, 0.01]
-        else:
-            self._events_dt = events_dt
-            if not isinstance(self._events_dt, (np.ndarray, list)):
-                raise Exception("events_dt should be NumPy ")
-            elif isinstance(self._events_dt, np.ndarray):
-                self._events_dt = events_dt.tolist()
-            if len(self._events_dt) != 3:
-                raise Exception("events_dt should have 3 elements")
-
-        self._cspace_controller = cspace_controller
-        self._start = True
+        super().__init__(
+            name=name,
+            cspace_controller=cspace_controller,
+            events_dt=events_dt,
+            default_events_dt=self.DEFAULT_DT,
+            robot=robot,
+        )
+        self._initial_offset = (initial_offset if initial_offset is not None
+                                else 0.2 / get_stage_units())
         self._position_threshold = 0.01 / get_stage_units()
-        self._reset_record_state()
+
+        # Per-episode noise
+        self._offset_noise = 0.0
+        self._press_depth_noise = 0.0
+
+    # ── Randomization ────────────────────────────────────────────
+
+    def _sample_randomization(self):
+        self._offset_noise = self._noisy(0.0, 0.03)
+        self._press_depth_noise = self._noisy(0.0, 0.008)
+
+    # ── Forward ──────────────────────────────────────────────────
 
     def forward(
         self,
@@ -61,82 +58,59 @@ class PressZController(AtomicBaseController):
         current_joint_positions: np.ndarray,
         gripper_control,
         end_effector_orientation: typing.Optional[np.ndarray] = None,
-        gripper_position: typing.Optional[np.ndarray] = None
+        gripper_position: typing.Optional[np.ndarray] = None,
     ) -> typing.Tuple[ArticulationAction, np.ndarray]:
-        
+        n = current_joint_positions.shape[0]
+
         if self._start:
             self._start = False
-            action = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
-            return action, self._build_record_array(action, current_joint_positions, gripper_state=self._current_gripper_state)
+            action = self._null_action(n)
+            return action, self._build_record_array(
+                action, current_joint_positions,
+                gripper_state=self._current_gripper_state)
 
         if self.is_done():
-            action = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
-            return action, self._build_record_array(action, current_joint_positions, gripper_state=self._current_gripper_state)
+            action = self._null_action(n)
+            return action, self._build_record_array(
+                action, current_joint_positions,
+                gripper_state=self._current_gripper_state)
 
         if end_effector_orientation is None:
-            end_effector_orientation = euler_angles_to_quat(np.array([0, np.pi, 0]))  
+            end_effector_orientation = euler_angles_to_quat(np.array([0, np.pi, 0]))
 
-        target_joint_positions = self._execute_phase(
-            target_position,
-            end_effector_orientation,
-            current_joint_positions,
-            gripper_control,
-            gripper_position
-        )
-        self._update_state()
-        record_array = self._build_record_array(target_joint_positions, current_joint_positions, gripper_state=self._current_gripper_state)
-        return target_joint_positions, record_array
+        self._ensure_randomization()
+        su = get_stage_units()
 
-    def _execute_phase(self, target_position, end_effector_orientation, current_joint_positions, gripper_control, gripper_position):
         if self._event == 0:
-            target_position[2] += self._initial_offset
-            target_joint_positions = self._cspace_controller.forward(
+            offset = self._initial_offset + self._offset_noise / su
+            target_position[2] += offset
+            action = self._cspace_controller.forward(
                 target_end_effector_position=target_position,
-                target_end_effector_orientation=end_effector_orientation
-            )
-            xy_distance = np.linalg.norm(gripper_position[:2] - target_position[:2])
-            if xy_distance < self._position_threshold:
-                self._event += 1
-                self._t = 0
+                target_end_effector_orientation=end_effector_orientation)
+            if gripper_position is not None and self._xy_reached(gripper_position, target_position):
+                self._next_event()
+
         elif self._event == 1:
-            self._current_gripper_state = GRIPPER_CLOSED
-            if self._robot is not None:
-                self._robot.close_gripper()
-            target_joint_positions = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
+            self._close_gripper()
+            action = self._null_action(n)
+
         elif self._event == 2:
-            target_position[2] += 0.025 / get_stage_units()
-            target_joint_positions = self._cspace_controller.forward(
+            depth = 0.025 + self._press_depth_noise
+            target_position[2] += depth / su
+            action = self._cspace_controller.forward(
                 target_end_effector_position=target_position,
-                target_end_effector_orientation=end_effector_orientation
-            )
-        return target_joint_positions
+                target_end_effector_orientation=end_effector_orientation)
 
-    def _update_state(self):
-        self._t += self._events_dt[self._event]
-        if self._t >= 1.0:
-            self._event += 1
-            self._t = 0
+        self._advance_state()
+        return action, self._build_record_array(
+            action, current_joint_positions,
+            gripper_state=self._current_gripper_state)
 
-    def reset(
-        self,
-        initial_offset: typing.Optional[float] = None,
-        events_dt: typing.Optional[typing.List[float]] = None
-    ) -> None:
-        super().reset()
-        self._cspace_controller.reset()
-        self._event = 0
-        self._t = 0
+    # ── Reset ────────────────────────────────────────────────────
+
+    def reset(self, initial_offset=None, events_dt=None):
+        super().reset(events_dt)
         if initial_offset is not None:
             self._initial_offset = initial_offset
-        if events_dt is not None:
-            self._events_dt = events_dt
-            if not isinstance(self._events_dt, (np.ndarray, list)):
-                raise Exception("events_dt  NumPy ")
-            elif isinstance(self._events_dt, np.ndarray):
-                self._events_dt = events_dt.tolist()
-            if len(self._events_dt) != 3:
-                raise Exception("events_dt  3")
-        self._start = True
-        self._current_gripper_state = GRIPPER_OPEN
-        self._reset_record_state()
-
+        self._offset_noise = 0.0
+        self._press_depth_noise = 0.0

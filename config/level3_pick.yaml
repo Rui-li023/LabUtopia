@@ -47,6 +47,24 @@ task:
         x: [0.21, 0.36]
         y: [-0.08, 0.08]
         z: [0.82, 0.82]
+  distractors:
+    enabled: true
+    candidates:
+      - "/World/beaker1"
+      - "/World/beaker2"
+      - "/World/beaker3"
+      - "/World/glass_rod"
+      - "/World/graduated_cylinder_03"
+    num_range: [3, 5]
+    placement_zones:
+      # right side of table
+      - { x: [0.45, 0.65], y: [-0.25, 0.25], z: [0.82, 0.82] }
+      # left side of table
+      - { x: [-0.10, 0.10], y: [-0.25, 0.25], z: [0.82, 0.82] }
+      # front of table (y positive)
+      - { x: [0.05, 0.55], y: [0.18, 0.35], z: [0.82, 0.82] }
+      # back of table (y negative)
+      - { x: [0.05, 0.55], y: [-0.35, -0.18], z: [0.82, 0.82] }
   material_paths:
     - path: /World/table/surface
       materials:
@@ -80,6 +98,13 @@ cameras:
     focal_length: 4
     orientation: [0.61237, 0.35355, 0.35355, 0.61237]
     image_type: "rgb"
+    randomize:
+      translation_range:
+        x: [-0.05, 0.05]
+        y: [-0.05, 0.05]
+        z: [-0.05, 0.05]
+      orientation_noise: 0.02
+      focal_length_range: [-0.5, 0.5]
 
   - prim_path: "/World/Camera2"
     name: "camera_2"
@@ -88,6 +113,13 @@ cameras:
     focal_length: 4
     orientation: [0.70711, 0, 0, -0.70711]
     image_type: "rgb"
+    randomize:
+      translation_range:
+        x: [-0.05, 0.05]
+        y: [-0.05, 0.05]
+        z: [-0.05, 0.05]
+      orientation_noise: 0.02
+      focal_length_range: [-0.5, 0.5]
 
   - prim_path: ${robot_camera_profiles.${robot.type}.arm_camera_prim_path}
     name: "camera_3"
@@ -119,7 +151,7 @@ robot_camera_profiles:
     arm_camera_resolution: [256, 256]
 
 robot:
-  type: "piper"
+  type: "franka"
   position: [-0.4, -0, 0.71]
 
 collector:

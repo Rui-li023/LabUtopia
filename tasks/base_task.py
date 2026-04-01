@@ -10,6 +10,7 @@ from isaacsim.core.utils.prims import set_prim_visibility
 from utils.lighting_utils import LightingRandomizer
 from pxr import UsdShade
 from loguru import logger
+from scipy.spatial.transform import Rotation
 
 class BaseTask(ABC):
     """
@@ -43,12 +44,14 @@ class BaseTask(ABC):
         self.reset_needed = False
         self.frame_idx = 0
         self.object_utils = ObjectUtils.get_instance()
-        self._episode_init_state: Dict = {"object_poses": {}, "object_materials": {}, "extra": {}}
+        self._episode_init_state: Dict = {"object_poses": {}, "object_materials": {}, "camera_poses": {}, "extra": {}}
 
         self.setup_cameras()
+        self.setup_camera_randomization()
         self.setup_objects()
         self.setup_materials()
         self.setup_lighting()
+        self.setup_distractors()
 
         self.current_material_idx = 0
         self.episodes_per_obj = int(cfg.max_episodes / len(self.obj_configs)) if self.obj_configs else 0
@@ -71,8 +74,10 @@ class BaseTask(ABC):
         self.world.reset()
         self.reset_needed = False
         self.frame_idx = 0
-        self._episode_init_state = {"object_poses": {}, "object_materials": {}, "extra": {}}
+        self._episode_init_state = {"object_poses": {}, "object_materials": {}, "camera_poses": {}, "extra": {}}
         self._randomize_lighting()
+        self._randomize_cameras()
+        self._randomize_distractors()
         self.apply_materials()
 
     def reset_with_init_state(self, init_state: dict) -> None:
@@ -95,12 +100,14 @@ class BaseTask(ABC):
         self._episode_init_state = {
             "object_poses":     dict(init_state.get("object_poses", {})),
             "object_materials": dict(init_state.get("object_materials", {})),
+            "camera_poses":     dict(init_state.get("camera_poses", {})),
             "extra":            dict(init_state.get("extra", {})),
         }
         for obj_path, material_path in self._episode_init_state["object_materials"].items():
             self._bind_material(obj_path, material_path)
             logger.info(f"Bound material {material_path} to object {obj_path}")
         self._apply_init_state_poses(self._episode_init_state)
+        self._restore_camera_poses(self._episode_init_state)
         self.robot.initialize()
 
         # Restore robot joint positions from recorded init state
@@ -330,6 +337,276 @@ class BaseTask(ABC):
                 scenario=scenario,
                 position_range=position_range,
             )
+
+    # -------------------------------------------------------------------------
+    # Camera randomization
+    # -------------------------------------------------------------------------
+
+    def setup_camera_randomization(self) -> None:
+        """Parse per-camera ``randomize`` blocks from config.
+
+        Stores original (baseline) poses so each episode's perturbation is
+        relative to the config values, not cumulative.
+
+        Example YAML::
+
+            cameras:
+              - prim_path: "/World/Camera1"
+                translation: [1.6, 0, 1.85]
+                orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+                focal_length: 4
+                ...
+                randomize:
+                  translation_range:
+                    x: [-0.05, 0.05]
+                    y: [-0.05, 0.05]
+                    z: [-0.05, 0.05]
+                  orientation_noise: 0.02   # small-angle noise in radians
+                  focal_length_range: [-0.5, 0.5]
+        """
+        self._camera_randomization_configs: list = []
+        for cam_cfg in self.cfg.cameras:
+            rand_cfg = getattr(cam_cfg, "randomize", None)
+            if rand_cfg is None:
+                self._camera_randomization_configs.append(None)
+                continue
+
+            base_translation = np.array(getattr(cam_cfg, "translation", [0.0, 0.0, 0.0]))
+            base_orientation = np.array(getattr(cam_cfg, "orientation", [1.0, 0.0, 0.0, 0.0]))
+            base_focal_length = float(getattr(cam_cfg, "focal_length", 1.0))
+
+            # Parse translation range
+            trans_range = getattr(rand_cfg, "translation_range", None)
+            if trans_range is not None:
+                trans_range = {
+                    "x": list(getattr(trans_range, "x", [-0.05, 0.05])),
+                    "y": list(getattr(trans_range, "y", [-0.05, 0.05])),
+                    "z": list(getattr(trans_range, "z", [-0.05, 0.05])),
+                }
+
+            self._camera_randomization_configs.append({
+                "base_translation":   base_translation,
+                "base_orientation":   base_orientation,
+                "base_focal_length":  base_focal_length,
+                "translation_range":  trans_range,
+                "orientation_noise":  float(getattr(rand_cfg, "orientation_noise", 0.0)),
+                "focal_length_range": list(getattr(rand_cfg, "focal_length_range", [0.0, 0.0])),
+            })
+
+        has_any = any(c is not None for c in self._camera_randomization_configs)
+        if has_any:
+            logger.info("Camera randomization enabled")
+
+    def _randomize_cameras(self) -> None:
+        """Perturb camera poses for the current episode and record to init_state.
+
+        Called during ``reset()``.  Skips cameras without a ``randomize`` block.
+        """
+        if not hasattr(self, "_camera_randomization_configs"):
+            return
+
+        camera_poses: dict = {}
+        for camera, cam_cfg, rand_cfg in zip(
+            self.cameras, self.cfg.cameras, self._camera_randomization_configs
+        ):
+            if rand_cfg is None:
+                continue
+
+            # --- Translation perturbation ---
+            new_translation = rand_cfg["base_translation"].copy()
+            trans_range = rand_cfg["translation_range"]
+            if trans_range is not None:
+                new_translation += np.array([
+                    np.random.uniform(trans_range["x"][0], trans_range["x"][1]),
+                    np.random.uniform(trans_range["y"][0], trans_range["y"][1]),
+                    np.random.uniform(trans_range["z"][0], trans_range["z"][1]),
+                ])
+
+            # --- Orientation perturbation (small-angle noise) ---
+            base_quat = rand_cfg["base_orientation"]  # [x, y, z, w] USD convention
+            noise_mag = rand_cfg["orientation_noise"]
+            if noise_mag > 0:
+                # Sample a small random rotation vector, then compose with base
+                axis = np.random.randn(3)
+                axis /= (np.linalg.norm(axis) + 1e-8)
+                angle = np.random.uniform(-noise_mag, noise_mag)
+                # scipy uses [x, y, z, w] scalar-last, same as our USD convention
+                delta_rot = Rotation.from_rotvec(axis * angle)
+                base_rot = Rotation.from_quat(base_quat)
+                new_rot = base_rot * delta_rot
+                new_orientation = new_rot.as_quat()  # [x, y, z, w]
+            else:
+                new_orientation = base_quat.copy()
+
+            # --- Focal length perturbation ---
+            fl_range = rand_cfg["focal_length_range"]
+            new_focal_length = rand_cfg["base_focal_length"] + np.random.uniform(fl_range[0], fl_range[1])
+
+            # Apply to camera
+            camera.set_local_pose(
+                translation=new_translation,
+                orientation=new_orientation,
+                camera_axes="usd",
+            )
+            camera.set_focal_length(new_focal_length)
+
+            camera_poses[cam_cfg.name] = {
+                "translation":  new_translation.tolist(),
+                "orientation":  new_orientation.tolist(),
+                "focal_length": float(new_focal_length),
+            }
+            logger.debug(
+                f"Camera '{cam_cfg.name}' randomized: "
+                f"t={new_translation.tolist()}, fl={new_focal_length:.2f}"
+            )
+
+        self._episode_init_state["camera_poses"] = camera_poses
+
+    def _restore_camera_poses(self, init_state: dict) -> None:
+        """Restore camera poses from a previously recorded init_state.
+
+        Called during ``reset_with_init_state()`` for deterministic replay.
+        """
+        camera_poses = init_state.get("camera_poses", {})
+        if not camera_poses:
+            return
+
+        camera_by_name = {cfg.name: cam for cam, cfg in zip(self.cameras, self.cfg.cameras)}
+        for cam_name, pose in camera_poses.items():
+            camera = camera_by_name.get(cam_name)
+            if camera is None:
+                logger.warning(f"Camera '{cam_name}' in init_state not found, skipping restore")
+                continue
+            camera.set_local_pose(
+                translation=np.array(pose["translation"]),
+                orientation=np.array(pose["orientation"]),
+                camera_axes="usd",
+            )
+            camera.set_focal_length(pose["focal_length"])
+            logger.info(f"Restored camera '{cam_name}' pose from init_state")
+
+    # -------------------------------------------------------------------------
+    # Distractor object randomization
+    # -------------------------------------------------------------------------
+
+    def setup_distractors(self) -> None:
+        """Parse ``task.distractors`` config block.
+
+        Example YAML::
+
+            task:
+              distractors:
+                enabled: true
+                candidates:
+                  - "/World/beaker1"
+                  - "/World/conical_bottle03"
+                num_range: [1, 3]
+                position_range:
+                  x: [-0.2, 0.6]
+                  y: [-0.35, 0.35]
+                  z: [0.82, 0.82]
+        """
+        task_cfg = getattr(self.cfg, "task", None)
+        dist_cfg = getattr(task_cfg, "distractors", None) if task_cfg else None
+        self._distractors_enabled = bool(getattr(dist_cfg, "enabled", False)) if dist_cfg else False
+        self._distractor_cfg = dist_cfg
+
+        if self._distractors_enabled:
+            self._distractor_candidates: List[str] = list(dist_cfg.candidates)
+            logger.info(
+                f"Distractor randomization enabled: "
+                f"{len(self._distractor_candidates)} candidates"
+            )
+
+    def _get_task_object_paths(self) -> set:
+        """Return the set of prim paths currently used by the task.
+
+        These must be excluded from the distractor candidate pool each episode.
+        """
+        paths = set()
+        for obj_cfg in self.obj_configs:
+            paths.add(obj_cfg["path"])
+        # Also exclude top-level config paths (target_path, obj_path, etc.)
+        for key in ("target_path", "obj_path", "target_beaker"):
+            val = getattr(self.cfg, key, None)
+            if val:
+                paths.add(val)
+        return paths
+
+    def _randomize_distractors(self) -> None:
+        """Place random distractor objects on the table periphery.
+
+        Called during ``reset()``.  Hides all candidates first, then randomly
+        selects a subset and places each in a randomly chosen placement zone.
+        Records poses into ``init_state["distractor_poses"]``.
+
+        Placement zones are defined in YAML as a list of non-overlapping
+        regions around the robot's operating area so distractors never
+        interfere with task execution.
+        """
+        if not self._distractors_enabled:
+            return
+
+        cfg = self._distractor_cfg
+        self._hide_all_distractors()
+
+        # Exclude objects the current task is actively using
+        task_paths = self._get_task_object_paths()
+        available = [p for p in self._distractor_candidates if p not in task_paths]
+        if not available:
+            self._episode_init_state["distractor_poses"] = {}
+            return
+
+        # Sample how many distractors to place
+        num_range = list(getattr(cfg, "num_range", [2, 5]))
+        num = random.randint(num_range[0], min(num_range[1], len(available)))
+
+        # Parse placement zones
+        zones = []
+        for zone_cfg in cfg.placement_zones:
+            zones.append({
+                "x": list(getattr(zone_cfg, "x", [0.0, 0.5])),
+                "y": list(getattr(zone_cfg, "y", [-0.3, 0.3])),
+                "z": list(getattr(zone_cfg, "z", [0.82, 0.82])),
+            })
+
+        selected = random.sample(available, num)
+        distractor_poses: dict = {}
+
+        for obj_path in selected:
+            prim = self.stage.GetPrimAtPath(obj_path)
+            if not prim.IsValid():
+                logger.warning(f"Distractor prim '{obj_path}' not found, skipping")
+                continue
+
+            # Pick a random zone and sample a position within it
+            zone = random.choice(zones)
+            position = np.array([
+                np.random.uniform(zone["x"][0], zone["x"][1]),
+                np.random.uniform(zone["y"][0], zone["y"][1]),
+                np.random.uniform(zone["z"][0], zone["z"][1]),
+            ])
+            self.object_utils.set_object_position(object_path=obj_path, position=position)
+            set_prim_visibility(prim, True)
+
+            distractor_poses[obj_path] = position.tolist()
+            logger.debug(f"Distractor '{obj_path}' placed at {position.tolist()}")
+
+        self._episode_init_state["distractor_poses"] = distractor_poses
+        logger.info(f"Placed {len(distractor_poses)} distractors on table")
+
+    def _hide_all_distractors(self) -> None:
+        """Hide all distractor candidates and move them far away."""
+        if not self._distractors_enabled:
+            return
+        for obj_path in self._distractor_candidates:
+            prim = self.stage.GetPrimAtPath(obj_path)
+            if prim.IsValid():
+                set_prim_visibility(prim, False)
+                self.object_utils.set_object_position(
+                    object_path=obj_path,
+                    position=np.array([10.0, 10.0, 0.1]),
+                )
 
     def apply_materials(self) -> None:
         """Apply configured materials and record them in ``_episode_init_state``."""

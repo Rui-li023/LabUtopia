@@ -1,31 +1,31 @@
 from isaacsim.core.api.controllers.articulation_controller import ArticulationController
 from isaacsim.core.utils.types import ArticulationAction
-
 import numpy as np
 import typing
-from .atomic_base_controller import AtomicBaseController
-from robots.base_robot import GRIPPER_CLOSED
 from scipy.spatial.transform import Rotation as R
 
-# Control frequency 60 Hz: pour action uses velocity control, record positions are integrated with dt = 1/60
+from .atomic_base_controller import AtomicBaseController
+from robots.base_robot import GRIPPER_CLOSED
+
 CONTROL_FREQUENCY = 60
 PHYSICS_DT = 1.0 / CONTROL_FREQUENCY
 
 
 class PourController(AtomicBaseController):
-    """
-    PourController implements a state machine for pouring liquid. The state transitions are as follows:
+    """State machine for pouring liquid (6 phases, velocity-controlled pour).
 
-    State 0: Move above the target position (with random height offset). When XY distance is close, proceed to next state.
-    State 1: Further adjust height and position (considering object size and offset). When XY distance is close, proceed to next state.
-    State 2: Switch joint 7 to velocity mode, start pouring (positive velocity).
-    State 3: Hold joint 7 velocity at 0, pause pouring.
-    State 4: Switch joint 7 to velocity mode, pour in reverse (negative velocity).
-    State 5: Hold joint 7 velocity at 0, finish pouring.
+    Phase 0: Move above target.  Phase 1: Adjust height.
+    Phase 2: Pour (positive vel).  Phase 3: Pause.
+    Phase 4: Pour reverse (negative vel).  Phase 5: Hold.
 
-    Pour phase (states 2-5) uses velocity control at 60 Hz; record_array is computed as position + velocity * dt.
-    Each state's duration is controlled by self._events_dt. State transitions are managed by self._event and self._t.
+    Per-episode randomization:
+      - heights (0.3-0.4 m and 0.1-0.2 m)
+      - pour speed factor (0.8x-1.2x)
+      - x offset noise (±0.01 m)
+      - orientation noise (±5 deg per axis)
     """
+
+    DEFAULT_DT = [0.002, 0.01, 0.009, 0.005, 0.009, 0.5]
 
     def __init__(
         self,
@@ -36,44 +36,47 @@ class PourController(AtomicBaseController):
         position_threshold: float = 0.006,
         control_frequency: float = CONTROL_FREQUENCY,
     ) -> None:
-        super().__init__(name=name)
-        self._event = 0
-        self._t = 0
-        self._events_dt = events_dt
+        dt = events_dt
+        if dt is None:
+            dt = [d / speed for d in self.DEFAULT_DT]
+        super().__init__(
+            name=name,
+            cspace_controller=cspace_controller,
+            events_dt=dt,
+            default_events_dt=self.DEFAULT_DT,
+            position_threshold=position_threshold,
+        )
         self._physics_dt = 1.0 / control_frequency
-        if self._events_dt is None:
-            self._events_dt = [dt / speed for dt in [0.002, 0.01, 0.009, 0.005, 0.009, 0.5]]
-        else:
-            if not isinstance(self._events_dt, np.ndarray) and not isinstance(self._events_dt, list):
-                raise Exception("events dt need to be list or numpy array")
-            elif isinstance(self._events_dt, np.ndarray):
-                self._events_dt = self._events_dt.tolist()
-            assert len(self._events_dt) == 6, "events dt need have length of 6 or less"
-        self._cspace_controller = cspace_controller
+        self._pour_default_speed = -120.0 / 180.0 * np.pi
 
-        self._pour_default_speed = - 120.0 / 180.0 * np.pi
-        self._position_threshold = position_threshold
-
+        # Per-episode noise
         self._height_range_1 = (0.3, 0.4)
         self._height_range_2 = (0.1, 0.2)
-        self._random_height_1 = np.random.uniform(*self._height_range_1)
-        self._random_height_2 = np.random.uniform(*self._height_range_2)
+        self._random_height_1 = self._uniform(*self._height_range_1)
+        self._random_height_2 = self._uniform(*self._height_range_2)
+        self._speed_factor = 1.0
+        self._x_offset_noise = 0.0
+        self._orient_noise = np.zeros(3)  # per-axis deg noise for [x, y, z]
+
         self._last_arm_positions = None
-        self._reset_record_state()
-        return
 
-    def _build_record_array(
-        self,
-        action: ArticulationAction,
-        current_joint_positions: typing.Optional[np.ndarray] = None,
-        gripper_state: int = None,
-    ) -> typing.Optional[np.ndarray]:
-        """Build 8-dim record array (7 arm joints + 1 gripper state).
+    # ── Randomization ────────────────────────────────────────────
 
-        For position actions: extract arm positions from action.
-        For velocity-only actions (pour phase): integrate position = base + velocity * dt at 60 Hz.
-        Gripper state is always GRIPPER_CLOSED during pour (holding object).
-        """
+    def _sample_randomization(self):
+        self._random_height_1 = self._uniform(*self._height_range_1)
+        self._random_height_2 = self._uniform(*self._height_range_2)
+        self._speed_factor = self._uniform(0.8, 1.2)
+        self._x_offset_noise = self._noisy(0.0, 0.01)
+        self._orient_noise = np.array([
+            self._noisy(0.0, 5.0),
+            self._noisy(0.0, 5.0),
+            self._noisy(0.0, 5.0),
+        ])
+
+    # ── Record array (velocity-aware override) ───────────────────
+
+    def _build_record_array(self, action, current_joint_positions=None,
+                            gripper_state=None):
         if gripper_state is None:
             gripper_state = GRIPPER_CLOSED
         self._last_gripper_state = gripper_state
@@ -81,51 +84,51 @@ class PourController(AtomicBaseController):
         jp = action.joint_positions
         jv = action.joint_velocities
 
-        # Determine arm positions (first 7 joints)
         if jp is not None and current_joint_positions is not None:
-            fallback = self._last_arm_positions if self._last_arm_positions is not None else current_joint_positions[:7]
-            arm_positions = fallback.copy().astype(np.float64)
+            fallback = (self._last_arm_positions
+                        if self._last_arm_positions is not None
+                        else current_joint_positions[:7])
+            arm = fallback.copy().astype(np.float64)
             for i in range(min(len(jp), 7)):
                 if jp[i] is not None:
-                    arm_positions[i] = float(jp[i])
-            self._last_arm_positions = arm_positions
+                    arm[i] = float(jp[i])
+            self._last_arm_positions = arm
         elif jp is not None:
-            arm_positions = np.array([float(p) if p is not None else 0.0 for p in jp[:7]])
+            arm = np.array([float(p) if p is not None else 0.0 for p in jp[:7]])
             if self._last_arm_positions is not None:
                 full = self._last_arm_positions.copy().astype(np.float64)
-                for i in range(min(len(arm_positions), 7)):
-                    full[i] = arm_positions[i]
-                arm_positions = full
-            self._last_arm_positions = arm_positions
+                for i in range(min(len(arm), 7)):
+                    full[i] = arm[i]
+                arm = full
+            self._last_arm_positions = arm
         elif jv is not None:
-            # Velocity-only action (pour phase): integrate
-            base = self._last_arm_positions if self._last_arm_positions is not None else (
-                current_joint_positions[:7] if current_joint_positions is not None else None
-            )
+            base = (self._last_arm_positions if self._last_arm_positions is not None
+                    else (current_joint_positions[:7]
+                          if current_joint_positions is not None else None))
             if base is not None:
-                base = np.asarray(base, dtype=np.float64)
-                arm_positions = base.copy()
+                arm = np.asarray(base, dtype=np.float64).copy()
                 for i in range(min(len(jv), 7)):
                     if jv[i] is not None:
-                        arm_positions[i] = arm_positions[i] + float(jv[i]) * self._physics_dt
-                self._last_arm_positions = arm_positions
+                        arm[i] += float(jv[i]) * self._physics_dt
+                self._last_arm_positions = arm
             elif self._last_arm_positions is not None:
-                arm_positions = self._last_arm_positions.copy()
+                arm = self._last_arm_positions.copy()
             else:
                 return None
         elif self._last_arm_positions is not None:
-            arm_positions = self._last_arm_positions.copy()
+            arm = self._last_arm_positions.copy()
         elif current_joint_positions is not None:
-            arm_positions = current_joint_positions[:7].copy()
-            self._last_arm_positions = arm_positions
+            arm = current_joint_positions[:7].copy()
+            self._last_arm_positions = arm
         else:
             return None
 
-        # Build 8-dim output: 7 arm joints + 1 gripper state
         record = np.zeros(8, dtype=np.float64)
-        record[:7] = arm_positions[:7]
+        record[:7] = arm[:7]
         record[7] = float(gripper_state)
         return record
+
+    # ── Forward ──────────────────────────────────────────────────
 
     def forward(
         self,
@@ -137,148 +140,105 @@ class PourController(AtomicBaseController):
         source_name: str = None,
         pour_speed: float = None,
         current_joint_positions: typing.Optional[np.ndarray] = None,
-        target_end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat()
+        target_end_effector_orientation=None,
     ) -> typing.Tuple[ArticulationAction, typing.Optional[np.ndarray]]:
-        """
-        Execute one step of the controller. Control rate is 60 Hz; pour phase uses velocity, record_array uses position + velocity*dt.
-
-        Args:
-            articulation_controller: The articulation controller for the robot.
-            source_size: Size of the source object being poured.
-            current_joint_velocities: Current joint velocities of the robot.
-            current_joint_positions: Optional current joint positions (9-dim); used to build 9-dim record_array and for velocity integration.
-            pour_speed: Speed for the pouring action. Defaults to None.
-
-        Returns:
-            (ArticulationAction, record_array): Action to execute and 9-dim position array for recording.
-        """
         self.object_size = source_size
-        
-        if pour_speed is None:
-            self._pour_speed = self._pour_default_speed
+        self._ensure_randomization()
+
+        if target_end_effector_orientation is None:
+            base_orient = np.radians([0, 90, 10])
         else:
-            self._pour_speed = pour_speed
-            
-        if  self._event >= len(self._events_dt):
+            # Convert quat back to euler for noise addition, then back
+            base_orient = R.from_quat(target_end_effector_orientation).as_euler('xyz')
+
+        noisy_orient = base_orient + np.radians(self._orient_noise)
+        orient_quat = R.from_euler('xyz', noisy_orient).as_quat()
+
+        speed = (pour_speed if pour_speed is not None
+                 else self._pour_default_speed) * self._speed_factor
+
+        nv = current_joint_velocities.shape[0]
+
+        if self._event >= len(self._events_dt):
             articulation_controller.switch_dof_control_mode(dof_index=6, mode="velocity")
-            target_joint_velocities = [None] * current_joint_velocities.shape[0]
-            action = ArticulationAction(joint_velocities=target_joint_velocities)
+            action = ArticulationAction(joint_velocities=[None] * nv)
             return action, self._build_record_array(action, current_joint_positions)
-        
+
         if self._event == 0:
             target_position[2] += self._random_height_1
-            target_joints = self._cspace_controller.forward(
-                target_end_effector_position=target_position, 
-                target_end_effector_orientation=target_end_effector_orientation
-            )
-            self._random_height_1 = np.random.uniform(*self._height_range_1)
-            xy_distance = np.linalg.norm(gripper_position[:2] - target_position[:2])
-            if xy_distance < 0.08:
-                self._event += 1
-                self._t = 0
-                return target_joints, self._build_record_array(target_joints, current_joint_positions)
+            action = self._cspace_controller.forward(
+                target_end_effector_position=target_position,
+                target_end_effector_orientation=orient_quat)
+            self._random_height_1 = self._uniform(*self._height_range_1)
+            if self._xy_reached(gripper_position, target_position, threshold=0.08):
+                self._next_event()
+                return action, self._build_record_array(action, current_joint_positions)
 
         elif self._event == 1:
-            target_position[0] += 0.02
-            target_position[2] += self._random_height_2 + self.object_size[2] / 2 + self.get_pickz_offset(source_name)
-            target_position[1] -= self.object_size[2] / 2 - self.get_pickz_offset(source_name)
-            target_joints = self._cspace_controller.forward(
-                target_end_effector_position=target_position, 
-                target_end_effector_orientation=target_end_effector_orientation
-            )
-            self._random_height_2 = np.random.uniform(*self._height_range_2)
-            xy_distance = np.linalg.norm(gripper_position[:2] - target_position[:2])
-            if xy_distance < self._position_threshold:
-                self._event += 1
-                self._t = 0
-                return target_joints, self._build_record_array(target_joints, current_joint_positions)
+            target_position[0] += 0.02 + self._x_offset_noise
+            target_position[2] += (self._random_height_2
+                                   + self.object_size[2] / 2
+                                   + self.get_pickz_offset(source_name))
+            target_position[1] -= (self.object_size[2] / 2
+                                   - self.get_pickz_offset(source_name))
+            action = self._cspace_controller.forward(
+                target_end_effector_position=target_position,
+                target_end_effector_orientation=orient_quat)
+            self._random_height_2 = self._uniform(*self._height_range_2)
+            if self._xy_reached(gripper_position, target_position):
+                self._next_event()
+                return action, self._build_record_array(action, current_joint_positions)
+
         elif self._event == 2:
             articulation_controller.switch_dof_control_mode(dof_index=6, mode="velocity")
-            target_joint_velocities = [None] * current_joint_velocities.shape[0]
-            target_joint_velocities[6] = self._pour_speed
-            target_joints = ArticulationAction(joint_velocities=target_joint_velocities)
+            vels = [None] * nv
+            vels[6] = speed
+            action = ArticulationAction(joint_velocities=vels)
+
         elif self._event == 3:
             articulation_controller.switch_dof_control_mode(dof_index=6, mode="velocity")
-            target_joint_velocities = [None] * current_joint_velocities.shape[0]
-            target_joint_velocities[6] = 0
-            target_joints = ArticulationAction(joint_velocities=target_joint_velocities)
+            vels = [None] * nv
+            vels[6] = 0
+            action = ArticulationAction(joint_velocities=vels)
+
         elif self._event == 4:
             articulation_controller.switch_dof_control_mode(dof_index=6, mode="velocity")
-            target_joint_velocities = [None] * current_joint_velocities.shape[0]
-            target_joint_velocities[6] = -self._pour_speed
-            target_joints = ArticulationAction(joint_velocities=target_joint_velocities)
+            vels = [None] * nv
+            vels[6] = -speed
+            action = ArticulationAction(joint_velocities=vels)
+
         elif self._event == 5:
             articulation_controller.switch_dof_control_mode(dof_index=6, mode="velocity")
-            target_joint_velocities = [None] * current_joint_velocities.shape[0]
-            target_joint_velocities[6] = 0
-            target_joints = ArticulationAction(joint_velocities=target_joint_velocities)
+            vels = [None] * nv
+            vels[6] = 0
+            action = ArticulationAction(joint_velocities=vels)
 
-        self._t += self._events_dt[self._event]
-        if self._t >= 1.0:
-            self._event += 1
-            self._t = 0
+        self._advance_state()
+        return action, self._build_record_array(action, current_joint_positions)
 
-        record_array = self._build_record_array(target_joints, current_joint_positions)
-        return target_joints, record_array
-
-    def reset(self, events_dt: typing.Optional[typing.List[float]] = None) -> None:
-        """
-        Reset the state machine to start from the first phase.
-
-        Args:
-            events_dt (list of float, optional): Time duration for each phase. Defaults to None.
-
-        Raises:
-            Exception: If 'events_dt' is not a list or numpy array.
-            Exception: If 'events_dt' length is greater than 3.
-        """
-        super().reset()
-        self._cspace_controller.reset()
-        self._event = 0
-        self._t = 0
-        self._start = True
-        self.object_size = None
-        if events_dt is not None:
-            self._events_dt = events_dt
-            if not isinstance(self._events_dt, np.ndarray) and not isinstance(self._events_dt, list):
-                raise Exception("events dt need to be list or numpy array")
-            elif isinstance(self._events_dt, np.ndarray):
-                self._events_dt = self._events_dt.tolist()
-            if len(self._events_dt) > 3:
-                raise Exception("events dt need have length of 3 or less")
-
-        self._random_height_1 = np.random.uniform(*self._height_range_1)
-        self._random_height_2 = np.random.uniform(*self._height_range_2)
-        self._last_arm_positions = None
-        self._reset_record_state()
-        return
+    # ── Offset table ─────────────────────────────────────────────
 
     def get_pickz_offset(self, item_name):
-        """Calculates the vertical offset for the final grasp position.
-
-        Args:
-            item_name (str): Name of the object to be picked.
-
-        Returns:
-            float: Vertical offset in meters.
-        """
-        offsets = {
-            "conical_bottle02": 0.03,
-            "conical_bottle03": 0.07,
-            "conical_bottle04": 0.08,
-            "beaker2": 0.02,
-            "graduated_cylinder_01": 0.0,
-            "graduated_cylinder_02": 0.0,
-            "graduated_cylinder_03": 0.0,
-            "graduated_cylinder_04": 0.0,
-            "volume_flask": 0.05,
-            "beaker": 0.02,
-            "beaker_l": 0.02,
-            
+        table = {
+            "conical_bottle02": 0.03, "conical_bottle03": 0.07,
+            "conical_bottle04": 0.08, "beaker2": 0.02,
+            "graduated_cylinder_01": 0.0, "graduated_cylinder_02": 0.0,
+            "graduated_cylinder_03": 0.0, "graduated_cylinder_04": 0.0,
+            "volume_flask": 0.05, "beaker": 0.02, "beaker_l": 0.02,
         }
-
-        for key in offsets:
+        for key, val in table.items():
             if key in item_name.lower():
-                return offsets[key]
-
+                return val
         return self.object_size[2] * 2 / 5
+
+    # ── Reset ────────────────────────────────────────────────────
+
+    def reset(self, events_dt=None):
+        super().reset(events_dt)
+        self.object_size = None
+        self._random_height_1 = self._uniform(*self._height_range_1)
+        self._random_height_2 = self._uniform(*self._height_range_2)
+        self._speed_factor = 1.0
+        self._x_offset_noise = 0.0
+        self._orient_noise = np.zeros(3)
+        self._last_arm_positions = None

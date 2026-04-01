@@ -53,6 +53,22 @@ task:
         y: [-0.05, 0.010]
         z: [0.78, 0.78]
       close_gripper_distance: 0.02
+  distractors:
+    enabled: true
+    candidates:
+      - "/World/beaker1"
+      - "/World/beaker2"
+      - "/World/beaker3"
+      - "/World/conical_bottle02"
+      - "/World/conical_bottle03"
+      - "/World/glass_rod"
+      - "/World/graduated_cylinder_03"
+    num_range: [3, 5]
+    placement_zones:
+      - { x: [0.45, 0.65], y: [-0.25, 0.25], z: [0.82, 0.82] }
+      - { x: [-0.10, 0.10], y: [-0.25, 0.25], z: [0.82, 0.82] }
+      - { x: [0.05, 0.55], y: [0.18, 0.35], z: [0.82, 0.82] }
+      - { x: [0.05, 0.55], y: [-0.35, -0.18], z: [0.82, 0.82] }
   material_paths:
     - path: "/World/table/surface"
       materials:
@@ -86,6 +102,13 @@ cameras:
     focal_length: 2
     orientation: [-0.2297, -0.18336, 0.59631, 0.74701]
     image_type: "rgb"
+    randomize:
+      translation_range:
+        x: [-0.05, 0.05]
+        y: [-0.05, 0.05]
+        z: [-0.05, 0.05]
+      orientation_noise: 0.02
+      focal_length_range: [-0.5, 0.5]
 
   - prim_path: "/World/Camera2"
     name: "camera_2"
@@ -94,6 +117,13 @@ cameras:
     focal_length: 4
     orientation: [0.69035, 0.15304, -0.15304, -0.69035]
     image_type: "rgb"
+    randomize:
+      translation_range:
+        x: [-0.05, 0.05]
+        y: [-0.05, 0.05]
+        z: [-0.05, 0.05]
+      orientation_noise: 0.02
+      focal_length_range: [-0.5, 0.5]
 
   - prim_path: "/World/Franka/panda_hand/arm_camera"
     name: "camera_3"

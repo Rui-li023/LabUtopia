@@ -3,28 +3,25 @@ from isaacsim.core.utils.types import ArticulationAction
 from isaacsim.core.utils.rotations import euler_angles_to_quat
 import numpy as np
 import typing
+
 from .atomic_base_controller import AtomicBaseController
 from robots.base_robot import GRIPPER_CLOSED
 
+
 class StirController(AtomicBaseController):
-    """
-    A position-based controller for performing stirring actions with time-based fallback.
+    """Position-based controller for stirring (5 phases).
 
-    Uses position thresholds for responsive transitions with time-based timeout as backup:
-    - Phase 0: Lift the glass rod
-    - Phase 1: Move above the beaker
-    - Phase 2: Lower into the beaker
-    - Phase 3: Perform stirring motion
-    - Phase 4: Lift out of beaker
+    Phase 0: Lift glass rod.  Phase 1: Move above beaker.
+    Phase 2: Lower into beaker.  Phase 3: Circular stirring.
+    Phase 4: Lift out.
 
-    Args:
-        name (str): Controller identifier
-        cspace_controller (typing.Any): Cartesian space controller
-        events_dt (List[float], optional): Duration for each phase as backup
-        position_threshold (float): Distance threshold for phase transitions
-        stir_radius (float): Radius of stirring motion in meters
-        stir_speed (float): Angular velocity for stirring
+    Per-episode randomization:
+      - stir radius (0.006–0.012 m, default 0.009)
+      - stir speed (2.0–4.0, default 3.0)
+      - height offsets (±0.02 m per phase)
     """
+
+    DEFAULT_DT = [0.004, 0.004, 0.005, 0.001, 0.004]
 
     def __init__(
         self,
@@ -35,29 +32,36 @@ class StirController(AtomicBaseController):
         stir_radius: float = 0.009,
         stir_speed: float = 3.0,
     ) -> None:
-        super().__init__(name=name)
-        self._event = 0
-        self._t = 0
-        
-        if events_dt is None:
-            self._events_dt = [0.004, 0.004, 0.005, 0.001, 0.004]  # 5 phases
-        else:
-            if not isinstance(events_dt, (np.ndarray, list)):
-                raise Exception("events_dt must be a list or numpy array")
-            if isinstance(events_dt, np.ndarray):
-                self._events_dt = events_dt.tolist()
-            else:
-                self._events_dt = events_dt
-            if len(self._events_dt) != 5:
-                raise Exception(f"events_dt length must be 5, got {len(self._events_dt)}")
-        
-        self._cspace_controller = cspace_controller
-        self._position_threshold = position_threshold
+        super().__init__(
+            name=name,
+            cspace_controller=cspace_controller,
+            events_dt=events_dt,
+            default_events_dt=self.DEFAULT_DT,
+            position_threshold=position_threshold,
+        )
+        self._base_stir_radius = stir_radius
+        self._base_stir_speed = stir_speed
         self._stir_radius = stir_radius / get_stage_units()
         self._stir_speed = stir_speed
-        self._start = True
         self._current_stir_angle = 0.0
-        self._reset_record_state()
+
+        # Per-episode noise
+        self._height_noise = np.zeros(4)  # for phases 0-2, 4
+
+    # ── Randomization ────────────────────────────────────────────
+
+    def _sample_randomization(self):
+        su = get_stage_units()
+        self._stir_radius = self._uniform(0.006, 0.012) / su
+        self._stir_speed = self._uniform(2.0, 4.0)
+        self._height_noise = np.array([
+            self._noisy(0.0, 0.02),  # lift
+            self._noisy(0.0, 0.02),  # above beaker
+            self._noisy(0.0, 0.02),  # lower into
+            self._noisy(0.0, 0.02),  # lift out
+        ])
+
+    # ── Forward ──────────────────────────────────────────────────
 
     def forward(
         self,
@@ -66,18 +70,6 @@ class StirController(AtomicBaseController):
         gripper_position: np.ndarray,
         end_effector_orientation: typing.Optional[np.ndarray] = None,
     ) -> typing.Tuple[ArticulationAction, np.ndarray]:
-        """
-        Execute current phase with position threshold and time-based backup.
-
-        Args:
-            center_position (np.ndarray): Reference position for stirring
-            current_joint_positions (np.ndarray): Current robot joint positions
-            gripper_position (np.ndarray): Current gripper position
-            end_effector_orientation (np.ndarray, optional): End effector orientation
-
-        Returns:
-            ArticulationAction: Joint positions for robot execution
-        """
         if self._start:
             self._start = False
             self._event = 0
@@ -86,133 +78,85 @@ class StirController(AtomicBaseController):
         if end_effector_orientation is None:
             end_effector_orientation = euler_angles_to_quat(np.array([0, np.pi, 0]))
 
+        self._ensure_randomization()
+        n = current_joint_positions.shape[0]
+
         if self._event >= len(self._events_dt):
-            action = ArticulationAction(joint_positions=[None] * current_joint_positions.shape[0])
-            return action, self._build_record_array(action, current_joint_positions, gripper_state=GRIPPER_CLOSED)
+            action = self._null_action(n)
+            return action, self._build_record_array(
+                action, current_joint_positions, gripper_state=GRIPPER_CLOSED)
 
-        target_joint_positions = self._execute_phase(
-            center_position, gripper_position, end_effector_orientation, current_joint_positions
-        )
+        action = self._execute_phase(
+            center_position, gripper_position, end_effector_orientation, n)
 
-        # Time-based progression as backup
-        if self._event < len(self._events_dt):
-            self._t += self._events_dt[self._event] 
-            if self._t >= 1.0:
-                self._event += 1
-                self._t = 0
+        self._advance_state()
+        return action, self._build_record_array(
+            action, current_joint_positions, gripper_state=GRIPPER_CLOSED)
 
-        record_array = self._build_record_array(target_joint_positions, current_joint_positions, gripper_state=GRIPPER_CLOSED)
-        return target_joint_positions, record_array
+    # ── Phase execution ──────────────────────────────────────────
 
-    def _execute_phase(self, center_position, gripper_position, end_effector_orientation, current_joint_positions):
-        """Execute current phase and handle transitions."""
-        
+    def _execute_phase(self, center, grip_pos, orient, n):
+        su = get_stage_units()
+
         if self._event == 0:
-            # Lift phase
-            target_position = center_position.copy()
-            target_position[2] += 0.3 / get_stage_units()
-            
-            target_joints = self._cspace_controller.forward(
-                target_end_effector_position=target_position,
-                target_end_effector_orientation=end_effector_orientation
-            )
-            
-            distance = np.linalg.norm(gripper_position - target_position)
-            if distance < self._position_threshold:
-                self._event += 1
-                self._t = 0
-                
-            return target_joints
+            target = center.copy()
+            target[2] += (0.3 + self._height_noise[0]) / su
+            action = self._cspace_controller.forward(
+                target_end_effector_position=target,
+                target_end_effector_orientation=orient)
+            if float(np.linalg.norm(grip_pos - target)) < self._position_threshold:
+                self._next_event()
+            return action
 
         elif self._event == 1:
-            # Move above beaker
-            target_position = center_position.copy()
-            target_position[2] += 0.3 / get_stage_units()
-            
-            target_joints = self._cspace_controller.forward(
-                target_end_effector_position=target_position,
-                target_end_effector_orientation=end_effector_orientation
-            )
-            
-            xy_distance = np.linalg.norm(gripper_position[:2] - target_position[:2])
-            if xy_distance < self._position_threshold:
-                self._event += 1
-                self._t = 0
-                
-            return target_joints
+            target = center.copy()
+            target[2] += (0.3 + self._height_noise[1]) / su
+            action = self._cspace_controller.forward(
+                target_end_effector_position=target,
+                target_end_effector_orientation=orient)
+            if self._xy_reached(grip_pos, target):
+                self._next_event()
+            return action
 
         elif self._event == 2:
-            # Lower into beaker
-            target_position = center_position.copy()
-            target_position[2] += 0.12 / get_stage_units()
-            
-            target_joints = self._cspace_controller.forward(
-                target_end_effector_position=target_position,
-                target_end_effector_orientation=end_effector_orientation
-            )
-            
-            z_distance = abs(gripper_position[2] - target_position[2])
-            if z_distance < self._position_threshold:
-                self._event += 1
-                self._t = 0
-                
-            return target_joints
+            target = center.copy()
+            target[2] += (0.12 + self._height_noise[2]) / su
+            action = self._cspace_controller.forward(
+                target_end_effector_position=target,
+                target_end_effector_orientation=orient)
+            if abs(float(grip_pos[2] - target[2])) < self._position_threshold:
+                self._next_event()
+            return action
 
         elif self._event == 3:
-            # Stirring motion
-            angle_increment = self._stir_speed * 0.01
-            self._current_stir_angle += angle_increment
-            
-            x_offset = self._stir_radius * np.cos(self._current_stir_angle)
-            y_offset = self._stir_radius * np.sin(self._current_stir_angle)
-            target_position = center_position.copy()
-            target_position[0] += x_offset
-            target_position[1] += y_offset
-            target_position[2] += 0.1 / get_stage_units()
-            
+            self._current_stir_angle += self._stir_speed * 0.01
+            target = center.copy()
+            target[0] += self._stir_radius * np.cos(self._current_stir_angle)
+            target[1] += self._stir_radius * np.sin(self._current_stir_angle)
+            target[2] += 0.1 / su
             return self._cspace_controller.forward(
-                target_end_effector_position=target_position,
-                target_end_effector_orientation=end_effector_orientation
-            )
+                target_end_effector_position=target,
+                target_end_effector_orientation=orient)
 
         elif self._event == 4:
-            # Lift out of beaker
-            target_position = center_position.copy()
-            target_position[2] += 0.2 / get_stage_units()
-            
-            target_joints = self._cspace_controller.forward(
-                target_end_effector_position=target_position,
-                target_end_effector_orientation=end_effector_orientation
-            )
-            
-            z_distance = abs(gripper_position[2] - target_position[2])
-            if z_distance < self._position_threshold:
-                self._event += 1
-                self._t = 0
-                
-            return target_joints
+            target = center.copy()
+            target[2] += (0.2 + self._height_noise[3]) / su
+            action = self._cspace_controller.forward(
+                target_end_effector_position=target,
+                target_end_effector_orientation=orient)
+            if abs(float(grip_pos[2] - target[2])) < self._position_threshold:
+                self._next_event()
+            return action
 
         else:
-            return ArticulationAction(joint_positions=[None] * len(current_joint_positions))
+            return self._null_action(n)
 
-    def reset(self, events_dt: typing.Optional[typing.List[float]] = None) -> None:
-        """Reset controller to initial state."""
-        super().reset()
-        self._cspace_controller.reset()
-        self._event = 0
-        self._t = 0
-        self._start = True
+    # ── Reset ────────────────────────────────────────────────────
+
+    def reset(self, events_dt=None):
+        super().reset(events_dt)
+        su = get_stage_units()
+        self._stir_radius = self._base_stir_radius / su
+        self._stir_speed = self._base_stir_speed
         self._current_stir_angle = 0.0
-        self._reset_record_state()
-        
-        if events_dt is not None:
-            if not isinstance(events_dt, (np.ndarray, list)):
-                raise Exception("events_dt must be a list or numpy array")
-            if isinstance(events_dt, np.ndarray):
-                self._events_dt = events_dt.tolist()
-            else:
-                self._events_dt = events_dt
-            if len(self._events_dt) != 5:
-                raise Exception(f"events_dt length must be 5, got {len(self._events_dt)}")
-
-
+        self._height_noise = np.zeros(4)
