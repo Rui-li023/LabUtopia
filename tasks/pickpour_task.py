@@ -1,6 +1,7 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 from isaacsim.core.utils.prims import set_prim_visibility
+
 from .base_task import BaseTask
 
 
@@ -33,7 +34,7 @@ class PickPourTask(BaseTask):
             if prim.IsValid():
                 set_prim_visibility(prim, i == current_obj_idx)
 
-    def step(self) -> Optional[Dict[str, Any]]:
+    def step(self) -> dict[str, Any] | None:
         self.frame_idx += 1
         if not self.check_frame_limits():
             return None
@@ -49,3 +50,11 @@ class PickPourTask(BaseTask):
                 "source_beaker":     self.current_obj_path,
             },
         )
+
+    def get_reserved_placement_requests(self) -> list[dict[str, Any]]:
+        requests = super().get_reserved_placement_requests()
+        requests.append({
+            "path": self.target_path,
+            "position_range": self.cfg.task.left_pos,
+        })
+        return requests

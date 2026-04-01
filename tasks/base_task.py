@@ -1,16 +1,19 @@
-from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
 import random
+from abc import ABC, abstractmethod
+from typing import Any
+
 import numpy as np
-from isaacsim.sensors.camera import Camera
-from utils.object_utils import ObjectUtils
-from isaacsim.core.utils.semantics import add_update_semantics
-from utils.camera_utils import process_camera_image
 from isaacsim.core.utils.prims import set_prim_visibility
-from utils.lighting_utils import LightingRandomizer
-from pxr import UsdShade
+from isaacsim.core.utils.semantics import add_update_semantics
+from isaacsim.sensors.camera import Camera
 from loguru import logger
+from pxr import UsdShade
 from scipy.spatial.transform import Rotation
+
+from utils.camera_utils import process_camera_image
+from utils.lighting_utils import LightingRandomizer
+from utils.object_utils import ObjectUtils
+
 
 class BaseTask(ABC):
     """
@@ -44,13 +47,14 @@ class BaseTask(ABC):
         self.reset_needed = False
         self.frame_idx = 0
         self.object_utils = ObjectUtils.get_instance()
-        self._episode_init_state: Dict = {"object_poses": {}, "object_materials": {}, "camera_poses": {}, "extra": {}}
+        self._episode_init_state: dict = {"object_poses": {}, "object_materials": {}, "camera_poses": {}, "extra": {}}
 
         self.setup_cameras()
         self.setup_camera_randomization()
         self.setup_objects()
         self.setup_materials()
         self.setup_lighting()
+        self.setup_object_placement()
         self.setup_distractors()
 
         self.current_material_idx = 0
@@ -75,6 +79,8 @@ class BaseTask(ABC):
         self.reset_needed = False
         self.frame_idx = 0
         self._episode_init_state = {"object_poses": {}, "object_materials": {}, "camera_poses": {}, "extra": {}}
+        self._occupied_xy_regions = []
+        self._reserved_xy_regions = self._build_reserved_xy_regions()
         self._randomize_lighting()
         self._randomize_cameras()
         self._randomize_distractors()
@@ -103,10 +109,14 @@ class BaseTask(ABC):
             "camera_poses":     dict(init_state.get("camera_poses", {})),
             "extra":            dict(init_state.get("extra", {})),
         }
+        self._occupied_xy_regions = []
+        self._reserved_xy_regions = []
+        self._hide_all_distractors()
         for obj_path, material_path in self._episode_init_state["object_materials"].items():
             self._bind_material(obj_path, material_path)
             logger.info(f"Bound material {material_path} to object {obj_path}")
         self._apply_init_state_poses(self._episode_init_state)
+        self._restore_distractor_visibility(self._episode_init_state)
         self._restore_camera_poses(self._episode_init_state)
         self.robot.initialize()
 
@@ -124,7 +134,7 @@ class BaseTask(ABC):
             logger.info(f"Restored robot world position: {robot_world_position}")
 
     @abstractmethod
-    def step(self) -> Optional[Dict[str, Any]]:
+    def step(self) -> dict[str, Any] | None:
         """Execute one step of the task; returns state dict or None if not ready."""
         pass
 
@@ -231,7 +241,7 @@ class BaseTask(ABC):
         - ``test_materials``: OOD materials used during inference (optional).
         - ``random``: if true, pick randomly each reset instead of cycling.
         """
-        self.material_configs: List[Dict] = []
+        self.material_configs: list[dict] = []
         is_infer = getattr(self.cfg, "mode", None) == "infer"
         infer_cfg = getattr(self.cfg, "infer", None)
         is_ood = is_infer and bool(getattr(infer_cfg, "is_test_material", False))
@@ -277,7 +287,7 @@ class BaseTask(ABC):
         """
         lighting_cfg = getattr(self.cfg, "lighting", None)
         self._lighting_enabled = bool(getattr(lighting_cfg, "enabled", False)) if lighting_cfg else False
-        self._lighting_randomizer: Optional[LightingRandomizer] = None
+        self._lighting_randomizer: LightingRandomizer | None = None
         self._lighting_cfg = lighting_cfg
 
         if self._lighting_enabled:
@@ -489,6 +499,157 @@ class BaseTask(ABC):
     # Distractor object randomization
     # -------------------------------------------------------------------------
 
+    def setup_object_placement(self) -> None:
+        """Parse common placement settings for table-top object randomization."""
+        task_cfg = getattr(self.cfg, "task", None)
+        placement_cfg = getattr(task_cfg, "placement", None) if task_cfg else None
+        self._placement_cfg = placement_cfg
+        self._default_support_surface_path = (
+            self._get_cfg_value(placement_cfg, "support_surface_path") if placement_cfg else None
+        )
+        self._placement_collision_margin_xy = float(
+            self._get_cfg_value(placement_cfg, "collision_margin_xy", 0.03) if placement_cfg else 0.03
+        )
+        self._placement_max_sample_attempts = int(
+            self._get_cfg_value(placement_cfg, "max_sample_attempts", 50) if placement_cfg else 50
+        )
+        self._occupied_xy_regions: list[dict[str, Any]] = []
+
+    @staticmethod
+    def _get_cfg_value(cfg: Any, key: str, default: Any = None) -> Any:
+        if cfg is None:
+            return default
+        if isinstance(cfg, dict):
+            return cfg.get(key, default)
+        return getattr(cfg, key, default)
+
+    def _get_axis_range(self, cfg: Any, axis: str, default: list[float]) -> list[float]:
+        values = self._get_cfg_value(cfg, axis, default)
+        return list(values)
+
+    def _resolve_support_surface_path(self, *cfgs: Any) -> str | None:
+        for cfg in cfgs:
+            support_surface_path = self._get_cfg_value(cfg, "support_surface_path")
+            if support_surface_path:
+                return str(support_surface_path)
+        return self._default_support_surface_path
+
+    def _compute_position_z(
+        self,
+        obj_path: str,
+        z_range: list[float],
+        support_surface_path: str | None,
+    ) -> float:
+        if support_surface_path:
+            surface_top_z = self.object_utils.get_surface_top_z(object_path=support_surface_path)
+            support_offset_z = self.object_utils.get_support_offset_z(object_path=obj_path)
+            if surface_top_z is not None and support_offset_z is not None:
+                return surface_top_z + support_offset_z
+            logger.warning(
+                f"Failed to compute support-aware z for '{obj_path}' on '{support_surface_path}', "
+                "falling back to config z range"
+            )
+        return float(np.random.uniform(z_range[0], z_range[1]))
+
+    def _build_xy_region(self, obj_path: str, position: np.ndarray) -> dict[str, Any] | None:
+        aabb = self.object_utils.get_world_aabb(object_path=obj_path)
+        if aabb is None:
+            return None
+
+        half_extent = np.maximum(np.abs(aabb["size"][:2]) / 2.0, 1.0e-6)
+        margin = self._placement_collision_margin_xy
+        center_xy = np.asarray(position[:2], dtype=np.float64)
+        return {
+            "path": obj_path,
+            "min": center_xy - half_extent - margin,
+            "max": center_xy + half_extent + margin,
+        }
+
+    @staticmethod
+    def _xy_regions_overlap(region_a: dict[str, Any], region_b: dict[str, Any]) -> bool:
+        return not (
+            region_a["max"][0] <= region_b["min"][0]
+            or region_a["min"][0] >= region_b["max"][0]
+            or region_a["max"][1] <= region_b["min"][1]
+            or region_a["min"][1] >= region_b["max"][1]
+        )
+
+    def _register_occupied_region(self, obj_path: str, position: np.ndarray) -> None:
+        region = self._build_xy_region(obj_path=obj_path, position=position)
+        if region is not None:
+            self._occupied_xy_regions.append(region)
+
+    def get_reserved_placement_requests(self) -> list[dict[str, Any]]:
+        """Return future placement requests that distractors must not block."""
+        requests = []
+        for obj_cfg in self.obj_configs:
+            position_range = self._get_cfg_value(obj_cfg, "position_range")
+            obj_path = self._get_cfg_value(obj_cfg, "path")
+            if obj_path and position_range is not None:
+                requests.append({
+                    "path": obj_path,
+                    "position_range": position_range,
+                })
+        return requests
+
+    def _build_reserved_xy_regions(self) -> list[dict[str, Any]]:
+        reserved_regions = []
+        margin = self._placement_collision_margin_xy
+
+        for request in self.get_reserved_placement_requests():
+            obj_path = request["path"]
+            position_range = request["position_range"]
+            aabb = self.object_utils.get_world_aabb(object_path=obj_path)
+            if aabb is None:
+                continue
+
+            half_extent = np.maximum(np.abs(aabb["size"][:2]) / 2.0, 1.0e-6)
+            x_range = self._get_axis_range(position_range, "x", [0.0, 0.0])
+            y_range = self._get_axis_range(position_range, "y", [0.0, 0.0])
+            reserved_regions.append({
+                "path": f"reserved:{obj_path}",
+                "min": np.array([x_range[0], y_range[0]], dtype=np.float64) - half_extent - margin,
+                "max": np.array([x_range[1], y_range[1]], dtype=np.float64) + half_extent + margin,
+            })
+
+        return reserved_regions
+
+    def _sample_non_overlapping_position(
+        self,
+        obj_path: str,
+        position_range: Any,
+        support_surface_path: str | None = None,
+        max_attempts: int | None = None,
+        blocked_regions: list[dict[str, Any]] | None = None,
+    ) -> np.ndarray | None:
+        if max_attempts is None:
+            max_attempts = self._placement_max_sample_attempts
+
+        x_range = self._get_axis_range(position_range, "x", [0.0, 0.0])
+        y_range = self._get_axis_range(position_range, "y", [0.0, 0.0])
+        z_range = self._get_axis_range(position_range, "z", [0.0, 0.0])
+
+        for _ in range(max_attempts):
+            position = np.array(
+                [
+                    np.random.uniform(x_range[0], x_range[1]),
+                    np.random.uniform(y_range[0], y_range[1]),
+                    self._compute_position_z(obj_path, z_range, support_surface_path),
+                ],
+                dtype=np.float64,
+            )
+            region = self._build_xy_region(obj_path=obj_path, position=position)
+            if region is None:
+                return position
+            regions_to_check = self._occupied_xy_regions
+            if blocked_regions:
+                regions_to_check = regions_to_check + blocked_regions
+            if any(self._xy_regions_overlap(region, occupied) for occupied in regions_to_check):
+                continue
+            return position
+
+        return None
+
     def setup_distractors(self) -> None:
         """Parse ``task.distractors`` config block.
 
@@ -512,7 +673,7 @@ class BaseTask(ABC):
         self._distractor_cfg = dist_cfg
 
         if self._distractors_enabled:
-            self._distractor_candidates: List[str] = list(dist_cfg.candidates)
+            self._distractor_candidates: list[str] = list(dist_cfg.candidates)
             logger.info(
                 f"Distractor randomization enabled: "
                 f"{len(self._distractor_candidates)} candidates"
@@ -565,34 +726,52 @@ class BaseTask(ABC):
         zones = []
         for zone_cfg in cfg.placement_zones:
             zones.append({
-                "x": list(getattr(zone_cfg, "x", [0.0, 0.5])),
-                "y": list(getattr(zone_cfg, "y", [-0.3, 0.3])),
-                "z": list(getattr(zone_cfg, "z", [0.82, 0.82])),
+                "x": self._get_axis_range(zone_cfg, "x", [0.0, 0.5]),
+                "y": self._get_axis_range(zone_cfg, "y", [-0.3, 0.3]),
+                "z": self._get_axis_range(zone_cfg, "z", [0.82, 0.82]),
+                "support_surface_path": self._resolve_support_surface_path(zone_cfg, cfg),
             })
 
-        selected = random.sample(available, num)
+        selected = random.sample(available, len(available))
         distractor_poses: dict = {}
+        visible_distractors: list[str] = []
 
         for obj_path in selected:
+            if len(distractor_poses) >= num:
+                break
             prim = self.stage.GetPrimAtPath(obj_path)
             if not prim.IsValid():
                 logger.warning(f"Distractor prim '{obj_path}' not found, skipping")
                 continue
 
-            # Pick a random zone and sample a position within it
-            zone = random.choice(zones)
-            position = np.array([
-                np.random.uniform(zone["x"][0], zone["x"][1]),
-                np.random.uniform(zone["y"][0], zone["y"][1]),
-                np.random.uniform(zone["z"][0], zone["z"][1]),
-            ])
+            position = None
+            for _ in range(self._placement_max_sample_attempts):
+                zone = random.choice(zones)
+                position = self._sample_non_overlapping_position(
+                    obj_path=obj_path,
+                    position_range=zone,
+                    support_surface_path=zone["support_surface_path"],
+                    max_attempts=1,
+                    blocked_regions=self._reserved_xy_regions,
+                )
+                if position is not None:
+                    break
+
+            if position is None:
+                logger.warning(f"Skipping distractor '{obj_path}': no collision-free placement found")
+                continue
+
             self.object_utils.set_object_position(object_path=obj_path, position=position)
+            self._register_occupied_region(obj_path=obj_path, position=position)
+            self._record_object_pose(obj_path)
             set_prim_visibility(prim, True)
 
             distractor_poses[obj_path] = position.tolist()
+            visible_distractors.append(obj_path)
             logger.debug(f"Distractor '{obj_path}' placed at {position.tolist()}")
 
         self._episode_init_state["distractor_poses"] = distractor_poses
+        self._episode_init_state["extra"]["visible_distractors"] = visible_distractors
         logger.info(f"Placed {len(distractor_poses)} distractors on table")
 
     def _hide_all_distractors(self) -> None:
@@ -607,6 +786,23 @@ class BaseTask(ABC):
                     object_path=obj_path,
                     position=np.array([10.0, 10.0, 0.1]),
                 )
+
+    def _restore_distractor_visibility(self, init_state: dict) -> None:
+        """Restore distractor visibility after replay pose restoration."""
+        if not self._distractors_enabled:
+            return
+
+        visible_paths = init_state.get("extra", {}).get("visible_distractors")
+        if visible_paths is None:
+            visible_paths = [
+                path for path in init_state.get("object_poses", {}) if path in self._distractor_candidates
+            ]
+
+        visible_paths = set(visible_paths)
+        for obj_path in self._distractor_candidates:
+            prim = self.stage.GetPrimAtPath(obj_path)
+            if prim.IsValid():
+                set_prim_visibility(prim, obj_path in visible_paths)
 
     def apply_materials(self) -> None:
         """Apply configured materials and record them in ``_episode_init_state``."""
@@ -638,7 +834,7 @@ class BaseTask(ABC):
     # Object placement helpers
     # -------------------------------------------------------------------------
 
-    def randomize_object_position(self, obj_path: str, position_range: Dict[str, list]) -> np.ndarray:
+    def randomize_object_position(self, obj_path: str, position_range: dict[str, list]) -> np.ndarray:
         """Sample a random position and move the object.
 
         Poses are recorded in bulk via ``_record_all_config_poses()`` (call at
@@ -651,18 +847,27 @@ class BaseTask(ABC):
         Returns:
             The sampled position as a ``(3,)`` array.
         """
-        position = np.array([
-            np.random.uniform(position_range["x"][0], position_range["x"][1]),
-            np.random.uniform(position_range["y"][0], position_range["y"][1]),
-            np.random.uniform(position_range["z"][0], position_range["z"][1]),
-        ])
+        support_surface_path = self._resolve_support_surface_path(position_range)
+        position = self._sample_non_overlapping_position(
+            obj_path=obj_path,
+            position_range=position_range,
+            support_surface_path=support_surface_path,
+        )
+        if position is None:
+            raise RuntimeError(
+                f"Failed to place '{obj_path}' without overlap after "
+                f"{self._placement_max_sample_attempts} attempts"
+            )
+
         self.object_utils.set_object_position(object_path=obj_path, position=position)
+        self._register_occupied_region(obj_path=obj_path, position=position)
+        self._record_object_pose(obj_path)
         return position
 
     def place_objects_with_visibility_management(
         self,
         current_obj_idx: int,
-        far_distance: float = None,
+        far_distance: float | None = None,
         fixed_position: np.ndarray = None,
     ) -> str:
         """Place the active object and hide all others.
@@ -757,10 +962,10 @@ class BaseTask(ABC):
     def get_basic_state_info(
         self,
         joint_positions: np.ndarray = None,
-        object_path: str = None,
-        target_path: str = None,
-        additional_info: Dict[str, Any] = None,
-    ) -> Optional[Dict[str, Any]]:
+        object_path: str | None = None,
+        target_path: str | None = None,
+        additional_info: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """Build the common step state dict shared across all tasks.
 
         Always includes ``init_state`` so controllers / collectors can record
@@ -813,7 +1018,7 @@ class BaseTask(ABC):
 
         return state
 
-    def check_frame_limits(self, max_steps: int = None) -> bool:
+    def check_frame_limits(self, max_steps: int | None = None) -> bool:
         """Guard for warm-up frames and episode length.
 
         Returns ``False`` for the first 5 frames (warm-up) and triggers
@@ -829,7 +1034,7 @@ class BaseTask(ABC):
             return False
         if max_steps is None:
             max_steps = getattr(getattr(self.cfg, "task", None), "max_steps", float("inf"))
-        
+
         if self.frame_idx > max_steps:
             self.on_task_complete(True)
         return True
@@ -838,7 +1043,7 @@ class BaseTask(ABC):
     # Misc public API
     # -------------------------------------------------------------------------
 
-    def get_task_info(self) -> Dict[str, Any]:
+    def get_task_info(self) -> dict[str, Any]:
         return {"frame_idx": self.frame_idx, "reset_needed": self.reset_needed}
 
     def need_reset(self) -> bool:

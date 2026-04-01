@@ -33,6 +33,10 @@ infer:
 
 task:
   max_steps: 1000
+  placement:
+    support_surface_path: "/World/table/surface"
+    collision_margin_xy: 0.03
+    max_sample_attempts: 50
   operate_type: "door" # "door" or "drawer"
   obj_paths:
     - path: "/World/DryingBox_01"

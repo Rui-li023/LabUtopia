@@ -31,6 +31,10 @@ infer:
 
 task:
   max_steps: 1000
+  placement:
+    support_surface_path: "/World/table/surface"
+    collision_margin_xy: 0.03
+    max_sample_attempts: 50
   obj_paths:
     - path: "/World/conical_bottle02"
       position_range:
@@ -55,16 +59,17 @@ task:
       - "/World/beaker3"
       - "/World/glass_rod"
       - "/World/graduated_cylinder_03"
-    num_range: [3, 5]
+      - "/World/DryingBox_02"
+      - "/World/DryingBox_01"
+      - "/World/MuffleFurnace"
+    num_range: [5, 10]
     placement_zones:
       # right side of table
-      - { x: [0.45, 0.65], y: [-0.25, 0.25], z: [0.82, 0.82] }
+      - { x: [-0.5, 0.10], y: [0.7, 1.25], z: [0.82, 0.82] }
       # left side of table
-      - { x: [-0.10, 0.10], y: [-0.25, 0.25], z: [0.82, 0.82] }
+      - { x: [-0.5, 0.10], y: [-1.25, -0.7], z: [0.82, 0.82] }
       # front of table (y positive)
-      - { x: [0.05, 0.55], y: [0.18, 0.35], z: [0.82, 0.82] }
-      # back of table (y negative)
-      - { x: [0.05, 0.55], y: [-0.35, -0.18], z: [0.82, 0.82] }
+      - { x: [0.4, 0.7], y: [-0.35, 0.35], z: [0.82, 0.82] }
   material_paths:
     - path: /World/table/surface
       materials:

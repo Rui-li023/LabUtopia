@@ -30,6 +30,10 @@ infer:
 
 task:
   max_steps: 2000
+  placement:
+    support_surface_path: "/World/table/surface/mesh"
+    collision_margin_xy: 0.03
+    max_sample_attempts: 50
   obj_paths:
     - path: "/World/beaker2"
       position_range:

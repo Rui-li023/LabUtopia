@@ -20,6 +20,10 @@ replay:
   # episode_indices: [0, 1, 2]
 
 task:
+  placement:
+    support_surface_path: "/World/table/surface/mesh"
+    collision_margin_xy: 0.03
+    max_sample_attempts: 50
   distractors:
     enabled: true
     candidates:
