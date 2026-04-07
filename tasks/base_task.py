@@ -544,7 +544,7 @@ class BaseTask(ABC):
             surface_top_z = self.object_utils.get_surface_top_z(object_path=support_surface_path)
             support_offset_z = self.object_utils.get_support_offset_z(object_path=obj_path)
             if surface_top_z is not None and support_offset_z is not None:
-                return surface_top_z + support_offset_z
+                return surface_top_z + support_offset_z + 0.02  # 2cm clearance above table
             logger.warning(
                 f"Failed to compute support-aware z for '{obj_path}' on '{support_surface_path}', "
                 "falling back to config z range"

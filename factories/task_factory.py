@@ -44,3 +44,6 @@ register_task("OpenTransportPour", OpenTransportPourTask)
 register_task("LiquidMixing", LiquidMixingTask)
 register_task("navigation", NavigationTask)
 register_task("mobile_pick", MobilePickTask)
+
+from tasks.flask_to_cork_task import FlaskToCorkTask
+register_task("flask_to_cork", FlaskToCorkTask)

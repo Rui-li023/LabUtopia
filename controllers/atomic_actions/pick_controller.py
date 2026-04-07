@@ -196,18 +196,30 @@ class PickController(AtomicBaseController):
             "beaker_2": 0.0, "beaker_l": 0.02,
             "graduated_cylinder_01": 0.0, "graduated_cylinder_02": 0.0,
             "graduated_cylinder_03": 0.0, "graduated_cylinder_04": 0.0,
-            "volume_flask": 0.05, "glass_rod": 0.02,
+            "volume_flask": 0.05, "glass_rod": 0.02, "round_bottomflask": 0.02,
         }
-        return table.get(item_name.lower(), self.object_size[2] * 2 / 5)
+        item_lower = item_name.lower()
+        if item_lower in table:
+            return table[item_lower]
+        for key, val in table.items():
+            if key in item_lower:
+                return val
+        return self.object_size[2] * 2 / 5
 
     def get_pickprez_offset(self, item_name):
         table = {
-            "volume_flask": 0, "beaker2": 0.05,
+            "volume_flask": 0, "beaker2": 0.05, "round_bottomflask": 0.08,
             "conical_bottle03": 0.07, "conical_bottle04": 0.08,
             "graduated_cylinder_01": 0.05, "graduated_cylinder_02": 0.03,
             "graduated_cylinder_03": 0.03, "graduated_cylinder_04": 0.03,
         }
-        return table.get(item_name.lower(), self.object_size[2] * 2 / 3)
+        item_lower = item_name.lower()
+        if item_lower in table:
+            return table[item_lower]
+        for key, val in table.items():
+            if key in item_lower:
+                return val
+        return self.object_size[2] * 2 / 3
 
     # ── Reset ────────────────────────────────────────────────────
 

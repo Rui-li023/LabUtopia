@@ -53,3 +53,6 @@ register_controller("OpenTransportPour", OpenTransportPourController)
 register_controller("LiquidMixing", LiquidMixingController)
 register_controller("navigation", NavigationController)
 register_controller("mobile_pick", MobilePickController)
+
+from controllers.flask_to_cork_controller import FlaskToCorkTaskController
+register_controller("flask_to_cork", FlaskToCorkTaskController)
