@@ -209,3 +209,10 @@ __marimo__/
 outputs/
 .vscode/
 test_outputs/
+
+# USD backup files
+*.bak
+
+# Asset check reports
+usd_check_report.txt
+missing_assets.txt
