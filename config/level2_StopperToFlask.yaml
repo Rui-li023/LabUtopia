@@ -1,7 +1,7 @@
-name: Level2_FlaskToCork
+name: Level2_StopperToFlask
 
-task_type: "flask_to_cork"
-controller_type: "flask_to_cork"
+task_type: "stopper_flask"
+controller_type: "stopper_flask"
 
 mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_002/lab_002.usd"
@@ -27,26 +27,19 @@ infer:
 task:
   max_steps: 2000
   obj_paths:
-    # Source: round-bottom flask to pick up
-    - path: "/World/round_bottom_flask"
+    # Source: rubber stopper on the table
+    - path: "/World/rubber_stopper"
       position_range:
         x: [0.19, 0.34]
         y: [0.10, 0.25]
-        z: [0.86, 0.86]
+        z: [0.84, 0.84]
 
-    # Target: cork ring to place the flask onto
-    - path: "/World/cork_ring"
+    # Target: round-bottom flask (stopper goes into its mouth)
+    - path: "/World/round_bottom_flask_01"
       position_range:
         x: [0.18, 0.30]
         y: [-0.33, -0.18]
-        z: [0.715, 0.715]
-
-    # Support: pipeclay triangle under the flask at start
-    - path: "/World/pipeclay_triangle"
-      position_range:
-        x: [0.19, 0.34]
-        y: [0.10, 0.25]
-        z: [0.77, 0.77]
+        z: [0.84, 0.84]
 
 cameras:
   - prim_path: "/World/Camera1"
@@ -74,9 +67,9 @@ robot:
   type: "franka"
   position: [-0.4, -0, 0.71]
   gripper:
-    control_mode: "velocity"   # "position" | "velocity" | "force"
-    closing_speed: 0.15         # m/s (velocity mode)
-    closing_force: 30.0        # N per finger (force mode)
+    control_mode: "position"
+    closing_speed: 0.15
+    closing_force: 30.0
 
 collector:
   type: "default"

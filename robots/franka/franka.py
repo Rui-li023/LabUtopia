@@ -20,12 +20,14 @@ import numpy as np
 from isaacsim.core.prims import SingleRigidPrim
 from isaacsim.core.utils.prims import get_prim_at_path
 from isaacsim.core.utils.stage import add_reference_to_stage, get_stage_units
+from isaacsim.core.utils.types import ArticulationAction
 from isaacsim.robot.manipulators.grippers.parallel_gripper import ParallelGripper
 from isaacsim.storage.native import get_assets_root_path
 from isaacsim.sensors.physics import ContactSensor
 from isaacsim.sensors.camera import Camera
+from loguru import logger
 
-from robots.base_robot import BaseRobot
+from robots.base_robot import BaseRobot, GRIPPER_OPEN, GRIPPER_CLOSED
 from utils.object_utils import ObjectUtils
 
 
@@ -129,6 +131,13 @@ class Franka(BaseRobot):
             joint_closed_positions=gripper_closed_position,
             action_deltas=deltas,
         )
+
+        # Gripper control mode: "position" (default), "velocity", or "force"
+        self._gripper_control_mode = "position"
+        self._gripper_closing_force = 20.0
+        self._gripper_closing_speed = 0.2     # m/s for velocity mode
+        self._current_gripper_effort = 0.0    # persistent effort (force mode)
+        self._current_gripper_velocity = 0.0  # persistent velocity (velocity mode)
 
         # Contact sensors for gripper fingers
         self.left_contact_sensor = ContactSensor(
@@ -237,20 +246,106 @@ class Franka(BaseRobot):
         """Post reset callback."""
         super().post_reset()
         self._gripper.post_reset()
-        self._articulation_controller.switch_dof_control_mode(
-            dof_index=self.gripper.joint_dof_indicies[0], mode="position"
-        )
-        self._articulation_controller.switch_dof_control_mode(
-            dof_index=self.gripper.joint_dof_indicies[1], mode="position"
-        )
+        drive_mode_map = {"position": "position", "velocity": "velocity", "force": "effort"}
+        self._apply_gripper_drive_mode(drive_mode_map[self._gripper_control_mode])
         self.set_joint_positions(self._default_joint_positions)
+
+    # ── Gripper control mode configuration ─────────────────────────────────
+
+    def set_gripper_control_mode(
+        self,
+        mode: str,
+        closing_force: float = 20.0,
+        closing_speed: float = 0.2,
+    ) -> None:
+        """Configure gripper control mode.
+
+        The 0/1 open/close interface is unchanged.  Only the underlying
+        drive changes.
+
+        Args:
+            mode: ``"position"`` (default PD snap), ``"velocity"`` (constant
+                  closing/opening speed), or ``"force"`` (constant effort).
+            closing_force: Force per finger in N (force mode).
+            closing_speed: Finger speed in m/s (velocity mode).
+        """
+        if mode not in ("position", "velocity", "force"):
+            raise ValueError(f"Unknown gripper mode: {mode!r}")
+        self._gripper_control_mode = mode
+        self._gripper_closing_force = closing_force
+        self._gripper_closing_speed = closing_speed
+        logger.info(
+            f"Gripper control mode: {mode} "
+            f"(force={closing_force} N, speed={closing_speed} m/s)"
+        )
+
+    # kept for backward compat
+    def enable_force_gripper(self, closing_force: float = 20.0) -> None:
+        self.set_gripper_control_mode("force", closing_force=closing_force)
+
+    def _apply_gripper_drive_mode(self, mode: str) -> None:
+        for idx in self.gripper.joint_dof_indicies:
+            self._articulation_controller.switch_dof_control_mode(
+                dof_index=idx, mode=mode
+            )
 
     # ── Gripper control methods ─────────────────────────────────────────────
 
     def open_gripper(self) -> None:
-        """Open the gripper to the fully open position."""
-        self._gripper.open()
+        """Open the gripper."""
+        if self._gripper_control_mode == "force":
+            self._current_gripper_effort = self._gripper_closing_force
+        elif self._gripper_control_mode == "velocity":
+            self._current_gripper_velocity = self._gripper_closing_speed
+        else:
+            self._gripper.open()
+        self._gripper_state = GRIPPER_OPEN
 
     def close_gripper(self) -> None:
-        """Close the gripper to the fully closed position."""
-        self._gripper.close()
+        """Close the gripper."""
+        if self._gripper_control_mode == "force":
+            self._current_gripper_effort = -self._gripper_closing_force
+        elif self._gripper_control_mode == "velocity":
+            self._current_gripper_velocity = -self._gripper_closing_speed
+        else:
+            self._gripper.close()
+        self._gripper_state = GRIPPER_CLOSED
+
+    def sync_gripper_from_action(self, action) -> None:
+        """Update gripper velocity/effort from an action's gripper position target.
+
+        In velocity/force modes the position target is ignored by the drive,
+        but it still encodes the desired gripper state (open/close).  This
+        method reads that value and calls open/close so the persistent
+        velocity/effort is updated.  No-op in position mode.
+        """
+        if self._gripper_control_mode == "position" or action is None:
+            return
+        if action.joint_positions is None:
+            return
+        idx = self.gripper.joint_dof_indicies[0]
+        if idx >= len(action.joint_positions) or action.joint_positions[idx] is None:
+            return
+        gripper_pos = float(action.joint_positions[idx])
+        threshold = (self._gripper_open_position[0] + self._gripper_closed_position[0]) / 2.0
+        if gripper_pos < threshold:
+            if self._gripper_state != GRIPPER_CLOSED:
+                self.close_gripper()
+        else:
+            if self._gripper_state != GRIPPER_OPEN:
+                self.open_gripper()
+
+    def apply_gripper_effort(self) -> None:
+        """Apply persistent gripper command every physics step.
+
+        Handles both force and velocity modes.  No-op in position mode.
+        Uses ``joint_indices`` so only gripper DOFs are touched — arm joints
+        are left untouched and keep following their position controller.
+        """
+        indices = np.array(self.gripper.joint_dof_indicies, dtype=int)
+        if self._gripper_control_mode == "force":
+            efforts = np.full(len(indices), self._current_gripper_effort)
+            self.apply_action(ArticulationAction(joint_efforts=efforts, joint_indices=indices))
+        elif self._gripper_control_mode == "velocity":
+            velocities = np.full(len(indices), self._current_gripper_velocity)
+            self.apply_action(ArticulationAction(joint_velocities=velocities, joint_indices=indices))

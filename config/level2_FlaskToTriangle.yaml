@@ -1,4 +1,4 @@
-name: Level2_FlaskToCork
+name: Level2_FlaskToTriangle
 
 task_type: "flask_to_cork"
 controller_type: "flask_to_cork"
@@ -27,26 +27,26 @@ infer:
 task:
   max_steps: 2000
   obj_paths:
-    # Source: round-bottom flask to pick up
+    # Source: round-bottom flask (starts on cork ring)
     - path: "/World/round_bottom_flask"
       position_range:
         x: [0.19, 0.34]
         y: [0.10, 0.25]
         z: [0.86, 0.86]
 
-    # Target: cork ring to place the flask onto
-    - path: "/World/cork_ring"
+    # Target: pipeclay triangle to place the flask onto
+    - path: "/World/pipeclay_triangle"
       position_range:
         x: [0.18, 0.30]
         y: [-0.33, -0.18]
-        z: [0.715, 0.715]
+        z: [0.77, 0.77]
 
-    # Support: pipeclay triangle under the flask at start
-    - path: "/World/pipeclay_triangle"
+    # Support: cork ring under the flask at start
+    - path: "/World/cork_ring"
       position_range:
         x: [0.19, 0.34]
         y: [0.10, 0.25]
-        z: [0.77, 0.77]
+        z: [0.715, 0.715]
 
 cameras:
   - prim_path: "/World/Camera1"

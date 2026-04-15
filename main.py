@@ -134,6 +134,20 @@ def main():
         robot_kwargs["default_joint_positions"] = np.array(cfg.robot.default_joint_positions)
     robot = create_robot(cfg.robot.type, **robot_kwargs)
     logger.info(f"Robot created: {cfg.robot.type}")
+
+    # Configure gripper control mode if specified
+    gripper_cfg = getattr(cfg.robot, "gripper", None)
+    if gripper_cfg:
+        mode = str(getattr(gripper_cfg, "control_mode", "position"))
+        # backward compat: force_mode: true → control_mode: "force"
+        if getattr(gripper_cfg, "force_mode", False) and mode == "position":
+            mode = "force"
+        if mode != "position":
+            robot.set_gripper_control_mode(
+                mode=mode,
+                closing_force=float(getattr(gripper_cfg, "closing_force", 20.0)),
+                closing_speed=float(getattr(gripper_cfg, "closing_speed", 0.2)),
+            )
     
     stage = omni.usd.get_context().get_stage()
     add_reference_to_stage(usd_path=os.path.abspath(cfg.usd_path), prim_path="/World")
@@ -206,6 +220,8 @@ def main():
             action, done, is_success = task_controller.step(state)
             if action is not None:
                 robot.get_articulation_controller().apply_action(action)
+                robot.sync_gripper_from_action(action)
+            robot.apply_gripper_effort()
             if done:
                 if is_success:
                     logger.success(f"Episode {task_controller.episode_num} succeeded.")

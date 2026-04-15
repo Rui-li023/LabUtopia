@@ -331,6 +331,14 @@ class BaseRobot(Robot, ABC):
         """
         return self._gripper_state
 
+    def sync_gripper_from_action(self, action) -> None:
+        """Sync gripper state from action (velocity/force mode). No-op by default."""
+        pass
+
+    def apply_gripper_effort(self) -> None:
+        """Apply persistent gripper effort (velocity/force mode). No-op by default."""
+        pass
+
     # ── Abstract methods ─────────────────────────────────────────────────────
 
     @abstractmethod

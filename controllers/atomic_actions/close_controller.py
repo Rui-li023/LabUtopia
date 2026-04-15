@@ -10,10 +10,11 @@ from robots.base_robot import GRIPPER_OPEN, GRIPPER_CLOSED
 
 
 class CloseController(AtomicBaseController):
-    """State machine for closing drawers (4 phases) / doors (3 phases).
+    """State machine for closing drawers (4 phases) / doors (3 phases) / lids (3 phases).
 
     Drawer: approach → push → retreat → done.
     Door:   approach → arc push → retreat.
+    Lid:    approach above → push down → retreat upward.
 
     Per-episode randomization:
       - approach offset noise (±0.015 m)
@@ -22,6 +23,7 @@ class CloseController(AtomicBaseController):
 
     DRAWER_DEFAULT_DT = [0.0005, 0.002, 0.05, 0.008]
     DOOR_DEFAULT_DT = [0.0025, 0.005, 0.005]
+    LID_DEFAULT_DT = [0.002, 0.003, 0.003, 0.008]
 
     def __init__(
         self,
@@ -34,8 +36,12 @@ class CloseController(AtomicBaseController):
         door_open_direction: str = None,
         robot=None,
     ) -> None:
-        default = (self.DRAWER_DEFAULT_DT if furniture_type == "drawer"
-                   else self.DOOR_DEFAULT_DT)
+        if furniture_type == "drawer":
+            default = self.DRAWER_DEFAULT_DT
+        elif furniture_type == "lid":
+            default = self.LID_DEFAULT_DT
+        else:
+            default = self.DOOR_DEFAULT_DT
         super().__init__(
             name=name,
             cspace_controller=cspace_controller,
@@ -85,6 +91,11 @@ class CloseController(AtomicBaseController):
 
         if self.furniture_type == "drawer":
             action = self._drawer_phase(
+                handle_position, end_effector_orientation,
+                current_joint_positions, gripper_position,
+                push_distance, after_move_distance)
+        elif self.furniture_type == "lid":
+            action = self._lid_phase(
                 handle_position, end_effector_orientation,
                 current_joint_positions, gripper_position,
                 push_distance, after_move_distance)
@@ -138,6 +149,85 @@ class CloseController(AtomicBaseController):
                 target_end_effector_position=target,
                 target_end_effector_orientation=orient)
             if float(np.linalg.norm(grip_pos[:2] - handle_pos[:2])) > 0.05:
+                self._next_event()
+            return action
+
+        else:
+            return self._null_action(n)
+
+    # ── Lid phases (top-to-bottom arc close) ────────────────────
+
+    def _lid_phase(self, handle_pos, orient, jpos, grip_pos,
+                   push_distance, after_move_distance):
+        """Close a lid by tracing a downward arc (no gripping needed).
+
+        Phase 0: Lift — move high above the door to clear it.
+        Phase 1: Cross — move over to the far side of the door.
+        Phase 2: Arc push — push the lid down in an arc.
+        Phase 3: Retreat — move upward and away.
+        """
+        n = jpos.shape[0]
+        approach = 0.08 + self._approach_noise
+
+        if self._event == 0:
+            # Lift: move high above the door to clear the open lid
+            target = handle_pos.copy()
+            target[1] += 0.1
+            target[2] += 0.25 + approach
+            action = self._cspace_controller.forward(
+                target_end_effector_position=target,
+                target_end_effector_orientation=orient)
+            if self._xyz_reached(grip_pos, target, threshold=0.02):
+                self._next_event()
+            return action
+
+        elif self._event == 1:
+            # Cross: move to the far side of the door (past it in X)
+            target = handle_pos.copy()
+            target[0] += 0.10
+            target[1] += 0.25
+            target[2] += approach
+            action = self._cspace_controller.forward(
+                target_end_effector_position=target,
+                target_end_effector_orientation=orient)
+            if self._xyz_reached(grip_pos, target, threshold=0.02):
+                self._next_event()
+            return action
+
+        elif self._event == 2:
+            # Arc push: trace a downward arc to push the lid closed
+            if self.position_rotation_interp_iter is None:
+                self.start_position = grip_pos.copy()
+                end_position = self.init_handle_position.copy()
+                end_position[2] -= (0.05 + self._push_noise)
+                num_steps = max(int(400 * np.linalg.norm(
+                    self.start_position - end_position)), 10)
+                alphas = np.linspace(0, 1, num_steps)[1:]
+                interp_list = []
+                for a in alphas:
+                    pos = (1 - a) * self.start_position + a * end_position
+                    # Arc curvature: push toward the hinge side
+                    pos[0] -= np.sin(a * np.pi) * 0.02
+                    interp_list.append(pos)
+                self.position_rotation_interp_iter = iter(interp_list)
+            try:
+                target = next(self.position_rotation_interp_iter)
+                return self._cspace_controller.forward(
+                    target_end_effector_position=target,
+                    target_end_effector_orientation=orient)
+            except StopIteration:
+                self._next_event()
+                return self._null_action(n)
+
+        elif self._event == 3:
+            # Retreat: move upward and away
+            target = handle_pos.copy()
+            target[2] += (after_move_distance if after_move_distance else 0.15)
+            target[0] -= 0.1
+            action = self._cspace_controller.forward(
+                target_end_effector_position=target,
+                target_end_effector_orientation=orient)
+            if self._xyz_reached(grip_pos, target, threshold=0.03):
                 self._next_event()
             return action
 

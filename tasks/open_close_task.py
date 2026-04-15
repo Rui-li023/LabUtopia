@@ -22,8 +22,8 @@ class OpenCloseTask(SingleObjectTask):
 
     def _set_sub_obj_path(self) -> None:
         """Derive the handle prim path from config or naming convention."""
-        if self.cfg.get("handle_path"):
-            self.current_sub_obj_path = self.cfg.get("handle_path")
+        if self.cfg.task.get("handle_path"):
+            self.current_sub_obj_path = self.cfg.task.get("handle_path")
         else:
             self.current_sub_obj_path = self.current_obj_path + "/handle"
 
@@ -33,6 +33,8 @@ class OpenCloseTask(SingleObjectTask):
             return None
 
         object_position = self.object_utils.get_geometry_center(object_path=self.current_sub_obj_path)
+        if object_position is None:
+            object_position = self.object_utils.get_object_xform_position(object_path=self.current_sub_obj_path)
         object_size     = self.object_utils.get_object_size(object_path=self.current_sub_obj_path)
         close_gripper_distance = self.obj_configs[self.current_obj_idx].get("close_gripper_distance", 0.023)
 

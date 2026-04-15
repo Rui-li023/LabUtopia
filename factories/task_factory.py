@@ -47,3 +47,9 @@ register_task("mobile_pick", MobilePickTask)
 
 from tasks.flask_to_cork_task import FlaskToCorkTask
 register_task("flask_to_cork", FlaskToCorkTask)
+
+from tasks.stopper_flask_task import StopperFlaskTask
+register_task("stopper_flask", StopperFlaskTask)
+
+from tasks.pipette_rack_task import PipetteRackTask
+register_task("pipette_rack", PipetteRackTask)

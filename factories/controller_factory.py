@@ -56,3 +56,9 @@ register_controller("mobile_pick", MobilePickController)
 
 from controllers.flask_to_cork_controller import FlaskToCorkTaskController
 register_controller("flask_to_cork", FlaskToCorkTaskController)
+
+from controllers.stopper_flask_controller import StopperFlaskTaskController
+register_controller("stopper_flask", StopperFlaskTaskController)
+
+from controllers.pipette_rack_controller import PipetteRackTaskController
+register_controller("pipette_rack", PipetteRackTaskController)

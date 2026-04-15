@@ -196,7 +196,9 @@ class PickController(AtomicBaseController):
             "beaker_2": 0.0, "beaker_l": 0.02,
             "graduated_cylinder_01": 0.0, "graduated_cylinder_02": 0.0,
             "graduated_cylinder_03": 0.0, "graduated_cylinder_04": 0.0,
-            "volume_flask": 0.05, "glass_rod": 0.02, "round_bottomflask": 0.02,
+            "volume_flask": 0.05, "glass_rod": 0.02, "round_bottomflask": 0.03,
+            "round_bottom_flask": 0.025,
+            "pipette": 0.0,
         }
         item_lower = item_name.lower()
         if item_lower in table:
@@ -208,10 +210,12 @@ class PickController(AtomicBaseController):
 
     def get_pickprez_offset(self, item_name):
         table = {
-            "volume_flask": 0, "beaker2": 0.05, "round_bottomflask": 0.08,
+            "volume_flask": 0, "beaker2": 0.05, "round_bottomflask": 0.04,
+            "round_bottom_flask": 0.03,
             "conical_bottle03": 0.07, "conical_bottle04": 0.08,
             "graduated_cylinder_01": 0.05, "graduated_cylinder_02": 0.03,
             "graduated_cylinder_03": 0.03, "graduated_cylinder_04": 0.03,
+            "pipette": 0.0,
         }
         item_lower = item_name.lower()
         if item_lower in table:

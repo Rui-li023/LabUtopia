@@ -16,11 +16,10 @@ class Phase(Enum):
     FINISHED = "finished"
 
 
-class FlaskToCorkTaskController(BaseController):
-    """Controller for the Level-2 flask-to-cork-ring pick-and-place task.
+class PipetteRackTaskController(BaseController):
+    """Pick pipette from table and place onto pipette rack.
 
-    Phase 1 – PICKING: grasp the round-bottom flask at its neck.
-    Phase 2 – PLACING: lower the flask into the cork ring.
+    Picking uses a top-down approach suitable for grasping the pipette body.
     """
 
     def __init__(self, cfg, robot):
@@ -78,30 +77,24 @@ class FlaskToCorkTaskController(BaseController):
             return object_pos[2] > self.initial_position[2] + 0.10
 
         if self.current_phase == Phase.PLACING:
-            xy_ok = np.linalg.norm(object_pos[:2] - target_pos[:2]) < 0.04
-            z_ok = abs(object_pos[2] - self.initial_position[2]) < 0.05
+            xy_ok = np.linalg.norm(object_pos[:2] - target_pos[:2]) < 0.05
+            z_ok = abs(object_pos[2] - target_pos[2]) < 0.05
             return xy_ok and z_ok
 
         return False
 
     # ---------------------------------------------------------- language utils
 
-    def _object_display_name(self, path: str) -> str:
-        return path.split("/")[-1].replace("_", " ")
-
     def _sample_phase_instruction(self, phase: Phase) -> str:
-        source = self._object_display_name(self.cfg.task.obj_paths[0]["path"])
-        target = self._object_display_name(self.cfg.task.obj_paths[1]["path"])
-        support = self._object_display_name(self.cfg.task.obj_paths[2]["path"])
         if phase == Phase.PICKING:
             templates = self._build_instruction_templates(
-                f"Pick up the {source} from the {support}",
-                f"Pick up the {source} from the {support} and lift it clear of the surface",
+                "Pick up the pipette from the table",
+                "Pick up the pipette from the table and lift it",
             )
         else:
             templates = self._build_instruction_templates(
-                f"Place the {source} on the {target}",
-                f"Move the {source} to the {target} and set it down carefully",
+                "Place the pipette onto the rack",
+                "Move the pipette to the rack and place it down",
             )
         return random.choice(templates)
 
@@ -158,25 +151,23 @@ class FlaskToCorkTaskController(BaseController):
                 )
             return action, False, False
 
-        # active controller finished – evaluate success
         if success:
             if self.current_phase == Phase.PICKING:
-                print("Flask picked! Switching to place phase.")
+                print("Pipette picked! Switching to place phase.")
                 self.current_phase = Phase.PLACING
                 self.active_controller = self.place_controller
                 return None, False, False
 
             if self.current_phase == Phase.PLACING:
-                print("Flask placed on cork ring – task success.")
+                print("Pipette placed onto rack – task success.")
                 self._last_failure_reason = ""
                 self.data_collector.write_cached_data(state["joint_positions"][:-1])
                 self._last_success = True
                 self.current_phase = Phase.FINISHED
                 return None, True, True
 
-        # controller done but success not achieved
         self._last_failure_reason = (
-            f"FlaskToCork {self.current_phase.value} phase failed: "
+            f"PipetteRack {self.current_phase.value} phase failed: "
             "success check did not pass after controller finished"
         )
         print(f"{self.current_phase.value} phase failed.")
@@ -186,32 +177,35 @@ class FlaskToCorkTaskController(BaseController):
         return None, True, False
 
     def _forward_active(self, state):
-        """Dispatch forward() call to the currently active atomic controller."""
-        # Approach orientation: wrist vertical, gripper aligned for neck grasp
-        ee_orient = R.from_euler("xyz", np.radians([0, 90, 30])).as_quat()
-
         if self.current_phase == Phase.PICKING:
+            # Shift grip point in +x direction; slight tilt from vertical
+            pick_pos = np.array(state["object_position"])
+            pick_pos[0] += 0.06
+            pick_pos[2] += 0.02
+            ee_orient = R.from_euler("xyz", np.radians([0, 170, 0])).as_quat()
             return self.pick_controller.forward(
-                picking_position=state["object_position"],
+                picking_position=pick_pos,
                 current_joint_positions=state["joint_positions"],
                 object_size=state["object_size"],
                 object_name=state["object_name"],
                 gripper_control=self.gripper_control,
                 gripper_position=state["gripper_position"],
                 end_effector_orientation=ee_orient,
-                pre_offset_x=0.04,
+                pre_offset_x=0.0,
                 pre_offset_z=0.02,
-                after_offset_z=0.25
+                after_offset_z=0.3,
             )
 
-        # PLACING
+        # PLACING — approach rack with a large tilt angle
+        ee_orient = R.from_euler("xyz", np.radians([0, 120, 0])).as_quat()
+        place_pos = np.array(state["target_position"])
         return self.place_controller.forward(
-            place_position=state["target_position"],
+            place_position=place_pos,
             current_joint_positions=state["joint_positions"],
             gripper_control=self.gripper_control,
             end_effector_orientation=ee_orient,
             gripper_position=state["gripper_position"],
-            place_offset_z=0.13,
+            place_offset_z=0.15,
         )
 
     # ------------------------------------------------------- infer-mode step
@@ -230,8 +224,8 @@ class FlaskToCorkTaskController(BaseController):
         object_pos = self.state["object_position"]
         target_pos = self.state["target_position"]
         if (
-            np.linalg.norm(object_pos[:2] - target_pos[:2]) < 0.04
-            and abs(object_pos[2] - self.initial_position[2]) < 0.02
+            np.linalg.norm(object_pos[:2] - target_pos[:2]) < 0.05
+            and abs(object_pos[2] - target_pos[2]) < 0.05
             and np.linalg.norm(self.state["gripper_position"] - object_pos) > 0.05
         ):
             self._last_success = True

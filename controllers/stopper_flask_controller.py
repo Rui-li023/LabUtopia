@@ -16,11 +16,10 @@ class Phase(Enum):
     FINISHED = "finished"
 
 
-class FlaskToCorkTaskController(BaseController):
-    """Controller for the Level-2 flask-to-cork-ring pick-and-place task.
+class StopperFlaskTaskController(BaseController):
+    """Pick rubber stopper from table, place into flask opening.
 
-    Phase 1 – PICKING: grasp the round-bottom flask at its neck.
-    Phase 2 – PLACING: lower the flask into the cork ring.
+    Picking uses a straight top-down approach (pre_offset_x=0).
     """
 
     def __init__(self, cfg, robot):
@@ -79,29 +78,23 @@ class FlaskToCorkTaskController(BaseController):
 
         if self.current_phase == Phase.PLACING:
             xy_ok = np.linalg.norm(object_pos[:2] - target_pos[:2]) < 0.04
-            z_ok = abs(object_pos[2] - self.initial_position[2]) < 0.05
+            z_ok = abs(object_pos[2] - target_pos[2]) < 0.05
             return xy_ok and z_ok
 
         return False
 
     # ---------------------------------------------------------- language utils
 
-    def _object_display_name(self, path: str) -> str:
-        return path.split("/")[-1].replace("_", " ")
-
     def _sample_phase_instruction(self, phase: Phase) -> str:
-        source = self._object_display_name(self.cfg.task.obj_paths[0]["path"])
-        target = self._object_display_name(self.cfg.task.obj_paths[1]["path"])
-        support = self._object_display_name(self.cfg.task.obj_paths[2]["path"])
         if phase == Phase.PICKING:
             templates = self._build_instruction_templates(
-                f"Pick up the {source} from the {support}",
-                f"Pick up the {source} from the {support} and lift it clear of the surface",
+                "Pick up the rubber stopper from the table",
+                "Pick up the rubber stopper from the table and lift it",
             )
         else:
             templates = self._build_instruction_templates(
-                f"Place the {source} on the {target}",
-                f"Move the {source} to the {target} and set it down carefully",
+                "Place the rubber stopper into the flask opening",
+                "Insert the rubber stopper into the mouth of the round-bottom flask",
             )
         return random.choice(templates)
 
@@ -158,25 +151,23 @@ class FlaskToCorkTaskController(BaseController):
                 )
             return action, False, False
 
-        # active controller finished – evaluate success
         if success:
             if self.current_phase == Phase.PICKING:
-                print("Flask picked! Switching to place phase.")
+                print("Stopper picked! Switching to place phase.")
                 self.current_phase = Phase.PLACING
                 self.active_controller = self.place_controller
                 return None, False, False
 
             if self.current_phase == Phase.PLACING:
-                print("Flask placed on cork ring – task success.")
+                print("Stopper placed into flask – task success.")
                 self._last_failure_reason = ""
                 self.data_collector.write_cached_data(state["joint_positions"][:-1])
                 self._last_success = True
                 self.current_phase = Phase.FINISHED
                 return None, True, True
 
-        # controller done but success not achieved
         self._last_failure_reason = (
-            f"FlaskToCork {self.current_phase.value} phase failed: "
+            f"StopperFlask {self.current_phase.value} phase failed: "
             "success check did not pass after controller finished"
         )
         print(f"{self.current_phase.value} phase failed.")
@@ -186,11 +177,9 @@ class FlaskToCorkTaskController(BaseController):
         return None, True, False
 
     def _forward_active(self, state):
-        """Dispatch forward() call to the currently active atomic controller."""
-        # Approach orientation: wrist vertical, gripper aligned for neck grasp
-        ee_orient = R.from_euler("xyz", np.radians([0, 90, 30])).as_quat()
-
         if self.current_phase == Phase.PICKING:
+            # Straight top-down approach for the stopper
+            ee_orient = R.from_euler("xyz", np.radians([0, 180, 0])).as_quat()
             return self.pick_controller.forward(
                 picking_position=state["object_position"],
                 current_joint_positions=state["joint_positions"],
@@ -199,19 +188,20 @@ class FlaskToCorkTaskController(BaseController):
                 gripper_control=self.gripper_control,
                 gripper_position=state["gripper_position"],
                 end_effector_orientation=ee_orient,
-                pre_offset_x=0.04,
-                pre_offset_z=0.02,
-                after_offset_z=0.25
+                pre_offset_x=0.0,
+                pre_offset_z=0.03,
+                after_offset_z=0.3
             )
 
-        # PLACING
+        # PLACING — approach flask opening from above
+        ee_orient = R.from_euler("xyz", np.radians([0, 180, 0])).as_quat()
         return self.place_controller.forward(
             place_position=state["target_position"],
             current_joint_positions=state["joint_positions"],
             gripper_control=self.gripper_control,
             end_effector_orientation=ee_orient,
             gripper_position=state["gripper_position"],
-            place_offset_z=0.13,
+            place_offset_z=0.1,
         )
 
     # ------------------------------------------------------- infer-mode step
@@ -231,7 +221,7 @@ class FlaskToCorkTaskController(BaseController):
         target_pos = self.state["target_position"]
         if (
             np.linalg.norm(object_pos[:2] - target_pos[:2]) < 0.04
-            and abs(object_pos[2] - self.initial_position[2]) < 0.02
+            and abs(object_pos[2] - target_pos[2]) < 0.05
             and np.linalg.norm(self.state["gripper_position"] - object_pos) > 0.05
         ):
             self._last_success = True

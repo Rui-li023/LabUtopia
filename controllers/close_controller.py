@@ -91,6 +91,15 @@ class CloseTaskController(BaseController):
                     end_effector_orientation=R.from_euler('xyz', np.radians([350, 90, 25])).as_quat(),
                     after_move_distance=0.25
                 )
+            elif self.operate_type == "lid":
+                action, record_array = self.close_controller.forward(
+                    handle_position=state['object_position'],
+                    current_joint_positions=state['joint_positions'],
+                    gripper_position=state['gripper_position'],
+                    end_effector_orientation=euler_angles_to_quats([0, 130, 0], degrees=True, extrinsic=False),
+                    push_distance=0.05,
+                    after_move_distance=0.15,
+                )
             else:
                 action, record_array = self.close_controller.forward(
                     handle_position=state['object_position'],
@@ -140,6 +149,8 @@ class CloseTaskController(BaseController):
         language_instruction = self.get_language_instruction()
         if language_instruction is not None:
             state['language_instruction'] = language_instruction
+        elif self.operate_type == "lid":
+            state['language_instruction'] = "Close the lid of the centrifuge"
         else:
             state['language_instruction'] = "Close the drawer of the object"
         
@@ -163,9 +174,6 @@ class CloseTaskController(BaseController):
     def _check_success(self):
         """Checks if the task has been successfully completed.
 
-        Args:
-            state: Current state of the environment.
-
         Returns:
             bool: True if the task is successful, False otherwise.
         """
@@ -180,18 +188,36 @@ class CloseTaskController(BaseController):
             else:
                 self._last_failure_reason = ""
             return success
+        elif self.operate_type == "lid":
+            # Lid closes top-to-bottom: check Z decrease
+            z_moved = self.initial_handle_position[2] - np.array(current_pos)[2]
+            gripper_far_enough = np.linalg.norm(np.array(gripper_position) - np.array(current_pos))
+            success = z_moved > 0.03 and gripper_far_enough > 0.04
+            if not success:
+                self._last_failure_reason = f"Close lid failed: lid Z moved too little ({z_moved:.4f}<0.03) or gripper too close ({gripper_far_enough:.4f}<0.04)"
+            else:
+                self._last_failure_reason = ""
+            return success
         else:
-            handle_moved_enough = np.array(current_pos)[0] - self.initial_handle_position[0] 
+            handle_moved_enough = np.array(current_pos)[0] - self.initial_handle_position[0]
             gripper_far_enough = np.linalg.norm(np.array(gripper_position) - np.array(current_pos))
             success = handle_moved_enough > 0.08 and gripper_far_enough > 0.08
             if not success:
                 self._last_failure_reason = f"Close task failed: handle moved distance too short ({handle_moved_enough:.4f}<0.08) or gripper too close to object ({gripper_far_enough:.4f}<0.08)"
             else:
                 self._last_failure_reason = ""
-            return success    
+            return success
 
     def get_language_instruction(self) -> Optional[str]:
         object_name = self.clean_object_name(self.state['object_name'])
+        if self.operate_type == "lid":
+            return self._get_cached_instruction(
+                f"close:{self.operate_type}",
+                self._build_instruction_templates(
+                    f"Close the lid of the {object_name}",
+                    f"Close the lid of the {object_name} by pushing it down from above",
+                ),
+            )
         return self._get_cached_instruction(
             f"close:{self.operate_type}",
             self._build_instruction_templates(

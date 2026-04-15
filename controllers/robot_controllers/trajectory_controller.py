@@ -44,6 +44,10 @@ class FrankaTrajectoryController(RMPFlowController):
         # Resolve gripper open/close joint positions from robot
         self._gripper_open_joint_pos = np.array([0.04, 0.04])  # default Franka
         self._gripper_closed_joint_pos = np.array([0.0, 0.0])
+        self._gripper_control_mode = "position"
+        self._gripper_closing_force = 20.0
+        self._gripper_closing_speed = 0.2
+        self._gripper_dof_indices: list[int] = []
         robot = robot_articulation
         if isinstance(robot, BaseRobot):
             if hasattr(robot, 'gripper_open_positions'):
@@ -52,6 +56,16 @@ class FrankaTrajectoryController(RMPFlowController):
                 if len(open_pos) >= 2:
                     self._gripper_open_joint_pos = np.array(open_pos[:2], dtype=np.float64)
                     self._gripper_closed_joint_pos = np.array(close_pos[:2], dtype=np.float64)
+            # Inherit gripper control mode from robot
+            mode = getattr(robot, '_gripper_control_mode', 'position')
+            if mode != "position":
+                self._gripper_control_mode = mode
+                self._gripper_closing_force = robot._gripper_closing_force
+                self._gripper_closing_speed = robot._gripper_closing_speed
+                try:
+                    self._gripper_dof_indices = list(robot.gripper.joint_dof_indicies)
+                except (AttributeError, TypeError):
+                    self._gripper_dof_indices = []
 
     def _map_gripper_state_to_positions(self, state: float) -> np.ndarray:
         """Map 0/1 gripper state to actual joint positions.
@@ -66,6 +80,15 @@ class FrankaTrajectoryController(RMPFlowController):
             return self._gripper_closed_joint_pos.copy()
         else:  # open
             return self._gripper_open_joint_pos.copy()
+
+    def _gripper_action_extras(self, gripper_state: float, n_dof: int):
+        """Return (efforts, velocities) for the current gripper mode.
+
+        Always returns (None, None).  In velocity/force modes the actual
+        gripper command is applied per-step by ``robot.apply_gripper_effort()``
+        using ``joint_indices`` to avoid touching arm DOFs.
+        """
+        return None, None
 
     def generate_trajectory(
         self, 
@@ -85,10 +108,12 @@ class FrankaTrajectoryController(RMPFlowController):
             self._action_sequence = []
             for i in range(len(joint_waypoints)):
                 gripper_joints = self._map_gripper_state_to_positions(self.gripper_positions[i])
+                pos = np.concatenate([joint_waypoints[0], gripper_joints])
+                efforts, vels = self._gripper_action_extras(self.gripper_positions[i], len(pos))
                 action = ArticulationAction(
-                    joint_positions=np.concatenate([joint_waypoints[0], gripper_joints]),
-                    joint_velocities=None,
-                    joint_efforts=None
+                    joint_positions=pos,
+                    joint_velocities=vels,
+                    joint_efforts=efforts,
                 )
                 self._action_sequence.append(action)
             total_actions = len(self._action_sequence)
@@ -131,10 +156,12 @@ class FrankaTrajectoryController(RMPFlowController):
             self._action_sequence = []
             for i in range(len(joint_waypoints)):
                 gripper_joints = self._map_gripper_state_to_positions(self.gripper_positions[i])
+                pos = np.concatenate([joint_waypoints[i], gripper_joints])
+                efforts, vels = self._gripper_action_extras(self.gripper_positions[i], len(pos))
                 action = ArticulationAction(
-                    joint_positions=np.concatenate([joint_waypoints[i], gripper_joints]),
-                    joint_velocities=None,
-                    joint_efforts=None
+                    joint_positions=pos,
+                    joint_velocities=vels,
+                    joint_efforts=efforts,
                 )
                 self._action_sequence.append(action)
                 
@@ -159,7 +186,7 @@ class FrankaTrajectoryController(RMPFlowController):
                 gripper_idx = self.gripper_indices[self._action_sequence_index]
                 gripper_state = self.gripper_positions[gripper_idx]
                 gripper_joints = self._map_gripper_state_to_positions(gripper_state)
-                
+
                 joint_positions = np.concatenate([
                     action.joint_positions,
                     gripper_joints.astype(np.float32)
@@ -171,11 +198,17 @@ class FrankaTrajectoryController(RMPFlowController):
                     ])
                 else:
                     joint_velocities = None
-                
+
+                efforts, extra_vels = self._gripper_action_extras(gripper_state, len(joint_positions))
+                if efforts is None:
+                    efforts = action.joint_efforts
+                if extra_vels is not None:
+                    joint_velocities = extra_vels  # velocity mode overrides
+
                 action = ArticulationAction(
                     joint_positions=joint_positions,
                     joint_velocities=joint_velocities,
-                    joint_efforts=action.joint_efforts
+                    joint_efforts=efforts,
                 )
         
         self._action_sequence_index += 1
@@ -189,10 +222,20 @@ class FrankaTrajectoryController(RMPFlowController):
         """
         return len(self._action_sequence) == 0 or self._action_sequence_index >= len(self._action_sequence)
 
+    def sync_gripper_mode(self, robot) -> None:
+        """Sync gripper control mode from the robot."""
+        if isinstance(robot, BaseRobot):
+            mode = getattr(robot, '_gripper_control_mode', 'position')
+            if mode != "position":
+                self._gripper_control_mode = mode
+                self._gripper_closing_force = robot._gripper_closing_force
+                self._gripper_closing_speed = robot._gripper_closing_speed
+                self._gripper_dof_indices = list(robot.gripper.joint_dof_indicies)
+
     def reset(self) -> None:
         """Reset controller state"""
         super().reset()
         self._action_sequence = []
         self._action_sequence_index = 0
         self.gripper_positions = []
-        self.gripper_indices = [] 
+        self.gripper_indices = []
