@@ -216,3 +216,6 @@ test_outputs/
 # Asset check reports
 usd_check_report.txt
 missing_assets.txt
+
+# Claude Code local config
+.claude/

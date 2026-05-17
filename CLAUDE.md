@@ -154,6 +154,13 @@ replay:
 | L4 | Long-horizon sequences | CleanBeaker, DeviceOperation, LiquidMixing |
 | L5 | Mobile manipulation | Navigation, MobilePickPlace |
 
+## Running Tasks
+
+- **Never run multiple `main.py` (Isaac Sim) processes in parallel.** A single
+  Isaac Sim instance already saturates the GPU; concurrent runs cause physics
+  instability, OOM, and watchdog kills. Run regression tests sequentially —
+  even when they look independent.
+
 ## Coding Standards
 
 - **Type hints**: All public methods must have return type annotations.
