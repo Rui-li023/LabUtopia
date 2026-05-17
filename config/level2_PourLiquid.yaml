@@ -29,7 +29,7 @@ infer:
   max_retries: 3
 
 task:
-  max_steps: 1000
+  max_steps: 2500
   left_pos:
     x: [0.17, 0.32]
     y: [-0.35, -0.2]

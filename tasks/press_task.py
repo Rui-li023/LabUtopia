@@ -13,10 +13,15 @@ class PressTask(BaseTask):
     """
 
     _INSTRUMENT_POSITION = np.array([0.73, -0.1, 0.64])
-    _BUTTON_BASE_X = 0.40
+    # Robot base sits at world Z≈0.71. Button at world Z=0.80 (≈9 cm above
+    # base) forces Franka into an "elbow-below-base" pose with EE pitched
+    # straight down — RMP cannot plan and returns null actions. Keep the
+    # button at a height where the gripper can comfortably reach it while
+    # pointing down (≈0.30 m above the robot base).
+    _BUTTON_BASE_X = 0.30
     _BUTTON_BASE_Y_RANGE = (-0.06, 0.04)
-    _BUTTON_BASE_Z = 1.1
-    _BUTTON_Z_JITTER = (-0.1, 0.1)
+    _BUTTON_BASE_Z = 1.05
+    _BUTTON_Z_JITTER = (-0.02, 0.02)
     _DISTRACTOR1_Y_OFFSET = (-0.25, -0.15)
     _DISTRACTOR2_Y_OFFSET = (-0.40, -0.30)
 

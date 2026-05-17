@@ -57,12 +57,14 @@ class PlaceController(AtomicBaseController):
     # ── Randomization ────────────────────────────────────────────
 
     def _sample_randomization(self):
-        self._pre_place_z_noise = self._noisy(0.0, 0.03)
-        self._place_offset_z_noise = self._noisy(0.0, 0.015)
+        # Positive-only z noise: never place below the default target height
+        # (a too-low release drops the object and bounces it off the table).
+        self._pre_place_z_noise = self._uniform(0.0, 0.03)
+        self._place_offset_z_noise = self._uniform(0.0, 0.015)
         self._retreat_x_noise = self._noisy(0.0, 0.03)
-        self._retreat_z_noise = self._noisy(0.0, 0.03)
-        axes = [np.array([1,0,0.]), np.array([0,1,0.]), np.array([0,0,1.])]
-        self._orientation_noise_axis = axes[int(np.random.randint(0, 3))]
+        self._retreat_z_noise = self._uniform(0.0, 0.03)
+        # Rotate only around the tool Z axis to keep the held object upright at release.
+        self._orientation_noise_axis = np.array([0, 0, 1.0])
         self._orientation_noise_deg = self._noisy(0.0, 10.0)
 
     # ── Forward ──────────────────────────────────────────────────
@@ -78,6 +80,14 @@ class PlaceController(AtomicBaseController):
         place_offset_z: float = 0.05,
     ) -> typing.Tuple[ArticulationAction, np.ndarray]:
         n = current_joint_positions.shape[0]
+
+        # Guard: bail out with a null action if the task could not resolve
+        # the target position (avoids a TypeError deep in the C++ stack).
+        if place_position is None:
+            action = self._null_action(n)
+            return action, self._build_record_array(
+                action, current_joint_positions,
+                gripper_state=self._current_gripper_state)
 
         if self._start:
             self._start = False

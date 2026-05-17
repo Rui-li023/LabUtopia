@@ -33,7 +33,7 @@ class StirTaskController(BaseController):
 
     def _init_infer_mode(self, cfg, robot):
         super()._init_infer_mode(cfg, robot)
-        
+
         self.pick_controller = PickController(
             name="pick_controller",
             cspace_controller=self.rmp_controller,
@@ -41,27 +41,64 @@ class StirTaskController(BaseController):
         )
         self.use_stir_model = False
         self.frame_count = 0
-        
+
+    def _init_replay_mode(self, cfg, robot):
+        """Replay needs the scripted pick to bring the glass rod into the
+        gripper before the recorded stir actions are fed.
+        Disable randomization so the post-pick pose is reproducible."""
+        super()._init_replay_mode(cfg, robot)
+        self.pick_controller = PickController(
+            name="pick_controller_replay",
+            cspace_controller=self.rmp_controller,
+            position_threshold=0.005,
+            events_dt=[0.004, 0.002, 0.005, 0.02, 0.05, 0.004, 0.02],
+        )
+        self.pick_controller._sample_randomization = lambda: None
+
     def reset(self):
         super().reset()
         self.gripper_control.release_object()
         self.pick_controller.reset()
         if self.mode == "collect":
             self.stir_controller.reset()
-        else:
+        elif self.mode == "infer":
             self.inference_engine.reset()
         self.initial_position = None
         self.use_stir_model = False
         self.frame_count = 0
-    
+
     def step(self, state):
         if self.initial_position is None:
             self.initial_position = state['object_position']
         self.state = state
         if self.mode == "collect":
             return self._step_collect(state)
+        elif self.mode == "replay":
+            return self._step_replay(state)
         else:
             return self._step_infer(state)
+
+    def _step_replay(self, state):
+        """Run scripted pick first; then dispatch to BaseController._step_replay
+        which feeds the recorded stir trajectory. The grasped glass rod's mesh
+        needs its world pose synced to the gripper every frame."""
+        if not self.pick_controller.is_done():
+            action, _ = self.pick_controller.forward(
+                picking_position=state['object_position'],
+                current_joint_positions=state['joint_positions'],
+                object_size=state['object_size'],
+                object_name="glass_rod",
+                gripper_control=self.gripper_control,
+                gripper_position=state['gripper_position'],
+                end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
+                after_offset_z=0.15,
+                gripper_distances=0.005,
+            )
+            self.gripper_control.update_grasped_object_position()
+            return action, False, False
+        result = super()._step_replay(state)
+        self.gripper_control.update_grasped_object_position()
+        return result
         
     def _step_collect(self, state):
         """
@@ -179,7 +216,13 @@ class StirTaskController(BaseController):
     def _check_success(self):
         object_pos = self.state['glass_rod_position']
         target_position = self.state['target_position']
-        if object_pos[2] > 0.85 and np.linalg.norm(object_pos[0:2] - target_position[0:2]) < 0.04:
+        criterion_met = (object_pos[2] > 0.85
+                         and np.linalg.norm(object_pos[0:2] - target_position[0:2]) < 0.04)
+        # In replay the BaseController._step_replay loop manages the
+        # success-counter via self.check_success_counter, so don't fight it.
+        if self.mode == "replay":
+            return criterion_met
+        if criterion_met:
             self.check_success_counter += 1
             if self.check_success_counter > 240:
                 self._last_success = True

@@ -60,6 +60,7 @@ class PressController(AtomicBaseController):
         gripper_control,
         end_effector_orientation: typing.Optional[np.ndarray] = None,
         press_distance: float = 0.04,
+        gripper_position: typing.Optional[np.ndarray] = None,
     ) -> typing.Tuple[ArticulationAction, np.ndarray]:
         n = current_joint_positions.shape[0]
 
@@ -88,6 +89,13 @@ class PressController(AtomicBaseController):
             action = self._cspace_controller.forward(
                 target_end_effector_position=target_position,
                 target_end_effector_orientation=end_effector_orientation)
+            if gripper_position is not None and self._xyz_reached(
+                gripper_position, target_position, threshold=0.03
+            ):
+                self._next_event()
+                return action, self._build_record_array(
+                    action, current_joint_positions,
+                    gripper_state=self._current_gripper_state)
 
         elif self._event == 1:
             self._close_gripper()
@@ -99,6 +107,13 @@ class PressController(AtomicBaseController):
             action = self._cspace_controller.forward(
                 target_end_effector_position=target_position,
                 target_end_effector_orientation=end_effector_orientation)
+            if gripper_position is not None and self._xyz_reached(
+                gripper_position, target_position, threshold=0.02
+            ):
+                self._next_event()
+                return action, self._build_record_array(
+                    action, current_joint_positions,
+                    gripper_state=self._current_gripper_state)
 
         self._advance_state()
         return action, self._build_record_array(

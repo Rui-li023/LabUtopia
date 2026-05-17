@@ -5,7 +5,6 @@ controller_type: "open"
 
 mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
-handle_path: "/World/Cabinet_01/drawer_handle_top"
 max_episodes: 50
 
 # ── Replay mode ─────────────────────────────────────────────────────────────
@@ -31,6 +30,7 @@ infer:
 task:
   max_steps: 1000
   operate_type: "drawer"
+  handle_path: "/World/Cabinet_01/drawer_handle_top"
   obj_paths:
     - path: "/World/Cabinet_01"
       position_range:

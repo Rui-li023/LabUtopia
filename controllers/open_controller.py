@@ -48,7 +48,7 @@ class OpenTaskController(BaseController):
         self.initial_handle_position = None
         if self.mode == "collect":
             self.open_controller.reset()
-        else:
+        elif self.mode == "infer":
             self.inference_engine.reset()
 
     def step(self, state):
@@ -61,10 +61,17 @@ class OpenTaskController(BaseController):
             Tuple containing the action, done flag, and success flag.
         """
         self.state = state
+        # Skip entirely if the handle pose could not be resolved (USD path
+        # mismatch). Prevents downstream None math from crashing sim.
+        if state.get('object_position') is None:
+            self._last_failure_reason = "open: object_position is None (handle prim missing in USD)"
+            return None, True, False
         if self.initial_handle_position is None:
             self.initial_handle_position = state['object_position']
         if self.mode == "collect":
             return self._step_collect(state)
+        elif self.mode == "replay":
+            return self._step_replay(state)
         else:
             return self._step_infer(state)
 

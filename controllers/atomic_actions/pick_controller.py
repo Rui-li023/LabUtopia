@@ -51,10 +51,12 @@ class PickController(AtomicBaseController):
     # ── Randomization ────────────────────────────────────────────
 
     def _sample_randomization(self):
-        self._pre_offset_z_noise = self._noisy(0.0, 0.04)
-        self._after_offset_z_noise = self._noisy(0.0, 0.04)
-        axes = [np.array([1,0,0.]), np.array([0,1,0.]), np.array([0,0,1.])]
-        self._orientation_axis = axes[int(np.random.randint(0, 3))]
+        # Positive-only lift noise: never reduce the lift height below the default,
+        # since downstream phases (e.g. pour) require >= 0.12 m clearance.
+        self._pre_offset_z_noise = self._uniform(0.0, 0.04)
+        self._after_offset_z_noise = self._uniform(0.0, 0.04)
+        # Rotate only around the tool Z axis to preserve grasp stability.
+        self._orientation_axis = np.array([0, 0, 1.0])
         self._orientation_angle_deg = self._noisy(0.0, 15.0)
 
     # ── Forward ──────────────────────────────────────────────────
@@ -75,6 +77,15 @@ class PickController(AtomicBaseController):
     ) -> typing.Tuple[ArticulationAction, np.ndarray]:
         self.object_size = object_size
         n = current_joint_positions.shape[0]
+
+        # Guard: if the task could not resolve the target object's pose (e.g.
+        # a USD/task mismatch returns None), bail out with a null action
+        # instead of crashing Isaac Sim with a TypeError deep in the C++ stack.
+        if picking_position is None or object_size is None:
+            action = self._null_action(n)
+            return action, self._build_record_array(
+                action, current_joint_positions,
+                gripper_state=self._current_gripper_state)
 
         # First call: open gripper
         if self._start:

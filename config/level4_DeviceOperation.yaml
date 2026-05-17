@@ -34,8 +34,8 @@ task:
         z: [0.84, 0.84]
     - path: "/World/beaker3"
       position_range:
-        x: [0.15, 0.2]
-        y: [0.35, 0.40]
+        x: [0.10, 0.25]
+        y: [0.33, 0.45]
         z: [0.84, 0.84]
     - path: "/World/DryingBox_01"
       position_range:

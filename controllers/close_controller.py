@@ -6,6 +6,7 @@ from controllers.atomic_actions.close_controller import CloseController
 from .base_controller import BaseController
 from .robot_controllers.trajectory_controller import FrankaTrajectoryController
 from isaacsim.core.utils.numpy.rotations import euler_angles_to_quats
+from isaacsim.core.utils.types import ArticulationAction
 from .inference_engines.inference_engine_factory import InferenceEngineFactory
 
 class CloseTaskController(BaseController):
@@ -62,6 +63,11 @@ class CloseTaskController(BaseController):
             Tuple containing the action, done flag, and success flag.
         """
         self.state = state
+        # Skip entirely if the task could not resolve the handle pose (USD
+        # path mismatch). Avoids None math in success checks crashing sim.
+        if state.get("object_position") is None:
+            self._last_failure_reason = "close: object_position is None (handle prim missing in USD)"
+            return None, True, False
         if self.initial_handle_position is None:
             self.initial_handle_position = np.array(state["object_position"], dtype=np.float32)
 
@@ -81,6 +87,27 @@ class CloseTaskController(BaseController):
         Returns:
             Tuple containing the action, done flag, and success flag.
         """
+        # After atomic action finishes, keep emitting null actions until the
+        # success counter saturates. The atomic state-machine often ends a few
+        # frames short of REQUIRED_SUCCESS_STEPS even when the lid/door is
+        # already in the closed pose.
+        if (
+            self.close_controller.is_done()
+            and self._check_success()
+            and self.check_success_counter < self.REQUIRED_SUCCESS_STEPS
+        ):
+            self.check_success_counter += 1
+            n_joints = len(state["joint_positions"])
+            null_action = ArticulationAction(joint_positions=[None] * n_joints)
+            if 'camera_data' in state:
+                self.data_collector.cache_step(
+                    camera_images=state['camera_data'],
+                    joint_angles=state['joint_positions'][:-1],
+                    action=np.concatenate([state['joint_positions'][:7], [0.0]]),
+                    language_instruction=self.get_language_instruction(),
+                )
+            return null_action, False, False
+
         if not self.close_controller.is_done():
             if self.operate_type == "door":
                 action, record_array = self.close_controller.forward(
@@ -131,6 +158,10 @@ class CloseTaskController(BaseController):
             self._last_success = True
         else:
             print("Task failed!")
+            print(
+                f"Phase failure details: success_counter={self.check_success_counter}/"
+                f"{self.REQUIRED_SUCCESS_STEPS}, last_reason={self._last_failure_reason or 'success_at_check_but_not_sustained'}"
+            )
             self.data_collector.clear_cache()
             self._last_success = False
             

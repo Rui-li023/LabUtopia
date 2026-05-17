@@ -73,10 +73,6 @@ cameras:
 robot:
   type: "franka"
   position: [-0.4, -0, 0.71]
-  gripper:
-    control_mode: "velocity"   # "position" | "velocity" | "force"
-    closing_speed: 0.15         # m/s (velocity mode)
-    closing_force: 30.0        # N per finger (force mode)
 
 collector:
   type: "default"

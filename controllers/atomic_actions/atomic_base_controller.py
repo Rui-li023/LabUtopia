@@ -167,9 +167,17 @@ class AtomicBaseController:
     @classmethod
     def _apply_axis_rotation(cls, quat: np.ndarray, axis: np.ndarray,
                              angle_deg: float) -> np.ndarray:
-        """Apply a *deterministic* axis-angle rotation to *quat*."""
+        """Apply a deterministic axis-angle rotation to *quat* in the
+        end-effector's local frame.
+
+        Local-frame rotation (q_existing * delta) means the *axis* refers to
+        the gripper's own coordinate system, so axis=[0, 0, 1] always rotates
+        around the tool spin axis regardless of how the gripper is oriented in
+        the world. This preserves grasp alignment for both top-down and
+        horizontal picks.
+        """
         delta = cls._axis_angle_to_quat(axis, angle_deg)
-        result = cls._quat_multiply(delta, np.asarray(quat, dtype=np.float64))
+        result = cls._quat_multiply(np.asarray(quat, dtype=np.float64), delta)
         norm = np.linalg.norm(result)
         return result / norm if norm > 0 else result
 

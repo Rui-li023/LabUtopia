@@ -2,6 +2,8 @@ from scipy.spatial.transform import Rotation as R
 import numpy as np
 from enum import Enum
 from typing import Optional
+from isaacsim.core.utils.types import ArticulationAction
+
 from utils.task_utils import TaskUtils
 from .atomic_actions.pick_controller import PickController
 from .atomic_actions.pour_controller import PourController
@@ -31,6 +33,8 @@ class PickPourTaskController(BaseController):
         self.return_timer = 0
         self.last_error_info = None
         self.current_phase = Phase.PICKING
+        self._post_done_wait = 0
+        self._POST_DONE_MAX = 240
             
     def _init_collect_mode(self, cfg, robot):
         """Initialize controller for data collection mode."""
@@ -44,7 +48,7 @@ class PickPourTaskController(BaseController):
         self.pour_controller = PourController(
             name="pour_controller",
             cspace_controller=self.rmp_controller,
-            events_dt=[0.006, 0.002, 0.009, 0.01, 0.009, 0.01]
+            events_dt=[0.006, 0.002, 0.012, 0.01, 0.008, 0.01]
         )
         self.active_controller = self.pick_controller
 
@@ -60,12 +64,13 @@ class PickPourTaskController(BaseController):
         self.return_complete = False
         self.return_timer = 0
         self.last_error_info = None
+        self._post_done_wait = 0
         
         if self.mode == "collect":
             self.active_controller = self.pick_controller
             self.pick_controller.reset()
             self.pour_controller.reset()
-        else:
+        elif self.mode == "infer":
             self.inference_engine.reset()
 
     def _check_success(self) -> bool:
@@ -186,6 +191,8 @@ class PickPourTaskController(BaseController):
             self.initial_size = self.state['object_size']
         if self.mode == "collect":
             return self._step_collect(state)
+        elif self.mode == "replay":
+            return self._step_replay(state)
         else:
             return self._step_infer(state)
 
@@ -245,6 +252,19 @@ class PickPourTaskController(BaseController):
                 )
             
             return action, False, False
+
+        if self.current_phase == Phase.POURING and self._post_done_wait < self._POST_DONE_MAX:
+            self._post_done_wait += 1
+            n_joints = len(state['joint_positions'])
+            null_action = ArticulationAction(joint_positions=[None] * n_joints)
+            if 'camera_data' in state:
+                self.data_collector.cache_step(
+                    camera_images=state['camera_data'],
+                    joint_angles=state['joint_positions'][:-1],
+                    action=np.concatenate([state['joint_positions'][:7], [0.0]]),
+                    language_instruction=self.get_language_instruction(),
+                )
+            return null_action, False, False
 
         self._last_failure_reason = f"PickPour {self.current_phase.value} failed" + (f": {self.last_error_info}" if self.last_error_info else "")
         print(f"{self.current_phase.value} task failed!")

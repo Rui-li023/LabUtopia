@@ -74,7 +74,7 @@ class PickPlaceTaskController(BaseController):
             self.active_controller = self.pick_controller
             self.pick_controller.reset()
             self.place_controller.reset()
-        else:
+        elif self.mode == "infer":
             self.inference_engine.reset()
 
     def _check_success(self) -> bool:
@@ -111,6 +111,8 @@ class PickPlaceTaskController(BaseController):
             self.initial_size = self.state['object_size']
         if self.mode == "collect":
             return self._step_collect(state)
+        elif self.mode == "replay":
+            return self._step_replay(state)
         else:
             return self._step_infer(state)
 

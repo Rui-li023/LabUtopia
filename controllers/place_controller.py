@@ -23,6 +23,7 @@ class PlaceTaskController(BaseController):
         self.initial_position = None
         self.initial_size = None
         self.current_phase = Phase.PICKING
+        self.last_error_info = None
 
     def _init_collect_mode(self, cfg, robot):
         """Initialize controller for data collection mode."""
@@ -50,32 +51,75 @@ class PlaceTaskController(BaseController):
         )
         super()._init_infer_mode(cfg, robot)
 
+    def _init_replay_mode(self, cfg, robot):
+        """Replay needs the scripted pick_controller to bring the robot into
+        the holding-object state before the recorded place actions are fed.
+        Disable pick randomization so the post-pick pose matches what the
+        recorded place actions assume."""
+        super()._init_replay_mode(cfg, robot)
+        self.pick_controller = PickController(
+            name="pick_controller_replay",
+            cspace_controller=self.rmp_controller,
+            events_dt=[0.002, 0.002, 0.005, 0.02, 0.05, 0.01, 0.02],
+        )
+        self.pick_controller._sample_randomization = lambda: None
+
     def reset(self):
         """Reset controller state and phase."""
         super().reset()
         self.current_phase = Phase.PICKING
         self.initial_position = None
         self.initial_size = None
+        self.last_error_info = None
         self.pick_controller.reset()
         if self.mode == "collect":
             self.active_controller = self.pick_controller
             self.place_controller.reset()
-        else:
+        elif self.mode == "infer":
             self.inference_engine.reset()
 
     def _check_success(self) -> bool:
-        """Evaluate whether the current state meets the task success criterion."""
+        """Evaluate whether the current state meets the task success criterion.
+
+        In replay we don't run the atomic phase machine, so always check the
+        final PLACING criterion (object at target xy, near initial z).
+        """
+        if self.mode == "replay":
+            object_pos = self.state['object_position']
+            target_position = self.state['target_position']
+            xy_dist = float(np.linalg.norm(object_pos[:2] - target_position[:2]))
+            z_drop = float(abs(object_pos[2] - self.initial_position[2]))
+            return xy_dist < 0.05 and z_drop < 0.05
         return self._check_phase_success()
 
     def _check_phase_success(self):
         """Check if current phase is successful based on object position."""
         object_pos = self.state['object_position']
         target_position = self.state['target_position']
-        
+
         if self.current_phase == Phase.PICKING:
-            return object_pos[2] > self.initial_position[2] + 0.1
+            required_height = self.initial_position[2] + 0.1
+            success = object_pos[2] > required_height
+            if not success:
+                self.last_error_info = {
+                    'phase': 'PICKING',
+                    'current_height': float(object_pos[2]),
+                    'required_height': float(required_height),
+                    'height_diff': float(object_pos[2] - required_height),
+                }
+            return success
         elif self.current_phase == Phase.PLACING:
-            success = (np.linalg.norm(object_pos[:2] - target_position[:2]) < 0.05 and abs(object_pos[2] - self.initial_position[2]) < 0.05)
+            xy_dist = float(np.linalg.norm(object_pos[:2] - target_position[:2]))
+            z_drop = float(abs(object_pos[2] - self.initial_position[2]))
+            success = (xy_dist < 0.05 and z_drop < 0.05)
+            if not success:
+                self.last_error_info = {
+                    'phase': 'PLACING',
+                    'xy_distance': xy_dist,
+                    'xy_threshold': 0.05,
+                    'z_drop_from_initial': z_drop,
+                    'z_threshold': 0.05,
+                }
             return success
 
 
@@ -96,8 +140,27 @@ class PlaceTaskController(BaseController):
             
         if self.mode == "collect":
             return self._step_collect(state)
+        elif self.mode == "replay":
+            return self._step_replay(state)
         else:
             return self._step_infer(state)
+
+    def _step_replay(self, state):
+        """Replay only records the place actions, so first scripted-run the
+        pick controller until it grasps the object, then dispatch to the
+        BaseController replay loop that consumes the recorded place actions."""
+        if not self.pick_controller.is_done():
+            action, _ = self.pick_controller.forward(
+                picking_position=state['object_position'],
+                current_joint_positions=state['joint_positions'],
+                object_size=state['object_size'],
+                object_name=state['object_name'],
+                gripper_control=self.gripper_control,
+                gripper_position=state['gripper_position'],
+                end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
+            )
+            return action, False, False
+        return super()._step_replay(state)
 
     def _step_collect(self, state):
         """Execute collection mode step."""
@@ -150,8 +213,14 @@ class PlaceTaskController(BaseController):
                 self.current_phase = Phase.FINISHED
                 return None, True, True
             else:
-                self._last_failure_reason = f"Place {self.current_phase.value} phase failed: phase success check did not pass after controller done"
+                detail = f" details: {self.last_error_info}" if self.last_error_info else ""
+                self._last_failure_reason = (
+                    f"Place {self.current_phase.value} phase failed: "
+                    f"phase success check did not pass after controller done{detail}"
+                )
                 print(f"{self.current_phase.value} task failed!")
+                if self.last_error_info:
+                    print(f"Phase failure details: {self.last_error_info}")
                 self.data_collector.clear_cache()
                 self._last_success = False
                 self.current_phase = Phase.FINISHED

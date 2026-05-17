@@ -6,7 +6,6 @@ from typing import Dict
 import pandas as pd
 
 from .base_inference_engine import BaseInferenceEngine
-from policy.model.common.normalizer import LinearNormalizer
 
 
 class LocalModelInferenceEngine(BaseInferenceEngine):
@@ -47,18 +46,7 @@ class LocalModelInferenceEngine(BaseInferenceEngine):
         self.policy.load_state_dict(new_state_dict)
         self.policy.eval()
         self.policy.to(self.device)
-        
-        # Load or create normalizer
-        if hasattr(self.cfg.infer, 'normalizer_path'):
-            normalizer = LinearNormalizer()
-            normalizer.load_state_dict(torch.load(self.cfg.infer.normalizer_path, map_location=self.device))
-        else:
-            dataset = hydra.utils.instantiate(self.config.task.dataset)
-            normalizer = dataset.get_normalizer()
-        
-        normalizer.to(self.device)
-        self.policy.set_normalizer(normalizer)
-        
+
         print(f"✓ Local model inference engine initialized, device: {self.device}")
     
     def _predict_action(self, obs_dict: Dict[str, torch.Tensor], language_instruction: str = "") -> np.ndarray:

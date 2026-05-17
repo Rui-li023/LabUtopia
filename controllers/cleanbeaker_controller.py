@@ -104,15 +104,18 @@ class CleanBeakerTaskController(BaseController):
             self.shake_beaker1.reset()
             self.pour_beaker1.reset()
             self.place_beaker1.reset()
-        else:
+        elif self.mode == "infer":
             self.inference_engine.reset()
         
         self._current_step = 1
         self.frame_count = 0
-    
+        self._logged_step_1 = False
+
     def step(self, state):
         if self.mode == "collect":
             return self._step_collect(state)
+        elif self.mode == "replay":
+            return self._step_replay(state)
         else:
             return self._step_infer(state)
     
@@ -133,6 +136,9 @@ class CleanBeakerTaskController(BaseController):
         success = False
 
         if self._current_step == 1:
+            if not getattr(self, "_logged_step_1", False):
+                print(f"[cleanbeaker] step 1 (pick beaker2) begin; beaker_2_pos={state['beaker_2_position'].tolist() if hasattr(state['beaker_2_position'], 'tolist') else state['beaker_2_position']}")
+                self._logged_step_1 = True
             # 1. Pick beaker2
             action, record_array = self.pick_beaker2.forward(
                 picking_position=state['beaker_2_position'],
@@ -147,6 +153,7 @@ class CleanBeakerTaskController(BaseController):
                 gripper_distances=0.027
             )
             if self.pick_beaker2.is_done():
+                print(f"[cleanbeaker] step 1 (pick beaker2) done")
                 self._current_step = 2
 
         elif self._current_step == 2:
@@ -161,6 +168,7 @@ class CleanBeakerTaskController(BaseController):
                 pour_speed=-1,
             )
             if self.pour_beaker2.is_done():
+                print(f"[cleanbeaker] step 2 (pour beaker2→beaker1) done; beaker2_pos={state['beaker_2_position'].tolist() if hasattr(state['beaker_2_position'], 'tolist') else state['beaker_2_position']}")
                 self._current_step = 3
 
         elif self._current_step == 3:
@@ -173,6 +181,7 @@ class CleanBeakerTaskController(BaseController):
                 gripper_position=state['gripper_position']
             )
             if self.place_beaker2.is_done():
+                print(f"[cleanbeaker] step 3 (place beaker2→plat2) done; beaker2_pos={state['beaker_2_position'].tolist() if hasattr(state['beaker_2_position'], 'tolist') else state['beaker_2_position']} plat2={state['plat_2_position'].tolist() if hasattr(state['plat_2_position'], 'tolist') else state['plat_2_position']}")
                 self._current_step = 4
 
         elif self._current_step == 4:
@@ -188,6 +197,7 @@ class CleanBeakerTaskController(BaseController):
                 gripper_distances=0.027
             )
             if self.pick_beaker1.is_done():
+                print(f"[cleanbeaker] step 4 (pick beaker1) done; beaker1_pos={state['beaker_1_position'].tolist() if hasattr(state['beaker_1_position'], 'tolist') else state['beaker_1_position']}")
                 self._current_step = 5
 
         elif self._current_step == 5:
@@ -197,6 +207,7 @@ class CleanBeakerTaskController(BaseController):
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat(),
             )
             if self.shake_beaker1.is_done():
+                print(f"[cleanbeaker] step 5 (shake beaker1) done")
                 self._current_step = 6
 
         elif self._current_step == 6:
@@ -211,6 +222,7 @@ class CleanBeakerTaskController(BaseController):
                 pour_speed=-1,
             )
             if self.pour_beaker1.is_done():
+                print(f"[cleanbeaker] step 6 (pour beaker1→target) done; beaker1_pos={state['beaker_1_position'].tolist() if hasattr(state['beaker_1_position'], 'tolist') else state['beaker_1_position']}")
                 self._current_step = 7
 
         elif self._current_step == 7:
@@ -223,6 +235,7 @@ class CleanBeakerTaskController(BaseController):
                 gripper_position=state['gripper_position']
             )
             if self.place_beaker1.is_done():
+                print(f"[cleanbeaker] step 7 (place beaker1→plat1) done; beaker1_pos={state['beaker_1_position'].tolist() if hasattr(state['beaker_1_position'], 'tolist') else state['beaker_1_position']} plat1={state['plat_1_position'].tolist() if hasattr(state['plat_1_position'], 'tolist') else state['plat_1_position']}")
                 success = self._check_success()
                 if success:
                     self._last_failure_reason = ""
@@ -268,25 +281,29 @@ class CleanBeakerTaskController(BaseController):
         return action, False, self.is_success()
     
     def _check_success(self):
-        beaker1_pos = self.object_utils.get_object_xform_position(object_path=self.cfg.beaker_1+"/mesh")
-        beaker2_pos = self.object_utils.get_object_xform_position(object_path=self.cfg.beaker_2+"/mesh")
-
-        plat1_pos = self.object_utils.get_object_xform_position(object_path=self.cfg.plat_1)
-        plat2_pos = self.object_utils.get_object_xform_position(object_path=self.cfg.plat_2)
+        # Use world-space geometry centres so the check is independent of
+        # how each prim's xform is parented or stacked. The previous code
+        # mixed mesh-local "/mesh" xform with parent plat xform, which gave
+        # inconsistent z values across episodes.
+        beaker1_pos = self.object_utils.get_geometry_center(object_path=self.cfg.beaker_1)
+        beaker2_pos = self.object_utils.get_geometry_center(object_path=self.cfg.beaker_2)
+        plat1_pos   = self.object_utils.get_geometry_center(object_path=self.cfg.plat_1)
+        plat2_pos   = self.object_utils.get_geometry_center(object_path=self.cfg.plat_2)
 
         if beaker1_pos is None or beaker2_pos is None or plat1_pos is None or plat2_pos is None:
             return False
 
-        success = (
-            abs(beaker1_pos[0] - plat1_pos[0]) < 0.04 and
-            abs(beaker1_pos[1] - plat1_pos[1]) < 0.04 and
-            beaker1_pos[2] <= 0.78 and
-            abs(beaker2_pos[0] - plat2_pos[0]) < 0.04 and
-            abs(beaker2_pos[1] - plat2_pos[1]) < 0.04 and
-            beaker2_pos[2] <= 0.78
-        )
-        
-        return success
+        def beaker_on_plat(b, p, label):
+            dx, dy, dz = abs(b[0] - p[0]), abs(b[1] - p[1]), b[2] - p[2]
+            ok = dx < 0.04 and dy < 0.04 and 0.0 < dz < 0.08
+            if not ok:
+                print(
+                    f"[cleanbeaker debug] {label} fail: b={b.tolist()} p={p.tolist()} "
+                    f"dx={dx:.4f} dy={dy:.4f} dz={dz:.4f}"
+                )
+            return ok
+
+        return beaker_on_plat(beaker1_pos, plat1_pos, "beaker1↔plat1") and beaker_on_plat(beaker2_pos, plat2_pos, "beaker2↔plat2")
     
     def is_success(self):
         Maxframe = 5000

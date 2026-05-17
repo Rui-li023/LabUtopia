@@ -76,6 +76,34 @@ class BaseController(ABC):
             else:
                 raise ValueError(f"Invalid mode: {self.mode}. Expected 'collect', 'infer', or 'replay'.")
 
+        # Most subclasses override step() directly and bypass BaseController.step,
+        # which means they also bypass the init_state capture in collect mode.
+        # Wrap the instance-bound step here so every controller — regardless of
+        # override — records init_state on the first call of each collect episode.
+        _bound_step = self.step
+        def _step_with_init_capture(state, _orig=_bound_step):
+            self._capture_init_state_if_needed(state)
+            return _orig(state)
+        self.step = _step_with_init_capture
+
+    def _capture_init_state_if_needed(self, state: dict) -> None:
+        """In collect mode, snapshot the task's init_state once per episode."""
+        if getattr(self, "mode", None) != "collect":
+            return
+        if self._init_state_captured:
+            return
+        if not hasattr(self, "data_collector"):
+            return
+        init_state = state.get("init_state")
+        if init_state is None:
+            return
+        init = dict(init_state)
+        init["robot_init_joint_positions"] = state["joint_positions"]
+        init["robot_world_position"] = np.array(self.robot.get_world_pose()[0], dtype=np.float32)
+        self.data_collector.set_init_state(init)
+        self._init_state_captured = True
+        logger.info(f"Set init state for episode {init}")
+
     @property
     def language_instruction(self) -> str | None:
         """Get the current language instruction for the task.
@@ -269,6 +297,7 @@ class BaseController(ABC):
             # _current_actions always refer to the same episode when
             # get_current_init_state() is called in the next reset cycle.
             self._current_action_step = 0
+            self._replay_settle_used = 0
             self.trajectory_controller.reset()
 
     def get_current_init_state(self) -> dict | None:
@@ -412,12 +441,24 @@ class BaseController(ABC):
             logger.success("[Replay] Task success!")
             return None, True, True
 
-        all_done = self._current_actions is None or (
+        actions_exhausted = self._current_actions is None or (
             self._current_action_step >= len(self._current_actions)
             and self.trajectory_controller.is_trajectory_complete()
         )
-        if all_done:
+        if actions_exhausted:
+            # Settling window: PD-tracked replay often lags collect by a few
+            # frames, so the recorded final pose may not yet satisfy the
+            # success check. Hold the last commanded pose for a bounded number
+            # of frames so the success counter has a chance to accumulate.
+            settle_budget = getattr(self, "_replay_settle_budget", None)
+            if settle_budget is None:
+                settle_budget = max(self.REQUIRED_SUCCESS_STEPS * 4, 240)
+                self._replay_settle_budget = settle_budget
+            self._replay_settle_used = getattr(self, "_replay_settle_used", 0) + 1
+            if self._replay_settle_used <= settle_budget:
+                return None, False, False
             logger.warning("[Replay] Task failed — all actions exhausted.")
+            self._replay_settle_used = 0
             self._advance_replay_episode()
             self.reset_needed = True
             return None, True, False

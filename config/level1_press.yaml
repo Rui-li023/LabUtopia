@@ -20,7 +20,7 @@ replay:
   # episode_indices: [0, 1, 2]
 
 task:
-  max_steps: 1000
+  max_steps: 1500
   material_paths:
     - path: /World/target_button/button
       materials:

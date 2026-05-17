@@ -218,9 +218,13 @@ class CleanBeaker7PolicyTaskController(BaseController):
             # 2. Pour beaker2 to beaker1
             action, record_array = self.pour_beaker2.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
-                target_name=state['beaker_1'],
+                source_size=state['beaker_2_size'],
+                target_position=state['beaker_1_position'],
                 current_joint_velocities=self.robot.get_joint_velocities(),
-                pour_speed=-1
+                gripper_position=state['gripper_position'],
+                source_name=state['beaker_2'],
+                pour_speed=-1,
+                current_joint_positions=state['joint_positions'],
             )
             self.current_beaker_pos = self.object_utils.get_object_xform_position(object_path=self.cfg.beaker_sub_2)
             self.target_pos = self.object_utils.get_object_xform_position(object_path=self.cfg.beaker_sub_1)
@@ -304,9 +308,13 @@ class CleanBeaker7PolicyTaskController(BaseController):
             # 6. Pour beaker1 to target_beaker
             action, record_array = self.pour_beaker1.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
-                target_name=state['target_beaker'],
+                source_size=state['beaker_1_size'],
+                target_position=state['target_position'],
                 current_joint_velocities=self.robot.get_joint_velocities(),
-                pour_speed=-1
+                gripper_position=state['gripper_position'],
+                source_name=state['beaker_1'],
+                pour_speed=-1,
+                current_joint_positions=state['joint_positions'],
             )
             self.current_beaker_pos = self.object_utils.get_object_xform_position(object_path=self.cfg.beaker_sub_1)
             self.target_pos = self.object_utils.get_object_xform_position(object_path=self.cfg.target_sub_beaker)
@@ -400,6 +408,7 @@ class CleanBeaker7PolicyTaskController(BaseController):
         for collector in self.collectors.values():
             collector.close()
 
+    @property
     def episode_num(self):
         """Return the number of completed episodes."""
         return min(collector.episode_count for collector in self.collectors.values())

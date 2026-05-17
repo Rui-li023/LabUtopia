@@ -71,6 +71,14 @@ class OpenController(AtomicBaseController):
     ) -> typing.Tuple[ArticulationAction, np.ndarray]:
         n = current_joint_positions.shape[0]
 
+        # Guard: bail out with a null action if the task could not resolve
+        # the handle pose (USD/task mismatch), avoiding a C++ crash.
+        if handle_position is None:
+            action = self._null_action(n)
+            return action, self._build_record_array(
+                action, current_joint_positions,
+                gripper_state=self._current_gripper_state)
+
         if self._start:
             self._start = False
             self._open_gripper()
@@ -136,7 +144,7 @@ class OpenController(AtomicBaseController):
             return self._null_action(n)
 
         elif self._event == 3:
-            handle_pos[0] -= 0.04 / su
+            handle_pos[0] -= 0.18 / su
             return self._cspace_controller.forward(
                 target_end_effector_position=handle_pos,
                 target_end_effector_orientation=orient)

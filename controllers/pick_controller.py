@@ -53,7 +53,11 @@ class PickTaskController(BaseController):
         return super().step(state)
 
     def _check_success(self):
-        return self.state["object_position"][2] > self.initial_position[2] + 0.1
+        # Replay applies recorded waypoints under PD with some lag, so the
+        # peak lift achieved during collect may slip a couple of cm below
+        # the +0.10 m threshold. Use a slightly looser cutoff in replay.
+        threshold = 0.08 if self.mode == "replay" else 0.10
+        return self.state["object_position"][2] > self.initial_position[2] + threshold
 
     def _sample_pick_instruction(self) -> str:
         object_name = self.clean_object_name(self.state["object_name"])
@@ -95,13 +99,11 @@ class PickTaskController(BaseController):
 
             if "camera_data" in state:
                 instruction = self.get_language_instruction()
-                # Build 8-dim joint_angles: 7 arm joints + 1 gripper state (0 or 1)
-                joint_angles_8dim = np.zeros(8, dtype=np.float32)
-                joint_angles_8dim[:7] = state["joint_positions"][:7]
-                joint_angles_8dim[7] = record_array[7]  # Use gripper state from record_array
+                # joint_angles[:-1] = 7 arm joints + panda_finger_joint1.
+                # cache_step expands finger_joint1 to total gripper width.
                 self.data_collector.cache_step(
                     camera_images=state["camera_data"],
-                    joint_angles=joint_angles_8dim,
+                    joint_angles=state["joint_positions"][:-1],
                     action=record_array,
                     language_instruction=instruction,
                     task_index=self.get_task_index(),

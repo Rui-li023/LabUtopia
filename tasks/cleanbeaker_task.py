@@ -72,12 +72,16 @@ class CleanBeakerTask(BaseTask):
 
         return self.get_basic_state_info(
             object_path=self.TARGET_BEAKER,
+            target_path=self.TARGET_BEAKER,
             additional_info={
-                "beaker_1_position": self.object_utils.get_geometry_center(self.BEAKER_1),
-                "beaker_2_position": self.object_utils.get_geometry_center(self.BEAKER_2),
-                "plat_1_position":   self.object_utils.get_geometry_center(self.PLAT_1),
-                "plat_2_position":   self.object_utils.get_geometry_center(self.PLAT_2),
+                "beaker_1_position": self.object_utils.get_geometry_center(object_path=self.BEAKER_1),
+                "beaker_2_position": self.object_utils.get_geometry_center(object_path=self.BEAKER_2),
+                "beaker_1_size":     self.object_utils.get_object_size(object_path=self.BEAKER_1),
+                "beaker_2_size":     self.object_utils.get_object_size(object_path=self.BEAKER_2),
+                "plat_1_position":   self.object_utils.get_geometry_center(object_path=self.PLAT_1),
+                "plat_2_position":   self.object_utils.get_geometry_center(object_path=self.PLAT_2),
                 "beaker_1":          self.BEAKER_1,
                 "beaker_2":          self.BEAKER_2,
+                "target_beaker":     self.TARGET_BEAKER,
             },
         )

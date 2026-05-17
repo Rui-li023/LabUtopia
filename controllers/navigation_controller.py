@@ -79,6 +79,8 @@ class NavigationController(BaseController):
         """
         if self.mode == "collect":
             return self._step_collect(state)
+        elif self.mode == "replay":
+            return self._step_replay(state)
         else:
             return self._step_infer(state)
     

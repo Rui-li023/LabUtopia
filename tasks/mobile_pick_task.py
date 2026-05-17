@@ -96,9 +96,9 @@ class MobilePickTask(NavigationBaseTask):
 
         object_position = object_size = None
         if self.target_object_path:
-            object_position = self.object_utils.get_geometry_center(self.target_object_path)
-            object_size     = self.object_utils.get_object_size(self.target_object_path)
-            if self.initial_object_position is None:
+            object_position = self.object_utils.get_geometry_center(object_path=self.target_object_path)
+            object_size     = self.object_utils.get_object_size(object_path=self.target_object_path)
+            if self.initial_object_position is None and object_position is not None:
                 self.initial_object_position = object_position.copy()
 
         state = self.get_navigation_state()

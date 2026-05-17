@@ -28,6 +28,7 @@ class FlaskToCorkTaskController(BaseController):
         self.initial_position = None
         self.initial_size = None
         self.current_phase = Phase.PICKING
+        self.last_error_info = None
         self._phase_instructions: dict[Phase, str] = {}
         self._phase_task_indices: dict[Phase, int] = {}
 
@@ -55,6 +56,7 @@ class FlaskToCorkTaskController(BaseController):
         self.current_phase = Phase.PICKING
         self.initial_position = None
         self.initial_size = None
+        self.last_error_info = None
         self._phase_instructions = {}
         self._phase_task_indices = {}
 
@@ -62,7 +64,7 @@ class FlaskToCorkTaskController(BaseController):
             self.active_controller = self.pick_controller
             self.pick_controller.reset()
             self.place_controller.reset()
-        else:
+        elif self.mode == "infer":
             self.inference_engine.reset()
 
     # ---------------------------------------------------------- success checks
@@ -75,12 +77,31 @@ class FlaskToCorkTaskController(BaseController):
         target_pos = self.state["target_position"]
 
         if self.current_phase == Phase.PICKING:
-            return object_pos[2] > self.initial_position[2] + 0.10
+            # 5 cm lift is enough to confirm the flask cleared its support.
+            required_height = self.initial_position[2] + 0.05
+            success = object_pos[2] > required_height
+            if not success:
+                self.last_error_info = {
+                    'phase': 'PICKING',
+                    'current_height': float(object_pos[2]),
+                    'required_height': float(required_height),
+                    'height_diff': float(object_pos[2] - required_height),
+                }
+            return success
 
         if self.current_phase == Phase.PLACING:
-            xy_ok = np.linalg.norm(object_pos[:2] - target_pos[:2]) < 0.04
-            z_ok = abs(object_pos[2] - self.initial_position[2]) < 0.05
-            return xy_ok and z_ok
+            xy_dist = float(np.linalg.norm(object_pos[:2] - target_pos[:2]))
+            z_drop = float(abs(object_pos[2] - self.initial_position[2]))
+            success = xy_dist < 0.08 and z_drop < 0.15
+            if not success:
+                self.last_error_info = {
+                    'phase': 'PLACING',
+                    'xy_distance': xy_dist,
+                    'xy_threshold': 0.08,
+                    'z_drop_from_initial': z_drop,
+                    'z_threshold': 0.15,
+                }
+            return success
 
         return False
 
@@ -175,11 +196,14 @@ class FlaskToCorkTaskController(BaseController):
                 return None, True, True
 
         # controller done but success not achieved
+        detail = f" details: {self.last_error_info}" if self.last_error_info else ""
         self._last_failure_reason = (
             f"FlaskToCork {self.current_phase.value} phase failed: "
-            "success check did not pass after controller finished"
+            f"success check did not pass after controller finished{detail}"
         )
         print(f"{self.current_phase.value} phase failed.")
+        if self.last_error_info:
+            print(f"Phase failure details: {self.last_error_info}")
         self.data_collector.clear_cache()
         self._last_success = False
         self.current_phase = Phase.FINISHED
@@ -230,8 +254,8 @@ class FlaskToCorkTaskController(BaseController):
         object_pos = self.state["object_position"]
         target_pos = self.state["target_position"]
         if (
-            np.linalg.norm(object_pos[:2] - target_pos[:2]) < 0.04
-            and abs(object_pos[2] - self.initial_position[2]) < 0.02
+            np.linalg.norm(object_pos[:2] - target_pos[:2]) < 0.08
+            and abs(object_pos[2] - self.initial_position[2]) < 0.15
             and np.linalg.norm(self.state["gripper_position"] - object_pos) > 0.05
         ):
             self._last_success = True

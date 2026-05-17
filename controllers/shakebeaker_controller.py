@@ -60,7 +60,7 @@ class ShakeBeakerTaskController(BaseController):
             self.pick_controller.reset()
             self.shake_controller.reset()
             self.data_collector.clear_cache()
-        else:
+        elif self.mode == "infer":
             self.inference_engine.reset()
         
     def step(self, state):
@@ -70,6 +70,8 @@ class ShakeBeakerTaskController(BaseController):
             self._initial_position = state['object_position']
         if self.mode == "collect":
             return self._step_collect(state)
+        elif self.mode == "replay":
+            return self._step_replay(state)
         else:
             return self._step_infer(state)
             

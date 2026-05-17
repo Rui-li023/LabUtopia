@@ -49,8 +49,9 @@ class PourController(AtomicBaseController):
         self._physics_dt = 1.0 / control_frequency
         self._pour_default_speed = -120.0 / 180.0 * np.pi
 
-        # Per-episode noise
-        self._height_range_1 = (0.3, 0.4)
+        # Per-episode noise. Keep the first hover reachable for Franka when
+        # the target container is already near tabletop height (~0.87m).
+        self._height_range_1 = (0.15, 0.25)
         self._height_range_2 = (0.1, 0.2)
         self._random_height_1 = self._uniform(*self._height_range_1)
         self._random_height_2 = self._uniform(*self._height_range_2)
@@ -65,11 +66,14 @@ class PourController(AtomicBaseController):
     def _sample_randomization(self):
         self._random_height_1 = self._uniform(*self._height_range_1)
         self._random_height_2 = self._uniform(*self._height_range_2)
-        self._speed_factor = self._uniform(0.8, 1.2)
+        # Narrower speed range so the return rotation always completes within the state machine.
+        self._speed_factor = self._uniform(0.95, 1.1)
         self._x_offset_noise = self._noisy(0.0, 0.01)
+        # Only randomize rotation around the world Z axis: tilting around X/Y misaligns
+        # the bottle from the target XY and produces large pour-distance errors.
         self._orient_noise = np.array([
-            self._noisy(0.0, 5.0),
-            self._noisy(0.0, 5.0),
+            0.0,
+            0.0,
             self._noisy(0.0, 5.0),
         ])
 

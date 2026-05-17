@@ -48,7 +48,7 @@ class StirGlassrodTaskController(BaseController):
         if self.mode == "collect":
             self.pick_controller.reset()
             self.stir_controller.reset()
-        else:
+        elif self.mode == "infer":
             self.inference_engine.reset()
         
     def step(self, state):
@@ -56,6 +56,8 @@ class StirGlassrodTaskController(BaseController):
         
         if self.mode == "collect":
             return self._step_collect(state)
+        elif self.mode == "replay":
+            return self._step_replay(state)
         else:
             return self._step_infer(state)
             

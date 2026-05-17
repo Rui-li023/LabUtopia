@@ -423,7 +423,10 @@ class BaseTask(ABC):
                 continue
 
             # --- Translation perturbation ---
-            new_translation = rand_cfg["base_translation"].copy()
+            # Force float64 because some camera translations come in as int64
+            # (e.g. config values like [2, 0, 2]); += would otherwise refuse to
+            # cast a float-uniform sample into the int array.
+            new_translation = rand_cfg["base_translation"].astype(np.float64, copy=True)
             trans_range = rand_cfg["translation_range"]
             if trans_range is not None:
                 new_translation += np.array([

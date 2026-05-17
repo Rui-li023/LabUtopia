@@ -64,7 +64,9 @@ class CloseController(AtomicBaseController):
 
     def _sample_randomization(self):
         self._approach_noise = self._noisy(0.0, 0.015)
-        self._push_noise = self._noisy(0.0, 0.01)
+        # Positive-only push noise: never push less than the default,
+        # since the downstream success check requires a minimum lid travel.
+        self._push_noise = self._uniform(0.0, 0.01)
 
     # ── Forward ──────────────────────────────────────────────────
 
@@ -82,6 +84,15 @@ class CloseController(AtomicBaseController):
         if end_effector_orientation is None:
             end_effector_orientation = euler_angles_to_quat(
                 [0, 110, 0], degrees=True, extrinsic=False)
+
+        n = current_joint_positions.shape[0]
+        # Guard: bail out with a null action if the task could not resolve
+        # the handle pose (USD/task mismatch), avoiding a C++ crash.
+        if handle_position is None:
+            action = self._null_action(n)
+            return action, self._build_record_array(
+                action, current_joint_positions,
+                gripper_state=self._current_gripper_state)
 
         if self.init_handle_position is None:
             self.init_handle_position = handle_position.copy()

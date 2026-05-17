@@ -9,13 +9,17 @@ from .base_controller import BaseController
 class ShakeTaskController(BaseController):
     def __init__(self, cfg, robot):
         super().__init__(cfg, robot)
-        
-        self.pick_controller = PickController(
-            name="pick_controller",
-            cspace_controller=self.rmp_controller,
-            events_dt=[0.004, 0.002, 0.005, 0.02, 0.05, 0.004, 0.02]
-        )
-        
+
+        # _init_replay_mode (invoked from BaseController.__init__ above) already
+        # creates self.pick_controller for replay mode. Only create it here for
+        # collect / infer modes so we don't clobber the replay-configured one.
+        if not hasattr(self, "pick_controller"):
+            self.pick_controller = PickController(
+                name="pick_controller",
+                cspace_controller=self.rmp_controller,
+                events_dt=[0.004, 0.002, 0.005, 0.02, 0.05, 0.004, 0.02]
+            )
+
         self._shake_positions = []
         self._shake_count = 0
         self._hold_positions = queue.Queue(maxsize=60)
@@ -23,15 +27,25 @@ class ShakeTaskController(BaseController):
         self._shake_success = False
         self._initial_position = None
         self._task_started = False
-            
+
     def _init_collect_mode(self, cfg, robot):
         """Initialize data collection mode"""
         super()._init_collect_mode(cfg, robot)
-        
+
         self.shake_controller = ShakeController(
             name="shake_controller",
             cspace_controller=self.rmp_controller,
         )
+
+    def _init_replay_mode(self, cfg, robot=None):
+        """Create a randomization-disabled pick_controller for reproducibility."""
+        super()._init_replay_mode(cfg, robot)
+        self.pick_controller = PickController(
+            name="pick_controller_replay",
+            cspace_controller=self.rmp_controller,
+            events_dt=[0.004, 0.002, 0.005, 0.02, 0.05, 0.004, 0.02],
+        )
+        self.pick_controller._sample_randomization = lambda: None
 
     def reset(self):
         super().reset()
@@ -47,7 +61,7 @@ class ShakeTaskController(BaseController):
         if self.mode == "collect":
             self.shake_controller.reset()
             self.data_collector.clear_cache()
-        else:
+        elif self.mode == "infer":
             self.inference_engine.reset()
         
     def step(self, state):
@@ -73,6 +87,8 @@ class ShakeTaskController(BaseController):
             
         if self.mode == "collect":
             return self._step_collect(state)
+        elif self.mode == "replay":
+            return self._step_replay(state)
         else:
             return self._step_infer(state)
             

@@ -132,7 +132,7 @@ class OpenTransportPourController(BaseController):
             self.pour_controller.reset()
             self.place_controller2.reset()
             self._set_initial_active_controller()
-        else:
+        elif self.mode == "infer":
             self.inference_engine.reset()
             
     def _check_success(self) -> bool:
@@ -194,6 +194,8 @@ class OpenTransportPourController(BaseController):
         self.every_controller_index += 1
         if self.mode == "collect":
             return self._step_collect(state)
+        elif self.mode == "replay":
+            return self._step_replay(state)
         else:
             return self._step_infer(state)
             

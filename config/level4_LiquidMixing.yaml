@@ -35,7 +35,7 @@ cameras:
   - prim_path: "/World/Camera1"
     name: "camera_1"
     translation: [2.4, 0, 2.4]
-    resolution: [1920, 1080]
+    resolution: [256, 256]
     focal_length: 4
     orientation: [0.61237, 0.35355, 0.35355, 0.61237]
     image_type: "rgb"

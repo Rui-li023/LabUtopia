@@ -158,7 +158,7 @@ class LiquidMixingController(BaseController):
             self.press_controller.reset()
             self.controller_index = 0
             self.active_controller = self.pick_controller1
-        else:
+        elif self.mode == "infer":
             self.inference_engine.reset()
             
     def _check_success(self) -> bool:
@@ -251,6 +251,8 @@ class LiquidMixingController(BaseController):
         self.every_controller_index += 1
         if self.mode == "collect":
             return self._step_collect(state)
+        elif self.mode == "replay":
+            return self._step_replay(state)
         else:
             return self._step_infer(state)
             
