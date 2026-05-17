@@ -1,0 +1,12 @@
+[submodule "policy/lerobot"]
+	path = policy/lerobot
+	url = https://github.com/Scientific-Intelligent-Robot/lerobot.git
+[submodule "policy/lingbot-vla"]
+	path = policy/lingbot-vla
+	url = https://github.com/Scientific-Intelligent-Robot/lingbot-vla.git
+[submodule "policy/Isaac-GR00T"]
+	path = policy/Isaac-GR00T
+	url = https://github.com/Scientific-Intelligent-Robot/Isaac-GR00T.git
+[submodule "policy/openpi"]
+	path = policy/openpi
+	url = https://github.com/Scientific-Intelligent-Robot/openpi.git
