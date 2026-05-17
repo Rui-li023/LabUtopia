@@ -222,9 +222,13 @@ class DataCollector:
     ):
         """Cache each step's data in temporary lists.
 
-        Note: joint_angles and action should be 8-dimensional:
-            - indices 0-6: arm joint positions
-            - index 7: gripper state (0 = open, 1 = closed)
+        joint_angles is 8-dim:
+          - indices 0-6: arm joint positions (rad)
+          - index 7:     panda_finger_joint1 position (m, range [0, 0.04])
+        We expand the finger joint to total gripper opening width (0–0.08 m),
+        since the two Franka fingers are symmetric mimic joints. The recorded
+        agent_pose therefore carries the physical gripper distance, not a
+        discrete 0/1 control signal.
         """
         if task_index is None and language_instruction is not None:
             task_index = self.register_task_instruction(language_instruction)
@@ -234,14 +238,11 @@ class DataCollector:
         for camera_name, image in camera_images.items():
             self.temp_cameras[camera_name].append(image)
 
-        # Discretize gripper state (last dimension) to 0 or 1
-        # Control signal semantics: 0 = open (value >= 0.02), 1 = closed (value < 0.02)
-        joint_angles_discretized = np.asarray(joint_angles, dtype=np.float32).copy()
-        if len(joint_angles_discretized) >= 8:
-            gripper_value = joint_angles_discretized[7]
-            joint_angles_discretized[7] = 1.0 if gripper_value < 0.02 else 0.0
+        joint_angles_state = np.asarray(joint_angles, dtype=np.float32).copy()
+        if len(joint_angles_state) >= 8:
+            joint_angles_state[7] = float(joint_angles_state[7]) * 2.0
 
-        self.temp_agent_pose.append(joint_angles_discretized)
+        self.temp_agent_pose.append(joint_angles_state)
 
         if action is not None:
             # Action already contains discrete gripper state (0=open, 1=closed)
@@ -266,6 +267,12 @@ class DataCollector:
         else:
             if final_joint_positions is None:
                 final_joint_positions = self.temp_agent_pose[-1]
+            else:
+                # Match the finger→width scaling applied in cache_step so the
+                # appended tail entry is consistent with the agent_pose stream.
+                final_joint_positions = np.asarray(final_joint_positions, dtype=np.float32).copy()
+                if len(final_joint_positions) >= 8:
+                    final_joint_positions[7] = float(final_joint_positions[7]) * 2.0
             derived_actions = self.temp_agent_pose[1:] + [final_joint_positions]
             actions_data = np.array(derived_actions)
 
