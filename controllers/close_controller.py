@@ -180,10 +180,8 @@ class CloseTaskController(BaseController):
         language_instruction = self.get_language_instruction()
         if language_instruction is not None:
             state['language_instruction'] = language_instruction
-        elif self.operate_type == "lid":
-            state['language_instruction'] = "Close the lid of the centrifuge"
         else:
-            state['language_instruction'] = "Close the drawer of the object"
+            state['language_instruction'] = f"Close the {self.operate_type} of the object"
         
         action = self.inference_engine.step_inference(state)
         

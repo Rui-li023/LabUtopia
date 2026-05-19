@@ -146,7 +146,7 @@ class OpenTaskController(BaseController):
         if language_instruction is not None:
             state['language_instruction'] = language_instruction
         else:
-            state['language_instruction'] = "Open the door of the object"
+            state['language_instruction'] = f"Open the {self.cfg.task.get('operate_type', 'door')} of the object"
         
         action = self.inference_engine.step_inference(state)
         
@@ -202,10 +202,11 @@ class OpenTaskController(BaseController):
 
     def get_language_instruction(self) -> Optional[str]:
         object_name = self.clean_object_name(self.state['object_name'])
+        operate_type = self.cfg.task.get("operate_type", "door")
         return self._get_cached_instruction(
-            'open',
+            f"open:{operate_type}",
             self._build_instruction_templates(
-                f"Open the door of the {object_name}",
-                f"Open the door of the {object_name} by pulling the handle until it swings open",
+                f"Open the {operate_type} of the {object_name}",
+                f"Open the {operate_type} of the {object_name} by pulling the handle until it swings open",
             ),
         )

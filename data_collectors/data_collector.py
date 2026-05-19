@@ -245,10 +245,14 @@ class DataCollector:
         self.temp_agent_pose.append(joint_angles_state)
 
         if action is not None:
-            # Action already contains discrete gripper state (0=open, 1=closed)
-            # No discretization needed - action comes from AtomicBaseController
-            # which already provides discrete values
-            self.temp_actions.append(np.asarray(action, dtype=np.float32))
+            act = np.asarray(action, dtype=np.float32).copy()
+            # RMPFlow IK can return joint targets shifted by ±2π for the
+            # redundant wrist (j7, index 6). Wrap the action back to within
+            # ±π of the actual joint state so it stays physically meaningful.
+            if act.shape[0] > 6 and joint_angles is not None and len(joint_angles) > 6:
+                ref = float(joint_angles[6])
+                act[6] = ref + (float(act[6]) - ref + np.pi) % (2 * np.pi) - np.pi
+            self.temp_actions.append(act)
 
         if language_instruction is not None:
             self.temp_language_instruction = language_instruction
