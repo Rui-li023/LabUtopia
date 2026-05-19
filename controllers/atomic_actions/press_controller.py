@@ -19,7 +19,7 @@ class PressController(AtomicBaseController):
       - press distance noise (±0.01 m)
     """
 
-    DEFAULT_DT = [0.005, 0.1, 0.01]
+    DEFAULT_DT = [0.005, 0.1, 0.01, 0.005]
 
     def __init__(
         self,
@@ -49,7 +49,7 @@ class PressController(AtomicBaseController):
 
     def _sample_randomization(self):
         self._offset_noise = self._noisy(0.0, 0.03)
-        self._press_noise = self._noisy(0.0, 0.01)
+        self._press_noise = self._noisy(0.0, 0.003)
 
     # ── Forward ──────────────────────────────────────────────────
 
@@ -115,6 +115,27 @@ class PressController(AtomicBaseController):
                     action, current_joint_positions,
                     gripper_state=self._current_gripper_state)
 
+        elif self._event == 3:
+            # Open the gripper first so we release the button before pulling
+            # away — otherwise the closed fingers drag the button back with
+            # the arm and it never sits at its pressed-in position.
+            self._open_gripper()
+            # Retract noticeably further than the approach offset so the EE
+            # ends up well clear of the button (the success criterion needs
+            # wrist→button ≥ 10 cm).
+            offset = 0.15 + self._offset_noise / su
+            target_position[0] -= offset
+            action = self._cspace_controller.forward(
+                target_end_effector_position=target_position,
+                target_end_effector_orientation=end_effector_orientation)
+            if gripper_position is not None and self._xyz_reached(
+                gripper_position, target_position, threshold=0.03
+            ):
+                self._next_event()
+                return action, self._build_record_array(
+                    action, current_joint_positions,
+                    gripper_state=self._current_gripper_state)
+
         self._advance_state()
         return action, self._build_record_array(
             action, current_joint_positions,
@@ -122,6 +143,12 @@ class PressController(AtomicBaseController):
 
     def get_current_event(self) -> int:
         return self._event
+
+    def force_done(self) -> None:
+        """Fast-forward to the terminal phase. Used when the high-level
+        controller detects success (button pressed enough) and wants to stop
+        driving the EE further."""
+        self._event = len(self._events_dt)
 
     # ── Reset ────────────────────────────────────────────────────
 

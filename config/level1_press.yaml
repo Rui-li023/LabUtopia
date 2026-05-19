@@ -6,10 +6,19 @@ controller_type: "press"
 mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_003/lab_003.usd"
 instrument_path: "/World/instrument"
-target_button_path: "/World/target_button"
-distractor_button1_path: "/World/distractor_button_1"
-distractor_button2_path: "/World/distractor_button_2"
-max_episodes: 50
+target_button_path: "/World/instrument/target_button"
+distractor_button1_path: "/World/instrument/distractor_button_1"
+distractor_button2_path: "/World/instrument/distractor_button_2"
+# Prismatic joints that constrain each button. Order MUST match the three
+# button paths above (target, distractor1, distractor2).
+button_joint_paths:
+  - "/World/instrument/PrismaticJoint_00"
+  - "/World/instrument/PrismaticJoint_01"
+  - "/World/instrument/PrismaticJoint_02"
+# instrument xform is scaled 0.001 (mm authoring), so world-space Y offsets
+# applied to joint localPos must be divided by this scale.
+button_joint_localpos_scale: 0.001
+max_episodes: 100
 
 # ── Replay mode ─────────────────────────────────────────────────────────────
 # Set mode: "replay" above to activate.
@@ -22,7 +31,7 @@ replay:
 task:
   max_steps: 1500
   material_paths:
-    - path: /World/target_button/button
+    - path: /World/instrument/target_button/button
       materials:
         - /World/Looks/OmniPBR_Button_Red
       test_materials:

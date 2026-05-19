@@ -8,20 +8,45 @@ from .base_controller import BaseController
 from .atomic_actions.press_controller import PressController
 
 class PressTaskController(BaseController):
+    # Button must be driven in by at least this much for a press to count.
+    # The button has no joint drive, so it stays at its pushed position; the
+    # arm must then retract.
+    PRESS_DEPTH_THRESHOLD = 0.012   # m
+    # EE (gripper) must be at least this far from the button along the press
+    # axis (world X) for the press to be considered complete. ``gripper_x``
+    # is wrist origin (fingertips are ~7 cm further forward), so a wrist→
+    # button distance of 10 cm corresponds to fingertips ~3 cm clear.
+    RETRACT_DISTANCE = 0.10   # m
+    # ``gripper_position`` is the wrist origin, but the fingertips (the
+    # actual contact point) are ~7 cm further forward along the press axis.
+    # So "wrist within ~7 cm of button" already means the fingers are
+    # touching the button. Using a too-tight threshold (e.g. 2 cm) only
+    # triggers contact when fingers have already pushed the button several
+    # cm in — by then the press is too deep.
+    EE_CONTACT_DISTANCE = 0.07   # m
+
     def __init__(self, cfg, robot):
         super().__init__(cfg, robot)
         self._initial_button_x = None
         self._last_button_x = None
-        
+        self._peak_button_x = None
+        self._has_been_pressed = False
+        self._ee_has_contacted = False
+        self._min_ee_to_button = float('inf')
+
     def _init_collect_mode(self, cfg, robot):
         super()._init_collect_mode(cfg, robot)
+        # Joint travel is only 2 cm, so we don't need a long success hold —
+        # otherwise the controller keeps issuing the (now-unreachable) press
+        # target and physics keeps pushing the EE into the button.
+        self.REQUIRED_SUCCESS_STEPS = 5
         self.press_controller = PressController(
             name="press_controller",
             cspace_controller=self.rmp_controller,
             gripper=robot.gripper,
-            # event 0 / event 2 now advance on _xyz_reached; the very small dt
-            # values act only as a long safety-net timeout (≈ 500 frames each).
-            events_dt = [0.002, 0.1, 0.002],
+            # event 0 / 2 / 3 advance on _xyz_reached; the small dt values
+            # act only as a long safety-net timeout (≈ 500 frames each).
+            events_dt = [0.002, 0.1, 0.002, 0.002],
             initial_offset=0.05,
             robot=robot,
         )
@@ -30,6 +55,10 @@ class PressTaskController(BaseController):
         super().reset()
         self._initial_button_x = None
         self._last_button_x = None
+        self._peak_button_x = None
+        self._has_been_pressed = False
+        self._ee_has_contacted = False
+        self._min_ee_to_button = float('inf')
         self._last_logged_event = None
         self._logged_action = False
         if self.mode == "collect":
@@ -59,11 +88,33 @@ class PressTaskController(BaseController):
         self._last_button_x = float(final_object_position[0])
         if self._initial_button_x is None:
             self._initial_button_x = self._last_button_x
-        # Success: the button moved at least 2 mm from its initial X (and any
-        # absolute threshold is also satisfied). The button starts ~0.4; the
-        # original strict check (x > 0.405) requires a fixed 5 mm displacement
-        # that some physics setups never achieve due to joint limits.
-        return (self._last_button_x - self._initial_button_x) > 0.002
+            self._peak_button_x = self._last_button_x
+
+        displacement = self._last_button_x - self._initial_button_x
+        if displacement > (self._peak_button_x - self._initial_button_x):
+            self._peak_button_x = self._last_button_x
+        if displacement > self.PRESS_DEPTH_THRESHOLD:
+            self._has_been_pressed = True
+
+        # Success requires: button was driven in past the depth threshold,
+        # AND the gripper has retracted far enough along the press axis (X).
+        # The button has no spring, so it stays pressed.
+        gripper_pos = None
+        if self.state is not None:
+            gripper_pos = self.state.get('gripper_position')
+        if gripper_pos is None:
+            return False
+        # Use the rigid button mesh (slides under prismatic joint) as the
+        # reference — the parent xform is constant and would trivially
+        # satisfy the retract check from frame 0.
+        ee_to_button = self._last_button_x - float(gripper_pos[0])
+        if ee_to_button < self._min_ee_to_button:
+            self._min_ee_to_button = ee_to_button
+        if ee_to_button < self.EE_CONTACT_DISTANCE:
+            self._ee_has_contacted = True
+        return (self._has_been_pressed
+                and self._ee_has_contacted
+                and ee_to_button >= self.RETRACT_DISTANCE)
 
     def _step_collect(self, state):
         if self._check_success():
@@ -71,13 +122,26 @@ class PressTaskController(BaseController):
         else:
             self.check_success_counter = 0
 
+        # Advance to retract only when the EE has actually reached the button
+        # AND the button has been pressed deep enough. Without the contact
+        # check, the button can drift on its own under gravity and trip
+        # ``_has_been_pressed`` before the EE has even arrived.
+        if (
+            self._has_been_pressed
+            and self._ee_has_contacted
+            and not self.press_controller.is_done()
+            and self.press_controller.get_current_event() == 2
+        ):
+            self.press_controller._next_event()
+
         if (
             self.press_controller.is_done()
             and self.check_success_counter < self.REQUIRED_SUCCESS_STEPS
             and self._check_success()
         ):
-            n_joints = len(state["joint_positions"])
-            null_action = ArticulationAction(joint_positions=[None] * n_joints)
+            hold_action = ArticulationAction(
+                joint_positions=np.asarray(state['joint_positions'], dtype=np.float32)
+            )
             if 'camera_data' in state:
                 self.data_collector.cache_step(
                     camera_images=state['camera_data'],
@@ -85,7 +149,7 @@ class PressTaskController(BaseController):
                     action=np.concatenate([state['joint_positions'][:7], [0.0]]),
                     language_instruction=self.get_language_instruction(),
                 )
-            return null_action, False, False
+            return hold_action, False, False
 
         if not self.press_controller.is_done():
             # Debug: log target + arm state once per event transition so we can
@@ -104,6 +168,7 @@ class PressTaskController(BaseController):
                 current_joint_positions=state['joint_positions'],
                 gripper_control=self.gripper_control,
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat(),
+                press_distance=0.018,
                 gripper_position=state.get('gripper_position'),
             )
             # Debug: print what we are asking the robot to do
@@ -138,7 +203,13 @@ class PressTaskController(BaseController):
                     None if self._last_button_x is None or self._initial_button_x is None
                     else self._last_button_x - self._initial_button_x
                 ),
-                'required_displacement': 0.002,
+                'required_press_depth': self.PRESS_DEPTH_THRESHOLD,
+                'required_retract_distance': self.RETRACT_DISTANCE,
+                'ee_contact_distance': self.EE_CONTACT_DISTANCE,
+                'has_been_pressed': self._has_been_pressed,
+                'ee_has_contacted': self._ee_has_contacted,
+                'min_ee_to_button': self._min_ee_to_button,
+                'atomic_done': self.press_controller.is_done(),
                 'success_counter': self.check_success_counter,
                 'required_counter': self.REQUIRED_SUCCESS_STEPS,
             }

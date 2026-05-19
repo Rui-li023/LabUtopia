@@ -1,29 +1,29 @@
 import random
 import numpy as np
 from typing import Any, Dict, Optional
+from loguru import logger
+
 from .base_task import BaseTask
 
 
 class PressTask(BaseTask):
     """Button-press task with two distractor buttons.
 
-    One of the three buttons is designated as the target; all three are
-    shuffled into random vertical positions each episode so the robot cannot
-    rely on positional memory.  Episode budget: 1000 steps.
+    The three buttons are joint-constrained inside ``/World/instrument``;
+    each has a prismatic joint that locks lateral position. To randomize
+    rest position per episode we shift each joint's anchor on the
+    instrument-side body along Y (before ``world.reset`` so PhysX rebakes
+    the constraint).
     """
 
     _INSTRUMENT_POSITION = np.array([0.73, -0.1, 0.64])
-    # Robot base sits at world Z≈0.71. Button at world Z=0.80 (≈9 cm above
-    # base) forces Franka into an "elbow-below-base" pose with EE pitched
-    # straight down — RMP cannot plan and returns null actions. Keep the
-    # button at a height where the gripper can comfortably reach it while
-    # pointing down (≈0.30 m above the robot base).
-    _BUTTON_BASE_X = 0.30
-    _BUTTON_BASE_Y_RANGE = (-0.06, 0.04)
-    _BUTTON_BASE_Z = 1.05
-    _BUTTON_Z_JITTER = (-0.02, 0.02)
-    _DISTRACTOR1_Y_OFFSET = (-0.25, -0.15)
-    _DISTRACTOR2_Y_OFFSET = (-0.40, -0.30)
+    # Three non-overlapping Y buckets (~5 cm wide, ~10 cm centre-to-centre)
+    # so the three buttons never collide regardless of shuffle order.
+    _Y_BUCKETS = [
+        (0.075, 0.125),   # +Y end
+        (-0.025, 0.025),  # middle
+        (-0.125, -0.075), # -Y end
+    ]
 
     def __init__(self, cfg: Any, world: Any, stage: Any, robot: Any) -> None:
         super().__init__(cfg, world, stage, robot)
@@ -35,27 +35,64 @@ class PressTask(BaseTask):
         self.distractor_button1_path = self.cfg.distractor_button1_path
         self.distractor_button2_path = self.cfg.distractor_button2_path
 
+        self.button_paths = [
+            self.target_button_path,
+            self.distractor_button1_path,
+            self.distractor_button2_path,
+        ]
+        self.joint_paths = list(self.cfg.button_joint_paths)
+        assert len(self.joint_paths) == 3, "button_joint_paths must have 3 entries"
+        # If the joint's body is under a scaled xform (e.g. instrument with
+        # scale=0.001), world-space offsets must be divided by that scale
+        # before being added to localPos.
+        self._joint_lp_scale = float(getattr(self.cfg, "button_joint_localpos_scale", 1.0))
+
+        # Pick the side (0 or 1) whose body is the instrument (static anchor),
+        # not the moving button. We modify that side's localPos so the button
+        # rest world position shifts.
+        self._joint_anchor_side = {}
+        self._joint_base_local_pos = {}
+        for jp in self.joint_paths:
+            b0, b1 = self.object_utils.get_joint_bodies(jp)
+            # Heuristic: if body1 path contains 'button', body0 is instrument.
+            if b1 and "button" in b1.lower():
+                side = 0
+            elif b0 and "button" in b0.lower():
+                side = 1
+            else:
+                side = 0
+            self._joint_anchor_side[jp] = side
+            self._joint_base_local_pos[jp] = self.object_utils.get_joint_local_pos(jp, side=side)
+            logger.info(
+                f"[press task] joint={jp} body0={b0} body1={b1} -> "
+                f"will modify localPos{side}, base={self._joint_base_local_pos[jp]}"
+            )
+
     def reset(self) -> None:
+        # Mutate joint anchors BEFORE world.reset() — PhysX rebakes joint
+        # frames on simulation re-init, so the new USD values need to be in
+        # place first.
+        y_offsets = [random.uniform(*b) for b in self._Y_BUCKETS]
+        random.shuffle(y_offsets)
+
+        for joint_path, dy in zip(self.joint_paths, y_offsets):
+            base = self._joint_base_local_pos.get(joint_path)
+            if base is None:
+                continue
+            side = self._joint_anchor_side[joint_path]
+            new_lp = base.copy()
+            local_dy = dy / self._joint_lp_scale if self._joint_lp_scale != 0 else dy
+            new_lp[1] = base[1] + local_dy
+            self.object_utils.set_joint_local_pos(joint_path, new_lp, side=side)
+            logger.info(
+                f"[press task] {joint_path} localPos{side}: {base.tolist()} -> {new_lp.tolist()} "
+                f"(world_dy={dy:.3f}, local_dy={local_dy:.3f})"
+            )
+
         super().reset()
         self.robot.initialize()
 
-        base_pos = np.array([
-            self._BUTTON_BASE_X,
-            random.uniform(*self._BUTTON_BASE_Y_RANGE),
-            self._BUTTON_BASE_Z + np.random.uniform(*self._BUTTON_Z_JITTER),
-        ])
-        positions = [
-            base_pos,
-            base_pos + np.array([0.0, random.uniform(*self._DISTRACTOR1_Y_OFFSET), 0.0]),
-            base_pos + np.array([0.0, random.uniform(*self._DISTRACTOR2_Y_OFFSET), 0.0]),
-        ]
-        random.shuffle(positions)
-
-        for path, pos in zip(
-            [self.target_button_path, self.distractor_button1_path, self.distractor_button2_path],
-            positions,
-        ):
-            self.object_utils.set_object_position(object_path=path, position=pos)
+        for path in self.button_paths:
             self._record_object_pose(path)
 
     def reset_with_init_state(self, init_state: dict) -> None:
@@ -66,9 +103,14 @@ class PressTask(BaseTask):
         if not self.check_frame_limits(max_steps=1000):
             return None
 
+        # Use the rigid button mesh, not the parent xform, as the target —
+        # the parent never moves and sits at a different X than the actual
+        # contact face, which makes the press controller aim at the wrong
+        # point.
+        rigid_button_path = self.target_button_path + "/button"
         return self.get_basic_state_info(
             object_path=self.target_button_path,
             additional_info={
-                "object_position": self.object_utils.get_object_xform_position(self.target_button_path),
+                "object_position": self.object_utils.get_object_xform_position(rigid_button_path),
             },
         )

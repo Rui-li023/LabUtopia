@@ -231,6 +231,50 @@ class ObjectUtils:
                 return
         xformable.AddOrientOp().Set(rot)
 
+    def _joint_attr(self, joint_path: str, attr_name: str):
+        joint_prim = self._stage.GetPrimAtPath(joint_path)
+        if not joint_prim.IsValid():
+            logger.error(f"Joint prim not found: {joint_path}")
+            return None
+        attr = joint_prim.GetAttribute(attr_name)
+        if not attr or not attr.IsValid():
+            logger.error(f"{attr_name} attr missing on {joint_path}")
+            return None
+        return attr
+
+    def set_joint_local_pos(self, joint_path: str, local_pos: np.ndarray, side: int = 0) -> None:
+        """Set ``physics:localPos{side}`` on a USD physics joint."""
+        attr = self._joint_attr(joint_path, f"physics:localPos{side}")
+        if attr is None:
+            return
+        lp = np.asarray(local_pos, dtype=np.float32)
+        attr.Set(Gf.Vec3f(float(lp[0]), float(lp[1]), float(lp[2])))
+
+    def get_joint_local_pos(self, joint_path: str, side: int = 0) -> np.ndarray:
+        attr = self._joint_attr(joint_path, f"physics:localPos{side}")
+        if attr is None:
+            return None
+        v = attr.Get()
+        return np.array([v[0], v[1], v[2]], dtype=np.float32) if v is not None else None
+
+    def get_joint_bodies(self, joint_path: str):
+        joint_prim = self._stage.GetPrimAtPath(joint_path)
+        if not joint_prim.IsValid():
+            return None, None
+        j = UsdPhysics.Joint(joint_prim)
+        b0 = j.GetBody0Rel().GetTargets()
+        b1 = j.GetBody1Rel().GetTargets()
+        b0p = str(b0[0]) if b0 else None
+        b1p = str(b1[0]) if b1 else None
+        return b0p, b1p
+
+    # Backward-compat shims
+    def set_joint_local_pos0(self, joint_path: str, local_pos: np.ndarray) -> None:
+        self.set_joint_local_pos(joint_path, local_pos, side=0)
+
+    def get_joint_local_pos0(self, joint_path: str) -> np.ndarray:
+        return self.get_joint_local_pos(joint_path, side=0)
+
     def get_revolute_joint_positions(self, joint_path: str) -> np.ndarray:
         joint_prim = self._stage.GetPrimAtPath(joint_path)
 
