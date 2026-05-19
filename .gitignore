@@ -219,3 +219,4 @@ missing_assets.txt
 
 # Claude Code local config
 .claude/
+local/
