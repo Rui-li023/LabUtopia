@@ -20,7 +20,8 @@ def main():
     ap.add_argument("--src", required=True, type=Path, help="LabUtopia run dir (contains dataset/)")
     ap.add_argument("--dst", required=True, type=Path, help="Output LeRobot dataset root")
     ap.add_argument("--version", required=True, choices=["v2.1", "v3.0"])
-    ap.add_argument("--fps", type=int, default=60)
+    ap.add_argument("--fps", type=int, default=None,
+                    help="Override fps; default: probe from source mp4 (LabUtopia=30)")
     ap.add_argument("--robot", default="franka")
     args = ap.parse_args()
 

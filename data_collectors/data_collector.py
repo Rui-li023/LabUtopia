@@ -126,8 +126,11 @@ def _write_episode_data(
         _, height, width, _ = image_data.shape
         video_path = os.path.join(episode_dir, f"{camera_name}.mp4")
         try:
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            fourcc = cv2.VideoWriter_fourcc(*"avc1")
             writer = cv2.VideoWriter(video_path, fourcc, 30, (width, height))
+            if not writer.isOpened():
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                writer = cv2.VideoWriter(video_path, fourcc, 30, (width, height))
             if not writer.isOpened():
                 logger.error(f"Failed to open VideoWriter for {video_path}")
                 continue
@@ -175,7 +178,7 @@ class DataCollector:
                 for image_type in config["image_type"].split("+"):
                     self.temp_cameras[f"{config['name']}_{image_type}"] = []
             else:
-                self.temp_cameras[f"{config['name']}_{config['image_type']}"] = []
+                self.temp_cameras[config['name']] = []
 
         self.temp_agent_pose = []
         self.temp_actions = []

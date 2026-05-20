@@ -20,7 +20,7 @@ replay:
 
 infer:
   type: "local"
-  obs_names: {"camera_1_rgb": 'camera_1_rgb', "camera_2_rgb": 'camera_2_rgb'}
+  obs_names: {"image": 'camera_1_rgb', "image_2": 'camera_2_rgb'}
   policy_model_path: ""
   policy_config_path: ""
   normalizer_path: ""
@@ -30,10 +30,10 @@ infer:
   timeout: 30
   max_retries: 3
 
-cameras_names: ["camera_1", "camera_2", "camera_3"]
+cameras_names: ["image", "image_2", "wrist_image"]
 cameras:
   - prim_path: "/World/Camera1"
-    name: "camera_1"
+    name: "image"
     translation: [2, 0, 2]
     resolution: [256, 256]
     focal_length: 4
@@ -41,7 +41,7 @@ cameras:
     image_type: "rgb"
 
   - prim_path: "/World/Camera2"
-    name: "camera_2"
+    name: "image_2"
     translation: [0.1, 0, 2.5]
     resolution: [256, 256]
     focal_length: 4
@@ -49,7 +49,7 @@ cameras:
     image_type: "rgb"
 
   - prim_path: "/World/Franka/panda_hand/arm_camera"
-    name: "camera_3"
+    name: "wrist_image"
     resolution: [256, 256]
     image_type: "rgb"
 

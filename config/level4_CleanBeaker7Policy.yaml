@@ -70,7 +70,7 @@ normalizer_paths:
 
 cameras:
   - prim_path: "/World/Camera1"
-    name: "camera_1"
+    name: "image"
     translation: [2, 0, 2]
     resolution: [256, 256]
     focal_length: 5
@@ -78,7 +78,7 @@ cameras:
     image_type: "rgb"
 
   - prim_path: "/World/Camera2"
-    name: "camera_2"
+    name: "image_2"
     translation: [0.1, 0, 2.5]
     resolution: [256, 256]
     focal_length: 4

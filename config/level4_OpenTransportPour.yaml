@@ -17,7 +17,7 @@ replay:
 
 infer:
   type: "local"
-  obs_names: {"camera_1_rgb": 'camera_1_rgb', "camera_2_rgb": 'camera_2_rgb'}
+  obs_names: {"image": 'camera_1_rgb', "image_2": 'camera_2_rgb'}
   policy_model_path: "outputs/train/2025.07.29/17.08.44_train_act_image_pick_act/checkpoints/latest.ckpt"
   policy_config_path: "outputs/train/2025.07.29/17.08.44_train_act_image_pick_act/.hydra/config.yaml"
   normalizer_path: "outputs/train/2025.07.29/17.08.44_train_act_image_pick_act/checkpoints/normalize.ckpt"
@@ -59,7 +59,7 @@ task:
 
 cameras:
   - prim_path: "/World/Camera1"
-    name: "camera_1"
+    name: "image"
     translation: [-0.7, 1.4, 1.4]
     resolution: [256, 256]
     focal_length: 2
@@ -67,7 +67,7 @@ cameras:
     image_type: "rgb"
 
   - prim_path: "/World/Camera2"
-    name: "camera_2"
+    name: "image_2"
     translation: [-1, -0.1, 3.6]
     resolution: [256, 256]
     focal_length: 4
@@ -75,7 +75,7 @@ cameras:
     image_type: "rgb"
 
   - prim_path: "/World/Franka/panda_hand/arm_camera"
-    name: "camera_3"
+    name: "wrist_image"
     resolution: [256, 256]
     image_type: "rgb"
 

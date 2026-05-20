@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import cv2
@@ -32,7 +33,11 @@ from .reader import Episode, discover_run, iter_episodes
 from .stats import Accum
 
 CODEBASE_VERSION = "v2.1"
-CHUNK = 0  # We put everything in chunk-000 (small datasets)
+CHUNK_SIZE = 1000  # LeRobot convention: 1000 episodes per chunk-{NNN}/ folder
+
+
+def _chunk_of(ep_idx: int) -> int:
+    return ep_idx // CHUNK_SIZE
 
 
 def _features(state_dim: int, action_dim: int, image_shape: tuple, cameras: list[str], fps: int) -> dict:
@@ -73,11 +78,31 @@ def _features(state_dim: int, action_dim: int, image_shape: tuple, cameras: list
     return out
 
 
-def _copy_video(src: Path, dst: Path):
-    """LabUtopia main.py already writes H264/yuv420p mp4s, so a plain copy
-    is sufficient — no re-encoding needed."""
+def _probe_codec(path: Path) -> str:
+    cap = cv2.VideoCapture(str(path))
+    fourcc_int = int(cap.get(cv2.CAP_PROP_FOURCC))
+    cap.release()
+    fourcc = "".join([chr((fourcc_int >> 8 * i) & 0xFF) for i in range(4)]).strip()
+    # avc1 / h264 → h264;  mp4v / FMP4 / xvid → mpeg4
+    return "h264" if fourcc.lower() in ("avc1", "h264") else "mpeg4"
+
+
+def _copy_video(src: Path, dst: Path, fps: int):
+    """Copy source mp4 into the LeRobot layout, transcoding to H264/yuv420p
+    when the source uses a different codec (LabUtopia historically wrote
+    mpeg4 via OpenCV mp4v). LeRobot loaders expect H264 for reliable random
+    seeking."""
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+    if _probe_codec(src) == "h264":
+        shutil.copy2(src, dst)
+        return
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error",
+         "-i", str(src),
+         "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-r", str(fps), "-an", str(dst)],
+        check=True,
+    )
 
 
 def _scan_pixel_stats(video_paths: list[Path], frame_stride: int = 10) -> dict | None:
@@ -108,19 +133,21 @@ def _scan_pixel_stats(video_paths: list[Path], frame_stride: int = 10) -> dict |
             "count": out["count"]}
 
 
-def write_v21(src: Path, dst: Path, fps: int = 60, robot_type: str = "franka") -> dict:
+def write_v21(src: Path, dst: Path, fps: int | None = None, robot_type: str = "franka") -> dict:
     info_disc = discover_run(src)
     state_dim = info_disc["state_dim"]
     action_dim = info_disc["action_dim"]
     cameras = info_disc["cameras"]
     image_shape = info_disc["image_shape"]
+    # Prefer the fps actually encoded in the source mp4 over any caller-supplied
+    # default — LabUtopia writes 30 fps, but earlier defaults were 60.
+    if fps is None:
+        fps = info_disc.get("fps") or 30
 
     if dst.exists():
         shutil.rmtree(dst)
-    (dst / "data" / f"chunk-{CHUNK:03d}").mkdir(parents=True, exist_ok=True)
-    for cam in cameras:
-        (dst / "videos" / f"chunk-{CHUNK:03d}" / f"observation.images.{cam}").mkdir(parents=True, exist_ok=True)
     (dst / "meta").mkdir(parents=True, exist_ok=True)
+    # chunk-{NNN}/ subdirs are created on demand per episode below.
 
     # Tasks table (collect in pass 1)
     tasks: list[str] = []
@@ -197,7 +224,9 @@ def write_v21(src: Path, dst: Path, fps: int = 60, robot_type: str = "franka") -
             "task_index":        np.full(T, task_index, dtype=np.int64),
             "next.done":         np.array([False] * (T - 1) + [True], dtype=bool),
         })
-        df.to_parquet(dst / "data" / f"chunk-{CHUNK:03d}" / f"episode_{ep.index:06d}.parquet",
+        chunk_idx = _chunk_of(ep.index)
+        (dst / "data" / f"chunk-{chunk_idx:03d}").mkdir(parents=True, exist_ok=True)
+        df.to_parquet(dst / "data" / f"chunk-{chunk_idx:03d}" / f"episode_{ep.index:06d}.parquet",
                       index=False)
 
         # Per-episode stats (scalar/feature)
@@ -215,8 +244,10 @@ def write_v21(src: Path, dst: Path, fps: int = 60, robot_type: str = "franka") -
         for cam, src_vid in ep.video_paths.items():
             if not src_vid.exists():
                 continue
-            out_vid = dst / "videos" / f"chunk-{CHUNK:03d}" / f"observation.images.{cam}" / f"episode_{ep.index:06d}.mp4"
-            _copy_video(src_vid, out_vid)
+            cam_dir = dst / "videos" / f"chunk-{chunk_idx:03d}" / f"observation.images.{cam}"
+            cam_dir.mkdir(parents=True, exist_ok=True)
+            out_vid = cam_dir / f"episode_{ep.index:06d}.mp4"
+            _copy_video(src_vid, out_vid, fps=fps)
             cam_video_paths[cam].append(out_vid)
             # Per-episode pixel stats
             ep_stats[f"observation.images.{cam}"] = _video_pixel_stats(out_vid)
@@ -266,8 +297,8 @@ def write_v21(src: Path, dst: Path, fps: int = 60, robot_type: str = "franka") -
         "total_frames": total_frames,
         "total_tasks": len(tasks),
         "total_videos": total_episodes * len(cameras),
-        "total_chunks": 1,
-        "chunks_size": 1000,
+        "total_chunks": (total_episodes + CHUNK_SIZE - 1) // CHUNK_SIZE,
+        "chunks_size": CHUNK_SIZE,
         "fps": fps,
         "splits": {"train": f"0:{total_episodes}"},
         "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",

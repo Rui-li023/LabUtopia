@@ -17,7 +17,7 @@ replay:
 
 infer:
   type: "remote" # "local", "remote"
-  obs_names: {"camera_1_rgb": 'camera_1_rgb', "camera_2_rgb": 'camera_2_rgb', "camera_3_rgb": 'camera_3_rgb'}
+  obs_names: {"image": 'camera_1_rgb', "image_2": 'camera_2_rgb', "wrist_image": 'camera_3_rgb'}
   policy_model_path: ""
   policy_config_path: ""
   normalizer_path: ""
@@ -97,7 +97,7 @@ lighting:
 
 cameras:
   - prim_path: "/World/Camera1"
-    name: "camera_1"
+    name: "image"
     translation: [1.6, 0, 1.85]
     resolution: [256, 256]
     focal_length: 4
@@ -112,7 +112,7 @@ cameras:
       focal_length_range: [-0.5, 0.5]
 
   - prim_path: "/World/Camera2"
-    name: "camera_2"
+    name: "image_2"
     translation: [0.17, 0, 2.3]
     resolution: [256, 256]
     focal_length: 4
@@ -127,7 +127,7 @@ cameras:
       focal_length_range: [-0.5, 0.5]
 
   - prim_path: ${robot_camera_profiles.${robot.type}.arm_camera_prim_path}
-    name: "camera_3"
+    name: "wrist_image"
     translation: ${robot_camera_profiles.${robot.type}.arm_camera_translation}
     orientation: ${robot_camera_profiles.${robot.type}.arm_camera_orientation}
     focal_length: ${robot_camera_profiles.${robot.type}.arm_camera_focal_length}

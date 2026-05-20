@@ -65,23 +65,54 @@ def _features(state_dim: int, action_dim: int, image_shape: tuple, cameras: list
     return out
 
 
-def _concat_videos(parts: list[Path], out_path: Path):
-    """Concat without re-encoding (LabUtopia output is already H264/yuv420p
-    with identical params, so the concat demuxer + stream copy is safe)."""
+def _probe_codec(path: Path) -> str:
+    cap = cv2.VideoCapture(str(path))
+    fourcc_int = int(cap.get(cv2.CAP_PROP_FOURCC))
+    cap.release()
+    fourcc = "".join([chr((fourcc_int >> 8 * i) & 0xFF) for i in range(4)]).strip()
+    return "h264" if fourcc.lower() in ("avc1", "h264") else "mpeg4"
+
+
+def _transcode_to_h264(src: Path, dst: Path, fps: int):
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error",
+         "-i", str(src),
+         "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-r", str(fps), "-an", str(dst)],
+        check=True,
+    )
+
+
+def _concat_videos(parts: list[Path], out_path: Path, fps: int):
+    """Concat all per-episode videos into one file.
+
+    If any source isn't already H264/yuv420p, transcode each into a temp
+    directory first so the concat demuxer + stream copy operates on
+    consistent H264 inputs."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
-        for p in parts:
-            f.write(f"file '{p.resolve()}'\n")
-        list_file = f.name
-    try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error",
-             "-f", "concat", "-safe", "0", "-i", list_file,
-             "-c", "copy", str(out_path)],
-            check=True,
-        )
-    finally:
-        Path(list_file).unlink(missing_ok=True)
+    needs_transcode = any(_probe_codec(p) != "h264" for p in parts)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        if needs_transcode:
+            transcoded = []
+            for i, p in enumerate(parts):
+                tp = Path(tmpdir) / f"part_{i:06d}.mp4"
+                _transcode_to_h264(p, tp, fps=fps)
+                transcoded.append(tp)
+            parts = transcoded
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            for p in parts:
+                f.write(f"file '{p.resolve()}'\n")
+            list_file = f.name
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error",
+                 "-f", "concat", "-safe", "0", "-i", list_file,
+                 "-c", "copy", str(out_path)],
+                check=True,
+            )
+        finally:
+            Path(list_file).unlink(missing_ok=True)
 
 
 def _video_duration_s(path: Path) -> float:
@@ -117,12 +148,14 @@ def _scan_pixel_stats_from_videos(video_paths: list[Path], frame_stride: int = 1
             "count": out["count"]}
 
 
-def write_v30(src: Path, dst: Path, fps: int = 60, robot_type: str = "franka") -> dict:
+def write_v30(src: Path, dst: Path, fps: int | None = None, robot_type: str = "franka") -> dict:
     info_disc = discover_run(src)
     state_dim = info_disc["state_dim"]
     action_dim = info_disc["action_dim"]
     cameras = info_disc["cameras"]
     image_shape = info_disc["image_shape"]
+    if fps is None:
+        fps = info_disc.get("fps") or 30
 
     if dst.exists():
         shutil.rmtree(dst)
@@ -190,7 +223,7 @@ def write_v30(src: Path, dst: Path, fps: int = 60, robot_type: str = "franka") -
         if not cam_episode_videos[cam]:
             continue
         out_vid = dst / "videos" / f"observation.images.{cam}" / f"chunk-{CHUNK_IDX:03d}" / f"file-{FILE_IDX:03d}.mp4"
-        _concat_videos(cam_episode_videos[cam], out_vid)
+        _concat_videos(cam_episode_videos[cam], out_vid, fps=fps)
         final_video_paths[cam] = out_vid
         accum = 0.0
         for d in cam_durations[cam]:

@@ -84,6 +84,17 @@ class PickTaskController(BaseController):
         else:
             self.check_success_counter = 0
 
+        # Early termination: as soon as the bottle is lifted and held for the
+        # required window, stop. Otherwise the atomic pick controller's final
+        # null-action phase (event 6) records ~167 frames of "frozen lift_target
+        # + closed gripper", teaching the policy a strong "do nothing" attractor.
+        if self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS:
+            self._last_success = True
+            self._last_failure_reason = ""
+            self.data_collector.write_cached_data(state["joint_positions"][:-1])
+            self.reset_needed = True
+            return None, True, True
+
         if not self.pick_controller.is_done():
             action, record_array = self.pick_controller.forward(
                 picking_position=state["object_position"],

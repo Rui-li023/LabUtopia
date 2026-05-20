@@ -68,18 +68,14 @@ class FrankaTrajectoryController(RMPFlowController):
                     self._gripper_dof_indices = []
 
     def _map_gripper_state_to_positions(self, state: float) -> np.ndarray:
-        """Map 0/1 gripper state to actual joint positions.
+        """Map binary gripper command (0=open, 1=closed) to finger positions.
 
-        Args:
-            state: 0.0 = open, 1.0 = closed
-
-        Returns:
-            np.ndarray: 2-element array of gripper joint positions
+        Training convention: action[7] ∈ {0, 1}. Threshold at 0.5 since
+        model outputs cluster around 0 or 1 — intermediate values are noise.
         """
-        if state >= 0.5:  # closed
+        if float(state) >= 0.5:
             return self._gripper_closed_joint_pos.copy()
-        else:  # open
-            return self._gripper_open_joint_pos.copy()
+        return self._gripper_open_joint_pos.copy()
 
     def _gripper_action_extras(self, gripper_state: float, n_dof: int):
         """Return (efforts, velocities) for the current gripper mode.

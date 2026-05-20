@@ -40,12 +40,16 @@ def discover_run(data_dir: Path) -> dict:
     with h5py.File(first / f"{first.name}.h5", "r") as f:
         state_dim = int(f["agent_pose"].shape[1])
         action_dim = int(f["actions"].shape[1])
-    # Image shape from first frame of first camera
+    # Image shape + fps from first frame of first camera
+    fps = None
     if cameras:
         cap = cv2.VideoCapture(str(first / f"{cameras[0]}.mp4"))
         ok, frame = cap.read()
+        src_fps = cap.get(cv2.CAP_PROP_FPS)
         cap.release()
         image_shape = (frame.shape[0], frame.shape[1], 3) if ok else (256, 256, 3)
+        if src_fps and src_fps > 0:
+            fps = int(round(src_fps))
     else:
         image_shape = (256, 256, 3)
     return {
@@ -54,6 +58,7 @@ def discover_run(data_dir: Path) -> dict:
         "state_dim": state_dim,
         "action_dim": action_dim,
         "image_shape": image_shape,
+        "fps": fps,
     }
 
 

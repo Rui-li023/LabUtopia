@@ -17,7 +17,7 @@ replay:
 
 infer:
   type: "local"
-  obs_names: {"camera_1_rgb": 'camera_1_rgb', "camera_2_rgb": 'camera_2_rgb'}
+  obs_names: {"image": 'camera_1_rgb', "image_2": 'camera_2_rgb'}
   policy_model_path: ""
   policy_config_path: ""
   normalizer_path: ""

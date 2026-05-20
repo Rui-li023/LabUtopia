@@ -3,7 +3,7 @@ name: Level1_pick
 task_type: "pick"
 controller_type: "pick"
 
-mode: "collect"  # "collect", "infer", or "replay"
+mode: "infer"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
 max_episodes: 50
 
@@ -17,12 +17,15 @@ replay:
 
 infer:
   type: "remote"
-  obs_names: {"camera_1_rgb": 'camera_1_rgb', "camera_2_rgb": 'camera_2_rgb', "camera_3_rgb": 'camera_3_rgb'}
+  obs_names: {"image": 'observation/image', "image_2": 'observation/wrist_image', "wrist_image": 'observation/wrist_image_2'}
+  prompt: "Pick up the conical bottle from the table and lift it clear of the surface."
   policy_model_path: ""
   policy_config_path: ""
   normalizer_path: ""
   host: "127.0.0.1"
-  port: 8000
+  port: 18081
+  action_chunk_len: 50
+  image_color: bgr
   n_obs_steps: 1
   timeout: 30
   max_retries: 3
@@ -38,7 +41,7 @@ task:
 
 cameras:
   - prim_path: "/World/Camera1"
-    name: "camera_1"
+    name: "image"
     translation: [1.6, 0, 1.85]
     resolution: [256, 256]
     focal_length: 4
@@ -46,7 +49,7 @@ cameras:
     image_type: "rgb"
 
   - prim_path: "/World/Camera2"
-    name: "camera_2"
+    name: "image_2"
     translation: [0.17, 0, 2.3]
     resolution: [256, 256]
     focal_length: 4
@@ -54,7 +57,7 @@ cameras:
     image_type: "rgb"
 
   - prim_path: "/World/Franka/panda_hand/arm_camera"
-    name: "camera_3"
+    name: "wrist_image"
     resolution: [256, 256]
     image_type: "rgb"
 

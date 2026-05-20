@@ -88,7 +88,13 @@ class BaseInferenceEngine(ABC):
                 obs_key = self.camera_to_obs[cam_name]
                 self.obs_history_dict[obs_key].append(image)
         
-        self.obs_history_pose.append(state['joint_positions'][:-1])
+        # Match DataCollector.cache_step: agent_pose stores finger_joint1 × 2
+        # (total gripper width, 0–0.08 m). Without this scaling the policy
+        # sees state[7] at half the magnitude it was trained on.
+        pose = np.asarray(state['joint_positions'][:-1], dtype=np.float32).copy()
+        if pose.shape[0] >= 8:
+            pose[7] *= 2.0
+        self.obs_history_pose.append(pose)
         
         if 'language_instruction' in state:
             self.language_instruction = state['language_instruction']
@@ -139,7 +145,8 @@ class BaseInferenceEngine(ABC):
             obs_dict = self._prepare_observation_dict()
             
             joint_positions = self._predict_action(obs_dict, self.language_instruction)
-            self.trajectory_controller.generate_trajectory(joint_positions[:40, :])
+            chunk_len = int(getattr(self.cfg.infer, "action_chunk_len", 10))
+            self.trajectory_controller.generate_trajectory(joint_positions[:chunk_len, :])
         
         return self.trajectory_controller.get_next_action()
     

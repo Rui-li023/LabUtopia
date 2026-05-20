@@ -208,7 +208,7 @@ class BaseTask(ABC):
                     for k, v in record.items():
                         camera_data[f"{cam_cfg.name}_{k}"] = v
                 else:
-                    camera_data[f"{cam_cfg.name}_{cam_cfg.image_type}"] = record
+                    camera_data[cam_cfg.name] = record
             if display is not None:
                 display_data[cam_cfg.name] = display
         return camera_data, display_data
