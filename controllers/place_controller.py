@@ -234,21 +234,29 @@ class PlaceTaskController(BaseController):
         if self.current_phase == Phase.FINISHED:
             self.reset_needed = True
             return None, True, self._last_success
-        
-        if self.current_phase == Phase.PICKING:
-            action = None
+
+        if not self.pick_controller.is_done():
+            # Scripted pick is still running — atomic state machine drives the
+            # robot until the object is grasped and lifted.
             action, _ = self.pick_controller.forward(
-                    picking_position=state['object_position'],
-                    current_joint_positions=state['joint_positions'],
-                    object_size=state['object_size'],
-                    object_name=state['object_name'],
-                    gripper_control=self.gripper_control,
-                    gripper_position=state['gripper_position'],
-                    end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
-                )    
-        else:
-            state['language_instruction'] = self.get_language_instruction()
-            action = self.inference_engine.step_inference(state)
+                picking_position=state['object_position'],
+                current_joint_positions=state['joint_positions'],
+                object_size=state['object_size'],
+                object_name=state['object_name'],
+                gripper_control=self.gripper_control,
+                gripper_position=state['gripper_position'],
+                end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
+            )
+            return action, False, False
+
+        # Pick atomic finished: switch once to PLACING so the VLA owns the
+        # rest of the trajectory. (Mirrors pour_controller._step_infer.)
+        if self.current_phase == Phase.PICKING:
+            self.current_phase = Phase.PLACING
+            print("Pick task success! Switching to place (VLA)...")
+
+        state['language_instruction'] = self.get_language_instruction()
+        action = self.inference_engine.step_inference(state)
         return action, False, self.is_success()
 
     def is_success(self):

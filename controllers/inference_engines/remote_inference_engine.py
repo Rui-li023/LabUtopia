@@ -85,8 +85,13 @@ class RemoteInferenceEngine(BaseInferenceEngine):
                             latest_image = np.repeat(latest_image, 3, axis=2)
                     elif latest_image.ndim == 2:
                         latest_image = np.repeat(latest_image[:, :, np.newaxis], 3, axis=2)
-                    # Training mp4 was stored as BGR (cv2 wrote BGR, training
-                    # loader likely reads BGR without cvtColor). Swap to match.
+                    # Dataset mp4s are colorimetrically RGB (data_collector does
+                    # RGB2BGR before cv2.VideoWriter, which is the conversion cv2
+                    # expects — the decoded frames are correct RGB). This swap is
+                    # only needed when a VLA's training loader reads mp4 with a
+                    # bare cv2.VideoCapture and skips cvtColor; for loaders that
+                    # output RGB (LeRobot default via torchvision/pyav), set
+                    # image_color: rgb in the model's eval config instead.
                     if getattr(self.cfg.infer, "image_color", "bgr") == "bgr":
                         latest_image = latest_image[:, :, ::-1].copy()
                     observation[obs_key] = latest_image

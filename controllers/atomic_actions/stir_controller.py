@@ -134,6 +134,12 @@ class StirController(AtomicBaseController):
             target[0] += self._stir_radius * np.cos(self._current_stir_angle)
             target[1] += self._stir_radius * np.sin(self._current_stir_angle)
             target[2] += 0.1 / su
+            # Early-exit after ~2 full revolutions so we don't record hundreds
+            # of redundant stirring frames (was capped only by _t-driven advance
+            # over event_dt[3]=0.001 ≈ 1000 steps; the policy would otherwise
+            # learn to keep stirring indefinitely).
+            if self._current_stir_angle >= 4 * np.pi:
+                self._next_event()
             return self._cspace_controller.forward(
                 target_end_effector_position=target,
                 target_end_effector_orientation=orient)

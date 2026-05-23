@@ -93,6 +93,17 @@ class ShakeTaskController(BaseController):
             return self._step_infer(state)
             
     def _step_collect(self, state):
+        # Early termination: once shake success criteria are met (height +
+        # 5 detected shake cycles), stop. Otherwise the atomic shake_controller
+        # keeps running through events 8-9 (return to center + null tail),
+        # which trains the policy to keep shaking forever.
+        if self.is_success():
+            self._last_failure_reason = ""
+            self.data_collector.write_cached_data(state['joint_positions'][:-1])
+            self._last_success = True
+            self.reset_needed = True
+            return None, True, True
+
         if not self.shake_controller.is_done():
             action, record_array = self.shake_controller.forward(
                 current_joint_positions=self.robot.get_joint_positions(),
