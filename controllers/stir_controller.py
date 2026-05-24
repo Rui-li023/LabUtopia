@@ -194,24 +194,28 @@ class StirTaskController(BaseController):
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat(),
                 after_offset_z=0.15,
             )
-            
-            final_object_position = state['glass_rod_position']
-            if final_object_position is not None and final_object_position[2] > 0.82:
-                self.use_stir_model = True
-
             self.gripper_control.update_grasped_object_position()
-
             return action, False, False
-        
-        state['language_instruction'] = self.get_language_instruction()
-        
-        if self.use_stir_model:
-            action = self.inference_engine.step_inference(state)
-            self.gripper_control.update_grasped_object_position()
 
-            return action, False, self._check_success()
-        
-        return ArticulationAction(), False, False
+        # Pick atomic finished: hand off to VLA unconditionally (mirrors
+        # place/pour). The old `use_stir_model` gate keyed off rod height
+        # > 0.82 DURING the pick phase only — infer mode's fast events_dt
+        # makes pick_controller mark itself done before physics catches up,
+        # so the gate never flipped and the robot received empty actions.
+        state['language_instruction'] = self.get_language_instruction()
+        action = self.inference_engine.step_inference(state)
+        self.gripper_control.update_grasped_object_position()
+
+        # _check_success sets self._last_success when its 240-frame
+        # counter trips. Exit immediately so we don't burn the rest of
+        # max_steps after success.
+        succ = self._check_success()
+        if succ:
+            self._last_failure_reason = ""
+            self.reset_needed = True
+            return action, True, True
+
+        return action, False, False
     
     def _check_success(self):
         object_pos = self.state['glass_rod_position']

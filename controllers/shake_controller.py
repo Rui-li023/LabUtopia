@@ -134,7 +134,16 @@ class ShakeTaskController(BaseController):
         state['language_instruction'] = self.get_language_instruction()
         action = self.inference_engine.step_inference(state)
 
-        return action, self._last_success, self.is_success()
+        # is_success() mutates internal state (_shake_positions, _shake_count,
+        # _hold_positions). Call exactly once per step.
+        succ = self.is_success()
+        if succ:
+            self._last_success = True
+            self._last_failure_reason = ""
+            self.reset_needed = True
+            return action, True, True
+
+        return action, False, False
         
     def _check_success(self) -> bool:
         """Evaluate whether the current state meets the task success criterion."""
