@@ -20,8 +20,8 @@ import numpy as np
 from pathlib import Path
 
 SKIP_CONFIGS = {
-    "level5_Navigation",
-    "level5_Mobile_manipulation",
+    "level5_navigation",
+    "level5_mobile_manipulation",
     "grasp_profiles",
 }
 

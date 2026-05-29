@@ -1,4 +1,4 @@
-name: Level1_shake
+name: level1_shake
 
 task_type: "shake"
 controller_type: "shake"

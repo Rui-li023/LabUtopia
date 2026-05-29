@@ -96,8 +96,8 @@
 重要：`task_type` 和 `controller_type` 不一定相同。
 例如：
 
-- `level1_open_door.yaml` 使用 `task_type: "openclose"` + `controller_type: "open"`
-- `level1_close_door.yaml` 使用 `task_type: "openclose"` + `controller_type: "close"`
+- `level1_open_door.yaml` 使用 `task_type: "open_close"` + `controller_type: "open"`
+- `level1_close_door.yaml` 使用 `task_type: "open_close"` + `controller_type: "close"`
 
 不要想当然把二者改成同名。
 
@@ -147,8 +147,8 @@
 
 ```bash
 python main.py --config-name level1_pick
-python main.py --config-name level4_CleanBeaker
-python main.py --config-name level5_Navigation --no-video
+python main.py --config-name level4_clean_beaker
+python main.py --config-name level5_navigation --no-video
 ```
 
 说明：
@@ -222,9 +222,9 @@ python tests/test_config_files.py
 
 ## 7. 已知陷阱
 
-- `main.py` 的 `--config-name` 默认值当前是 `level3_Heat_Liquid`，与仓库实际配置文件名不一致；运行时请显式传 `--config-name`
+- `main.py` 的 `--config-name` 默认值为 `level3_heat_liquid`；运行时建议显式传 `--config-name` 指定任务
 - `main.py` 虽然解析了 `--headless`，但当前 `SimulationApp` 初始化仍写死为 `"headless": False`；不要假设这个参数已经生效
-- 某些 registry key 使用大小写混合，例如 `OpenTransportPour`、`LiquidMixing`；改配置时要按源码中的注册值填写
+- registry key（`task_type` / `controller_type`）已统一为 `snake_case`（如 `open_transport_pour`、`liquid_mixing`）；改配置时要按源码中的注册值填写
 - 工作区可能已经有用户未提交改动；除非用户明确要求，不要回退他人的变更
 
 ## 8. 提交前检查

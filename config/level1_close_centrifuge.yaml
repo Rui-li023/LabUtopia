@@ -1,16 +1,13 @@
-name: Level2_openclose
+name: level1_close_centrifuge
 
-task_type: "openclose"
-controller_type: "openclose"
+task_type: "open_close"
+controller_type: "close"
 
 mode: "collect"  # "collect", "infer", or "replay"
-usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+usd_path: "assets/chemistry_lab/lab_002/lab_002.usd"
 max_episodes: 50
 
 # ── Replay mode ─────────────────────────────────────────────────────────────
-# Set mode: "replay" above to activate.
-# dataset_path: root dataset directory that contains episode_XXXX sub-folders.
-# episode_indices (optional): list of episode indices to replay; omit to replay all.
 replay:
   dataset_path: ""
   # episode_indices: [0, 1, 2]
@@ -28,15 +25,15 @@ infer:
   max_retries: 3
 
 task:
-  max_steps: 2000
-  operate_type: "drawer"
-  handle_path: "/World/Cabinet_01/drawer_handle_top"
+  max_steps: 1200
+  operate_type: "lid"
+  handle_path: "/World/centrifuge_eppendorf_5430/thermal_mixer/door"
   obj_paths:
-    - path: "/World/Cabinet_01"
+    - path: "/World/centrifuge_eppendorf_5430"
       position_range:
-        x: [0.69, 0.79]
-        y: [-0.05, 0.05]
-        z: [1.15, 1.15]
+        x: [0.25, 0.35]
+        y: [-0.05, 0]
+        z: [0.73, 0.73]
 
 cameras:
   - prim_path: "/World/Camera1"

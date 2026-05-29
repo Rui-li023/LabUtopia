@@ -1,10 +1,10 @@
-name: level3_open
+name: level3_heat_liquid
 
-task_type: "open_close"
-controller_type: "open"
+task_type: "place_press"
+controller_type: "place_press"
 
 mode: "collect"  # "collect", "infer", or "replay"
-usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+usd_path: "assets/chemistry_lab/lab_003/lab_003.usd"
 max_episodes: 100
 
 # ── Replay mode ─────────────────────────────────────────────────────────────
@@ -16,9 +16,7 @@ replay:
   # episode_indices: [0, 1, 2]
 
 infer:
-  type: "replay"  # "local", "remote", or "replay"
-  replay_data_path: "/home/ubuntu/Documents/LabUtopia/outputs/collect/2026.02.08/22.08.04_Level3_open/dataset/episode_0001.h5"
-  episode_index: 0 # replay mode only
+  type: "local"
   obs_names: {"image": 'camera_1_rgb', "image_2": 'camera_2_rgb'}
   policy_model_path: ""
   policy_config_path: ""
@@ -28,45 +26,39 @@ infer:
   n_obs_steps: 1
   timeout: 30
   max_retries: 3
-
   is_test_material: False
 
 task:
-  max_steps: 1000
+  max_steps: 2500
   placement:
-    support_surface_path: "/World/table/surface"
+    support_surface_path: "/World/table/surface/mesh"
     collision_margin_xy: 0.03
     max_sample_attempts: 50
-  operate_type: "door" # "door" or "drawer"
   obj_paths:
-    - path: "/World/DryingBox_01"
+    - path: "/World/beaker_2"
       position_range:
-        x: [0.72, 0.77]
-        y: [0.0, 0.15]
-        z: [0.78, 0.78]
-      close_gripper_distance: 0.015
-    - path: "/World/DryingBox_02"
+        x: [0.18, 0.23]
+        y: [0.05, 0.15]
+        z: [0.77, 0.775]
+
+    - path: "/World/heat_device"
+      sub_path: "/World/heat_device/heat_device/heat_device/plat"
       position_range:
-        x: [0.72, 0.77]
-        y: [-0.05, 0.010]
-        z: [0.78, 0.78]
-      close_gripper_distance: 0.02
-    - path: "/World/MuffleFurnace"
-      position_range:
-        x: [0.65, 0.70]
-        y: [-0.05, 0.010]
-        z: [0.78, 0.78]
-      close_gripper_distance: 0.02
+        x: [0.18, 0.23]
+        y: [-0.3, -0.2]
+        z: [0.762, 0.762]
+
+    - path: "/World/heat_device/button"
+
   distractors:
     enabled: true
     candidates:
-      - "/World/beaker1"
-      - "/World/beaker2"
-      - "/World/beaker3"
       - "/World/conical_bottle02"
       - "/World/conical_bottle03"
+      - "/World/conical_bottle04"
       - "/World/glass_rod"
       - "/World/graduated_cylinder_03"
+      - "/World/beaker1"
     num_range: [3, 5]
     placement_zones:
       - { x: [0.45, 0.65], y: [-0.25, 0.25], z: [0.82, 0.82] }
@@ -74,16 +66,26 @@ task:
       - { x: [0.05, 0.55], y: [0.18, 0.35], z: [0.82, 0.82] }
       - { x: [0.05, 0.55], y: [-0.35, -0.18], z: [0.82, 0.82] }
   material_paths:
-    - path: "/World/table/surface"
+    - path: /World/table/surface/mesh
       materials:
-        - "/World/Looks/Material1_plastic_dark_blue"
-        - "/World/Looks/Material2_wood"
-        - "/World/Looks/Material3_plastic_dark_green"
-        - "/World/Looks/Material4_plastic_light_white"
-        - "/World/Looks/Material5_black"
+        - /World/Looks/Material_1_plastic_dark_blue
+        - /World/Looks/Material_2_wood
+        - /World/Looks/Material_3_plastic_dark_green
+        - /World/Looks/Material_4_plastic_light_white
+        - /World/Looks/Material_5_black
       test_materials:
-        - "/World/Looks/Material6_plastic_light_blue"
-        - "/World/Looks/Material7_stainless"
+        - /World/Looks/Material_6_plastic_light_blue
+        - /World/Looks/Material_7_stainless
+    - path: /World/heat_device/button
+      materials:
+        - /World/Looks/OmniPBR_Button_Red
+        - /World/Looks/OmniPBR_Button_Blue
+        - /World/Looks/OmniPBR_Button_Green
+      test_materials:
+        - /World/Looks/OmniPBR_Button_Yellow
+        - /World/Looks/OmniPBR_Button_Gray
+        - /World/Looks/OmniPBR_Button_DeepGray
+      random: true
 
 lighting:
   enabled: true
@@ -101,10 +103,10 @@ lighting:
 cameras:
   - prim_path: "/World/Camera1"
     name: "image"
-    translation: [-0.7, 1.4, 1.4]
+    translation: [2, 0, 2]
     resolution: [256, 256]
-    focal_length: 2
-    orientation: [-0.2297, -0.18336, 0.59631, 0.74701]
+    focal_length: 5
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
     image_type: "rgb"
     randomize:
       translation_range:
@@ -116,10 +118,10 @@ cameras:
 
   - prim_path: "/World/Camera2"
     name: "image_2"
-    translation: [-1, -0.1, 3.6]
+    translation: [0.1, 0, 2.5]
     resolution: [256, 256]
-    focal_length: 4
-    orientation: [0.69035, 0.15304, -0.15304, -0.69035]
+    focal_length: 5
+    orientation: [0.70711, 0, 0, -0.70711]
     image_type: "rgb"
     randomize:
       translation_range:

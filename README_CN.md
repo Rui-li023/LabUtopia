@@ -121,31 +121,31 @@ LabUtopia/
 - `level1_stir.yaml` - 搅拌任务
 
 **Level 2 组合任务：**
-- `level2_ShakeBeaker.yaml` - 摇晃烧杯
-- `level2_StirGlassrod.yaml` - 玻璃棒搅拌
-- `level2_PourLiquid.yaml` - 倾倒液体
-- `level2_TransportBeaker.yaml` - 运输烧杯
-- `level2_HeatLiquid.yaml` - 加热液体
-- `level2_openclose.yaml` - 开关任务
+- `level2_shake_beaker.yaml` - 摇晃烧杯
+- `level2_stir_glassrod.yaml` - 玻璃棒搅拌
+- `level2_pour_liquid.yaml` - 倾倒液体
+- `level2_transport_beaker.yaml` - 运输烧杯
+- `level2_heat_liquid.yaml` - 加热液体
+- `level2_open_close.yaml` - 开关任务
 
 **Level 3 泛化性任务：**
-- `level3_PourLiquid.yaml` - 倾倒液体（OOD 泛化）
-- `level3_HeatLiquid.yaml` - 加热液体（OOD 泛化）
-- `level3_TransportBeaker.yaml` - 运输烧杯（OOD 泛化）
+- `level3_pour_liquid.yaml` - 倾倒液体（OOD 泛化）
+- `level3_heat_liquid.yaml` - 加热液体（OOD 泛化）
+- `level3_transport_beaker.yaml` - 运输烧杯（OOD 泛化）
 - `level3_open.yaml` - 开启任务（OOD 泛化）
 - `level3_pick.yaml` - 抓取任务（OOD 泛化）
 - `level3_press.yaml` - 按压任务（OOD 泛化）
 
 **Level 4 长序列任务：**
-- `level4_CleanBeaker.yaml` - 清洗烧杯
-- `level4_CleanBeaker7Policy.yaml` - 清洗烧杯（7策略变体）
-- `level4_DeviceOperation.yaml` - 设备操作
-- `level4_OpenTransportPour.yaml` - 开门、运输、倾倒
-- `level4_LiquidMixing.yaml` - 液体混合
+- `level4_clean_beaker.yaml` - 清洗烧杯
+- `level4_clean_beaker_7policy.yaml` - 清洗烧杯（7策略变体）
+- `level4_device_operation.yaml` - 设备操作
+- `level4_open_transport_pour.yaml` - 开门、运输、倾倒
+- `level4_liquid_mixing.yaml` - 液体混合
 
 **Level 5 移动操作任务：**
-- `level5_Navigation.yaml` - 移动底盘导航
-- `level5_Mobile_manipulation.yaml` - 移动抓取放置
+- `level5_navigation.yaml` - 移动底盘导航
+- `level5_mobile_manipulation.yaml` - 移动抓取放置
 
 #### 2. 修改配置参数
 
@@ -326,7 +326,7 @@ max_episodes: 50                  # 推理数据集数
 python main.py --config-name level1_pick
 
 # 使用远程推理
-python main.py --config-name level3_PourLiquid
+python main.py --config-name level3_pour_liquid
 ```
 
 推理结果将保存在 `outputs/infer/日期/时间_任务名/` 目录下。

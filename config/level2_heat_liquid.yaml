@@ -1,7 +1,7 @@
-name: Level2_HeatLiquid
+name: level2_heat_liquid
 
-task_type: "placepress"
-controller_type: "placepress"
+task_type: "place_press"
+controller_type: "place_press"
 
 mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_003/lab_003.usd"

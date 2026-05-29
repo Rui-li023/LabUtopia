@@ -10,7 +10,7 @@ across 5 difficulty levels.
 main.py                         # Entry point: Hydra config → factory construction → sim loop
 train.py / train-muilt.py       # Policy training (Diffusion UNet / ACT)
 assets/                         # USD scene files
-config/                         # Hydra YAML configs (level{1-5}_{TaskName}.yaml)
+config/                         # Hydra YAML configs (level{1-5}_{task_name}.yaml)
 controllers/
   base_controller.py            # ABC base for all task controllers
   {action}_controller.py        # Per-task controllers (pick, pour, stir, ...)
@@ -50,7 +50,7 @@ def register_X(name, cls): _registry[name] = cls
 def create_X(name, *args, **kwargs): return _registry[name](*args, **kwargs)
 ```
 
-Registry keys in config: `task_type` and `controller_type` must match (e.g. `"pick"`, `"pickplace"`).
+Registry keys in config: `task_type` and `controller_type` must match (e.g. `"pick"`, `"pick_place"`).
 
 ### Task / Controller Separation
 
@@ -96,20 +96,24 @@ Key base methods available:
 
 | Entity | Pattern | Example |
 |--------|---------|---------|
-| Task file | `{action}_task.py` | `pick_task.py`, `pickplace_task.py` |
+| Task file | `{action}_task.py` | `pick_task.py`, `pick_place_task.py` |
 | Controller file | `{action}_controller.py` | `pick_controller.py` |
 | Task class | `{Action}Task` | `PickTask`, `PickPlaceTask` |
 | Controller class | `{Action}TaskController` | `PickTaskController` |
-| Config file | `level{N}_{TaskName}.yaml` | `level3_HeatLiquid.yaml` |
+| Config file | `level{N}_{task_name}.yaml` | `level3_heat_liquid.yaml` |
 | Atomic action | `controllers/atomic_actions/{action}_controller.py` | Separate namespace |
 | Camera obs key | `{camera_name}_{image_type}` | `camera_1_rgb` |
 | Episode file | `episode_{NNNN}.h5` | `episode_0003.h5` |
 | USD prim path | `/World/{object_name}` | `/World/conical_bottle02` |
 
+**Convention:** filenames, config names, and registry keys (`task_type` / `controller_type`)
+are `snake_case`; only class names use `PascalCase`. Multi-word names are split with
+underscores (e.g. `open_close`, `clean_beaker`, `open_transport_pour`).
+
 ## Config Schema (Hydra YAML)
 
 ```yaml
-name: Level1_pick
+name: level1_pick
 task_type: "pick"               # must match factory registry key
 controller_type: "pick"         # must match factory registry key
 mode: "collect"                 # collect | infer | replay

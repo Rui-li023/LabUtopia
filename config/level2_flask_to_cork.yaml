@@ -1,4 +1,4 @@
-name: Level2_FlaskToCork
+name: level2_flask_to_cork
 
 task_type: "flask_to_cork"
 controller_type: "flask_to_cork"

@@ -1,7 +1,7 @@
-name: level1_close_door
+name: level2_open_close
 
 task_type: "open_close"
-controller_type: "close"
+controller_type: "open_close"
 
 mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
@@ -12,7 +12,7 @@ max_episodes: 50
 # dataset_path: root dataset directory that contains episode_XXXX sub-folders.
 # episode_indices (optional): list of episode indices to replay; omit to replay all.
 replay:
-  dataset_path: "/home/ubuntu/Documents/LabUtopia/outputs/collect/2026.02.25/16.28.22_Level1_close_door/dataset"
+  dataset_path: ""
   # episode_indices: [0, 1, 2]
 
 infer:
@@ -28,14 +28,15 @@ infer:
   max_retries: 3
 
 task:
-  max_steps: 1200
-  operate_type: "door"
+  max_steps: 2000
+  operate_type: "drawer"
+  handle_path: "/World/Cabinet_01/drawer_handle_top"
   obj_paths:
-    - path: "/World/DryingBox_03"
+    - path: "/World/Cabinet_01"
       position_range:
-        x: [0.77, 0.85]
-        y: [-0.05, 0]
-        z: [0.78, 0.78]
+        x: [0.69, 0.79]
+        y: [-0.05, 0.05]
+        z: [1.15, 1.15]
 
 cameras:
   - prim_path: "/World/Camera1"

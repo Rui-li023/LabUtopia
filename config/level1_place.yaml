@@ -1,4 +1,4 @@
-name: Level1_place
+name: level1_place
 
 task_type: "place"
 controller_type: "place"

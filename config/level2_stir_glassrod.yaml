@@ -1,10 +1,13 @@
-name: Level5_Navigation
+name: level2_stir_glassrod
 
-task_type: "navigation"
-controller_type: "navigation"
+task_type: "stir"
+controller_type: "stir_glassrod"
 
 mode: "collect"  # "collect", "infer", or "replay"
-usd_path: "assets/navigation_lab/navigation_lab_01/lab.usd"
+usd_path: "assets/chemistry_lab/lab_003/lab_003.usd"
+obj_path: "/World/glass_rod"
+sub_obj_path: "/World/glass_rod/Cylinder"
+target_path: "/World/target_beaker"
 max_episodes: 50
 
 # ── Replay mode ─────────────────────────────────────────────────────────────
@@ -27,37 +30,29 @@ infer:
   timeout: 30
   max_retries: 3
 
-task:
-  max_steps: 4000
-  navigation_config_path: "config/navigation/navigation_assets.yaml"
-  max_linear_speed: 0.04
-  max_angular_speed: 1.5
-  position_threshold: 0.08
-  angle_threshold: 0.1
-
 cameras:
-  - prim_path: "/World/Ridgebase/base_link/Camera"
-    name: "front_camera"
+  - prim_path: "/World/Camera1"
+    name: "image"
+    translation: [2, 0, 2]
     resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
     image_type: "rgb"
 
-  - prim_path: "/World/Ridgebase/panda_hand/Camera"
-    name: "wrist_camera"
+  - prim_path: "/World/Camera2"
+    name: "image_2"
+    translation: [0.1, 0, 2.5]
     resolution: [256, 256]
-    clipping_range: [0, 10.0]
-    image_type: "rgb"
-
-  - prim_path: "/World/Ridgebase/base_link/Camera_01"
-    name: "top_camera"
-    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
     image_type: "rgb"
 
 robot:
-  type: "ridgebase"
-  position: [0.0, 0.0, 0.0]
+  type: "franka"
+  position: [-0.4, -0, 0.71]
 
 collector:
-  type: "action_state"
+  type: "default"
   compression: gzip
 
 hydra:

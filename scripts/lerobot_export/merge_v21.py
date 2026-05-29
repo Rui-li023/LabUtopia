@@ -229,14 +229,14 @@ def main():
     ap.add_argument("--dst", required=True, type=Path,
                     help="Output directory for merged dataset")
     ap.add_argument("--tasks", nargs="*", default=None,
-                    help="Optional subset of task subdirs (default: all level1_* in src-root)")
+                    help="Optional subset of task subdirs (default: all dataset subdirs in src-root)")
     args = ap.parse_args()
 
     if args.tasks:
         src_dirs = [args.src_root / t for t in args.tasks]
     else:
         src_dirs = sorted(d for d in args.src_root.iterdir()
-                          if d.is_dir() and d.name.startswith("level1_"))
+                          if d.is_dir() and (d / "meta" / "info.json").exists())
     missing = [d for d in src_dirs if not (d / "meta" / "info.json").exists()]
     if missing:
         raise SystemExit(f"Missing meta/info.json in: {missing}")

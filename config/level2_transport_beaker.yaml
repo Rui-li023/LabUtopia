@@ -1,10 +1,11 @@
-name: Level5_Mobile_manipulation
+name: level2_transport_beaker
 
-task_type: "mobile_pick"
-controller_type: "mobile_pick"
+task_type: "place"
+controller_type: "pick_place"
 
 mode: "collect"  # "collect", "infer", or "replay"
-usd_path: "assets/navigation_lab/navigation_lab_01/lab.usd"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+target_path: "/World/target_plat"
 max_episodes: 50
 
 # ── Replay mode ─────────────────────────────────────────────────────────────
@@ -28,34 +29,45 @@ infer:
   max_retries: 3
 
 task:
-  max_steps: 4000
-  pick_object_path: "/World/beaker"
-  navigation_config_path: "config/navigation/navigation_assets.yaml"
-  max_linear_speed: 0.04
-  max_angular_speed: 1.5
-  position_threshold: 0.08
-  angle_threshold: 0.1
+  max_steps: 2000
+  obj_paths:
+    - path: "/World/beaker2"
+      position_range:
+        x: [0.19, 0.34]
+        y: [0.10, 0.25]
+        z: [0.84, 0.84]
+
+    - path: "/World/target_plat"
+      position_range:
+        x: [0.18, 0.3]
+        y: [-0.33, -0.18]
+        z: [0.776, 0.776]
 
 cameras:
-  - prim_path: "/World/Ridgebase/base_link/Camera"
-    name: "front_camera"
+  - prim_path: "/World/Camera1"
+    name: "image"
+    translation: [2, 0, 2]
     resolution: [256, 256]
+    focal_length: 5
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
     image_type: "rgb"
 
-  - prim_path: "/World/Ridgebase/panda_hand/Camera"
-    name: "wrist_camera"
+  - prim_path: "/World/Camera2"
+    name: "image_2"
+    translation: [0.1, 0, 2.5]
     resolution: [256, 256]
-    clipping_range: [0, 10.0]
+    focal_length: 5
+    orientation: [0.70711, 0, 0, -0.70711]
     image_type: "rgb"
 
-  - prim_path: "/World/Ridgebase/base_link/Camera_01"
-    name: "top_camera"
+  - prim_path: "/World/Franka/panda_hand/arm_camera"
+    name: "wrist_image"
     resolution: [256, 256]
     image_type: "rgb"
 
 robot:
-  type: "ridgebase"
-  position: [0.0, 0.0, 0.0]
+  type: "franka"
+  position: [-0.4, -0, 0.71]
 
 collector:
   type: "default"

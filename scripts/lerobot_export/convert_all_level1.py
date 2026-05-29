@@ -18,7 +18,7 @@ DST_ROOT.mkdir(parents=True, exist_ok=True)
 TASKS = [
     "level1_pick", "level1_place", "level1_pour", "level1_press",
     "level1_shake", "level1_stir", "level1_open_door", "level1_close_door",
-    "level1_open_drawer", "level1_close_drawer", "level1_CloseCentrifuge",
+    "level1_open_drawer", "level1_close_drawer", "level1_close_centrifuge",
 ]
 VERSIONS = ["v2.1", "v3.0"]
 

@@ -1,39 +1,51 @@
-name: Level1_close_centrifuge
+name: level4_device_operation
 
-task_type: "openclose"
-controller_type: "close"
+task_type: "device_operate"
+controller_type: "device_operate"
 
 mode: "collect"  # "collect", "infer", or "replay"
-usd_path: "assets/chemistry_lab/lab_002/lab_002.usd"
-max_episodes: 50
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
 
 # ── Replay mode ─────────────────────────────────────────────────────────────
+# Set mode: "replay" above to activate.
+# dataset_path: root dataset directory that contains episode_XXXX sub-folders.
+# episode_indices (optional): list of episode indices to replay; omit to replay all.
 replay:
   dataset_path: ""
   # episode_indices: [0, 1, 2]
 
-infer:
-  type: "local"
-  obs_names: {"image": 'camera_1_rgb', "image_2": 'camera_2_rgb'}
-  policy_model_path: ""
-  policy_config_path: ""
-  normalizer_path: ""
-  host: "127.0.0.1"
-  port: 8000
-  n_obs_steps: 1
-  timeout: 30
-  max_retries: 3
-
 task:
-  max_steps: 1200
-  operate_type: "lid"
-  handle_path: "/World/centrifuge_eppendorf_5430/thermal_mixer/door"
+  type: "device_operate"
+  device_path: "/World/DryingBox_01"
+  beaker_path: "/World/beaker2"
+  beaker3_path: "/World/beaker3"
+  button_path: "/World/DryingBox_01/button"
+
+  device_interior_position: [0.52, 0.04, 1.11]
+  beaker3_target_position: [0.42, 0.1, 1.12]
+  button_position: [0.45, 0.2, 0.77]
+  max_steps: 4000
+
   obj_paths:
-    - path: "/World/centrifuge_eppendorf_5430"
+    - path: "/World/beaker2"
       position_range:
-        x: [0.25, 0.35]
-        y: [-0.05, 0]
-        z: [0.73, 0.73]
+        x: [0.15, 0.2]
+        y: [0.23, 0.28]
+        z: [0.84, 0.84]
+    - path: "/World/beaker3"
+      position_range:
+        x: [0.10, 0.25]
+        y: [0.33, 0.45]
+        z: [0.84, 0.84]
+    - path: "/World/DryingBox_01"
+      position_range:
+        x: [0.55, 0.60]
+        y: [0.13, 0.18]
+        z: [0.976, 0.976]
+
+max_episodes: 150
+
+cameras_names: ["image", "image_2", "wrist_image"]
 
 cameras:
   - prim_path: "/World/Camera1"

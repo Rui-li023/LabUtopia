@@ -120,31 +120,31 @@ There are multiple pre-configured task files in the `config` folder:
 - `level1_stir.yaml` - Stir tasks
 
 **Level 2 Combined Tasks:**
-- `level2_ShakeBeaker.yaml` - Shake beaker
-- `level2_StirGlassrod.yaml` - Stir with glass rod
-- `level2_PourLiquid.yaml` - Pour liquid
-- `level2_TransportBeaker.yaml` - Transport beaker
-- `level2_HeatLiquid.yaml` - Heat liquid
-- `level2_openclose.yaml` - Open and close tasks
+- `level2_shake_beaker.yaml` - Shake beaker
+- `level2_stir_glassrod.yaml` - Stir with glass rod
+- `level2_pour_liquid.yaml` - Pour liquid
+- `level2_transport_beaker.yaml` - Transport beaker
+- `level2_heat_liquid.yaml` - Heat liquid
+- `level2_open_close.yaml` - Open and close tasks
 
 **Level 3 Generalization Tasks:**
-- `level3_PourLiquid.yaml` - Pour liquid (OOD generalization)
-- `level3_HeatLiquid.yaml` - Heat liquid (OOD generalization)
-- `level3_TransportBeaker.yaml` - Transport beaker (OOD generalization)
+- `level3_pour_liquid.yaml` - Pour liquid (OOD generalization)
+- `level3_heat_liquid.yaml` - Heat liquid (OOD generalization)
+- `level3_transport_beaker.yaml` - Transport beaker (OOD generalization)
 - `level3_open.yaml` - Open tasks (OOD generalization)
 - `level3_pick.yaml` - Pick tasks (OOD generalization)
 - `level3_press.yaml` - Press tasks (OOD generalization)
 
 **Level 4 Long Sequence Tasks:**
-- `level4_CleanBeaker.yaml` - Clean beaker
-- `level4_CleanBeaker7Policy.yaml` - Clean beaker (7-policy variant)
-- `level4_DeviceOperation.yaml` - Device operation
-- `level4_OpenTransportPour.yaml` - Open, transport, and pour
-- `level4_LiquidMixing.yaml` - Liquid mixing
+- `level4_clean_beaker.yaml` - Clean beaker
+- `level4_clean_beaker_7policy.yaml` - Clean beaker (7-policy variant)
+- `level4_device_operation.yaml` - Device operation
+- `level4_open_transport_pour.yaml` - Open, transport, and pour
+- `level4_liquid_mixing.yaml` - Liquid mixing
 
 **Level 5 Mobile Manipulation Tasks:**
-- `level5_Navigation.yaml` - Mobile base navigation
-- `level5_Mobile_manipulation.yaml` - Mobile pick and place
+- `level5_navigation.yaml` - Mobile base navigation
+- `level5_mobile_manipulation.yaml` - Mobile pick and place
 
 #### 2. Modify Configuration Parameters
 
@@ -325,7 +325,7 @@ max_episodes: 50                  # Inference episodes
 python main.py --config-name level1_pick
 
 # Use remote inference
-python main.py --config-name level3_PourLiquid
+python main.py --config-name level3_pour_liquid
 ```
 
 Inference results will be saved in the `outputs/infer/date/time_taskname/` directory.

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent / "test_outputs" / "lerobot
 TASKS = [
     "level1_pick", "level1_place", "level1_pour", "level1_press",
     "level1_shake", "level1_stir", "level1_open_door", "level1_close_door",
-    "level1_open_drawer", "level1_close_drawer", "level1_CloseCentrifuge",
+    "level1_open_drawer", "level1_close_drawer", "level1_close_centrifuge",
 ]
 
 

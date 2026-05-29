@@ -1,6 +1,6 @@
-name: Level1_open_drawer
+name: level1_open_drawer
 
-task_type: "openclose"
+task_type: "open_close"
 controller_type: "open"
 
 mode: "collect"  # "collect", "infer", or "replay"

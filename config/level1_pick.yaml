@@ -1,4 +1,4 @@
-name: Level1_pick
+name: level1_pick
 
 task_type: "pick"
 controller_type: "pick"

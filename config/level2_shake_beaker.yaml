@@ -1,13 +1,18 @@
-name: Level2_FlaskToTriangle
+name: level2_shake_beaker
 
-task_type: "flask_to_cork"
-controller_type: "flask_to_cork"
+task_type: "shake"
+controller_type: "shake_beaker"
 
 mode: "collect"  # "collect", "infer", or "replay"
-usd_path: "assets/chemistry_lab/lab_002/lab_002.usd"
+usd_path: "assets/chemistry_lab/lab_003/lab_003.usd"
+obj_path: "/World/beaker_2"
+sub_obj_path: "/World/beaker_2/mesh"
 max_episodes: 50
 
-# ── Replay mode ──────────────────────────────────────────────────────────────
+# ── Replay mode ─────────────────────────────────────────────────────────────
+# Set mode: "replay" above to activate.
+# dataset_path: root dataset directory that contains episode_XXXX sub-folders.
+# episode_indices (optional): list of episode indices to replay; omit to replay all.
 replay:
   dataset_path: ""
   # episode_indices: [0, 1, 2]
@@ -25,28 +30,13 @@ infer:
   max_retries: 3
 
 task:
-  max_steps: 2000
+  max_steps: 1000
   obj_paths:
-    # Source: round-bottom flask (starts on cork ring)
-    - path: "/World/round_bottom_flask"
+    - path: "/World/beaker_2"
       position_range:
         x: [0.19, 0.34]
-        y: [0.10, 0.25]
-        z: [0.86, 0.86]
-
-    # Target: pipeclay triangle to place the flask onto
-    - path: "/World/pipeclay_triangle"
-      position_range:
-        x: [0.18, 0.30]
-        y: [-0.33, -0.18]
-        z: [0.77, 0.77]
-
-    # Support: cork ring under the flask at start
-    - path: "/World/cork_ring"
-      position_range:
-        x: [0.19, 0.34]
-        y: [0.10, 0.25]
-        z: [0.715, 0.715]
+        y: [-0.05, 0.05]
+        z: [0.80, 0.80]
 
 cameras:
   - prim_path: "/World/Camera1"
@@ -63,11 +53,6 @@ cameras:
     resolution: [256, 256]
     focal_length: 5
     orientation: [0.70711, 0, 0, -0.70711]
-    image_type: "rgb"
-
-  - prim_path: "/World/Franka/panda_hand/arm_camera"
-    name: "wrist_image"
-    resolution: [256, 256]
     image_type: "rgb"
 
 robot:

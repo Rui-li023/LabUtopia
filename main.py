@@ -22,7 +22,7 @@ def parse_args():
                        help='Run in headless mode (default is with GUI)')
     parser.add_argument('--no-video', action='store_true', 
                        help='Disable video display and saving')
-    parser.add_argument('--config-name', type=str, default='level3_Heat_Liquid',
+    parser.add_argument('--config-name', type=str, default='level3_heat_liquid',
                        help='Configuration file name (without .yaml extension)')
     parser.add_argument('--config-dir', type=str, default='config',
                        help='Configuration directory path (default: config)')

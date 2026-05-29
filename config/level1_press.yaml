@@ -1,4 +1,4 @@
-name: Level1_press
+name: level1_press
 
 task_type: "press"
 controller_type: "press"

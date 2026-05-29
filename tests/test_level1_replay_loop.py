@@ -41,7 +41,7 @@ LEVEL1_CONFIGS = [
     "level1_close_door",
     "level1_open_drawer",
     "level1_close_drawer",
-    "level1_CloseCentrifuge",
+    "level1_close_centrifuge",
 ]
 
 COLLECT_EPISODES = 10

@@ -1,4 +1,4 @@
-name: Level2_StopperToFlask
+name: level2_stopper_to_flask
 
 task_type: "stopper_flask"
 controller_type: "stopper_flask"

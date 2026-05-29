@@ -1,13 +1,17 @@
-name: Level2_PipetteToRack
+name: level2_pour_liquid
 
-task_type: "pipette_rack"
-controller_type: "pipette_rack"
+task_type: "pick_pour"
+controller_type: "pick_pour"
 
 mode: "collect"  # "collect", "infer", or "replay"
-usd_path: "assets/chemistry_lab/lab_002/lab_002.usd"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+target_path: "/World/beaker1"
 max_episodes: 50
 
-# ── Replay mode ──────────────────────────────────────────────────────────────
+# ── Replay mode ─────────────────────────────────────────────────────────────
+# Set mode: "replay" above to activate.
+# dataset_path: root dataset directory that contains episode_XXXX sub-folders.
+# episode_indices (optional): list of episode indices to replay; omit to replay all.
 replay:
   dataset_path: ""
   # episode_indices: [0, 1, 2]
@@ -25,26 +29,22 @@ infer:
   max_retries: 3
 
 task:
-  max_steps: 2000
+  max_steps: 2500
+  left_pos:
+    x: [0.17, 0.32]
+    y: [-0.35, -0.2]
+    z: [0.87, 0.87]
   obj_paths:
-    # Source: pipette on the table
-    - path: "/World/pipette_01"
+    - path: "/World/beaker2"
       position_range:
-        x: [0.15, 0.3]
-        y: [0.10, 0.25]
-        z: [0.77, 0.77]
-
-    # Target: pipette rack
-    - path: "/World/pipette_rack"
-      position_range:
-        x: [0.25, 0.35]
-        y: [-0.25, -0.1]
-        z: [0.7, 0.7]
+        x: [0.22, 0.37]
+        y: [0.07, 0.22]
+        z: [0.9, 0.9]
 
 cameras:
   - prim_path: "/World/Camera1"
     name: "image"
-    translation: [2, 0, 2]
+    translation: [2, -0.1, 2]
     resolution: [256, 256]
     focal_length: 5
     orientation: [0.61237, 0.35355, 0.35355, 0.61237]
@@ -52,7 +52,7 @@ cameras:
 
   - prim_path: "/World/Camera2"
     name: "image_2"
-    translation: [0.1, 0, 2.5]
+    translation: [0.1, -0.1, 3]
     resolution: [256, 256]
     focal_length: 5
     orientation: [0.70711, 0, 0, -0.70711]
@@ -66,10 +66,6 @@ cameras:
 robot:
   type: "franka"
   position: [-0.4, -0, 0.71]
-  gripper:
-    control_mode: "velocity"
-    closing_speed: 0.15
-    closing_force: 30.0
 
 collector:
   type: "default"
