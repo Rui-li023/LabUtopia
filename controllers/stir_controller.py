@@ -1,5 +1,6 @@
 from typing import Optional
 import numpy as np
+from loguru import logger
 
 from isaacsim.core.utils.types import ArticulationAction
 from robots.franka.rmpflow_controller import RMPFlowController
@@ -12,6 +13,8 @@ class StirTaskController(BaseController):
     def __init__(self, cfg, robot):
         super().__init__(cfg, robot)
         self.initial_position = None
+        self._stir_probe_max_z = -np.inf
+        self._stir_probe_min_xy = np.inf
             
     def _init_collect_mode(self, cfg, robot):
         super()._init_collect_mode(cfg, robot)
@@ -56,6 +59,16 @@ class StirTaskController(BaseController):
         self.pick_controller._sample_randomization = lambda: None
 
     def reset(self):
+        # Probe: log this episode's stir success-criterion extrema before
+        # the base class clears state. Only meaningful after episode 1
+        # (first call is initial scene setup).
+        if self.mode == "infer" and np.isfinite(self._stir_probe_max_z):
+            logger.info(
+                f"[stir-probe] ep{self._episode_num} max_z={self._stir_probe_max_z:.3f} "
+                f"(need >0.85) min_xy_to_target={self._stir_probe_min_xy:.4f} "
+                f"(need <0.04) success_counter={self.check_success_counter} (need >240)"
+            )
+
         super().reset()
         self.gripper_control.release_object()
         self.pick_controller.reset()
@@ -66,6 +79,8 @@ class StirTaskController(BaseController):
         self.initial_position = None
         self.use_stir_model = False
         self.frame_count = 0
+        self._stir_probe_max_z = -np.inf
+        self._stir_probe_min_xy = np.inf
 
     def step(self, state):
         if self.initial_position is None:
@@ -220,8 +235,14 @@ class StirTaskController(BaseController):
     def _check_success(self):
         object_pos = self.state['glass_rod_position']
         target_position = self.state['target_position']
-        criterion_met = (object_pos[2] > 0.85
-                         and np.linalg.norm(object_pos[0:2] - target_position[0:2]) < 0.04)
+        z = float(object_pos[2])
+        xy_dist = float(np.linalg.norm(object_pos[0:2] - target_position[0:2]))
+        # Probe extrema for end-of-episode diagnostic.
+        if z > self._stir_probe_max_z:
+            self._stir_probe_max_z = z
+        if xy_dist < self._stir_probe_min_xy:
+            self._stir_probe_min_xy = xy_dist
+        criterion_met = (z > 0.85 and xy_dist < 0.04)
         # In replay the BaseController._step_replay loop manages the
         # success-counter via self.check_success_counter, so don't fight it.
         if self.mode == "replay":
