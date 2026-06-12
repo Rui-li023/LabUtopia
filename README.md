@@ -137,7 +137,6 @@ There are multiple pre-configured task files in the `config` folder:
 
 **Level 4 Long Sequence Tasks:**
 - `level4_clean_beaker.yaml` - Clean beaker
-- `level4_clean_beaker_7policy.yaml` - Clean beaker (7-policy variant)
 - `level4_device_operation.yaml` - Device operation
 - `level4_open_transport_pour.yaml` - Open, transport, and pour
 - `level4_liquid_mixing.yaml` - Liquid mixing

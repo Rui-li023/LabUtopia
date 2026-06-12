@@ -13,7 +13,6 @@ from controllers.stir_glassrod_controller import StirGlassrodTaskController
 from controllers.pick_place_controller import PickPlaceTaskController
 from controllers.shake_beaker_controller import ShakeBeakerTaskController
 from controllers.clean_beaker_controller import CleanBeakerTaskController
-from controllers.clean_beaker_7policy_controller import CleanBeaker7PolicyTaskController
 from controllers.device_operate_controller import DeviceOperateController
 from controllers.open_transport_pour_controller import OpenTransportPourController
 from controllers.liquid_mixing_controller import LiquidMixingController
@@ -47,7 +46,6 @@ register_controller("stir", StirTaskController)
 register_controller("stir_glassrod", StirGlassrodTaskController)
 register_controller("shake_beaker", ShakeBeakerTaskController)
 register_controller("clean_beaker", CleanBeakerTaskController)
-register_controller("clean_beaker_7policy", CleanBeaker7PolicyTaskController)
 register_controller("device_operate", DeviceOperateController)
 register_controller("open_transport_pour", OpenTransportPourController)
 register_controller("liquid_mixing", LiquidMixingController)

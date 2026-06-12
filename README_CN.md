@@ -138,7 +138,6 @@ LabUtopia/
 
 **Level 4 长序列任务：**
 - `level4_clean_beaker.yaml` - 清洗烧杯
-- `level4_clean_beaker_7policy.yaml` - 清洗烧杯（7策略变体）
 - `level4_device_operation.yaml` - 设备操作
 - `level4_open_transport_pour.yaml` - 开门、运输、倾倒
 - `level4_liquid_mixing.yaml` - 液体混合
