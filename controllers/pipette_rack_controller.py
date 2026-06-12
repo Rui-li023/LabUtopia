@@ -69,6 +69,16 @@ class PipetteRackTaskController(BaseController):
     # ---------------------------------------------------------- success checks
 
     def _check_success(self) -> bool:
+        # In replay the phase machine (only advanced in _step_collect) is frozen
+        # at PICKING, so a phase-based check scores against "is the pipette
+        # lifted" — false once it's been set in the rack. Score replay against
+        # the final goal instead, using the PLACING thresholds.
+        if self.mode == "replay":
+            object_pos = self.state["object_position"]
+            target_pos = self.state["target_position"]
+            xy_dist = float(np.linalg.norm(object_pos[:2] - target_pos[:2]))
+            z_offset = float(abs(object_pos[2] - target_pos[2]))
+            return xy_dist < 0.08 and z_offset < 0.25
         return self._check_phase_success()
 
     def _check_phase_success(self) -> bool:
@@ -149,6 +159,8 @@ class PipetteRackTaskController(BaseController):
 
         if self.mode == "collect":
             return self._step_collect(state)
+        if self.mode == "replay":
+            return self._step_replay(state)
         return self._step_infer(state)
 
     # ------------------------------------------------------- collect-mode step
@@ -219,6 +231,10 @@ class PipetteRackTaskController(BaseController):
                 pre_offset_x=0.0,
                 pre_offset_z=0.02,
                 after_offset_z=0.3,
+                # Contact-stop close at the pipette's 8 mm grip width: the
+                # binary close slams the fingers to 0 and ejects the thin
+                # pipette 0.3-1.3 m away (~44% of collect episodes).
+                gripper_distances=self.pick_controller.get_gripper_distance("pipette"),
             )
 
         # PLACING — approach rack with a large tilt angle

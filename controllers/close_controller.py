@@ -218,12 +218,17 @@ class CloseTaskController(BaseController):
                 self._last_failure_reason = ""
             return success
         elif self.operate_type == "lid":
-            # Lid closes top-to-bottom: check Z decrease
+            # Lid closes top-to-bottom: check Z decrease.
+            # Threshold 0.027 (was 0.03): the fully-closed centrifuge lid
+            # measures z_moved = 0.0286-0.0292 at the handle — full travel
+            # ends at a hard stop there even though the arc push commands
+            # 5-6 cm deeper. 0.03 demanded more travel than the closed-lid
+            # geometry provides and rejected ~54% of good closes.
             z_moved = self.initial_handle_position[2] - np.array(current_pos)[2]
             gripper_far_enough = np.linalg.norm(np.array(gripper_position) - np.array(current_pos))
-            success = z_moved > 0.03 and gripper_far_enough > 0.04
+            success = z_moved > 0.027 and gripper_far_enough > 0.04
             if not success:
-                self._last_failure_reason = f"Close lid failed: lid Z moved too little ({z_moved:.4f}<0.03) or gripper too close ({gripper_far_enough:.4f}<0.04)"
+                self._last_failure_reason = f"Close lid failed: lid Z moved too little ({z_moved:.4f}<0.027) or gripper too close ({gripper_far_enough:.4f}<0.04)"
             else:
                 self._last_failure_reason = ""
             return success

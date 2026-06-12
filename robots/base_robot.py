@@ -15,6 +15,7 @@ from isaacsim.core.api.robots.robot import Robot
 from isaacsim.core.prims import SingleRigidPrim
 from isaacsim.robot.manipulators.grippers.parallel_gripper import ParallelGripper
 from isaacsim.sensors.physics import ContactSensor
+from isaacsim.core.utils.types import ArticulationAction
 
 
 # Gripper state constants (control signal semantics)
@@ -299,6 +300,7 @@ class BaseRobot(Robot, ABC):
             action = self._gripper.forward(action="open")
             self.apply_action(action)
             self._gripper_state = GRIPPER_OPEN
+            self._gripper_cmd_opening = float(self.gripper_open_positions[0])
 
     def close_gripper(self) -> None:
         """Close the gripper.
@@ -309,6 +311,34 @@ class BaseRobot(Robot, ABC):
             action = self._gripper.forward(action="close")
             self.apply_action(action)
             self._gripper_state = GRIPPER_CLOSED
+            self._gripper_cmd_opening = float(self.gripper_closed_positions[0])
+
+    def close_gripper_to_distance(self, distance: float) -> None:
+        """Close the gripper to a target per-finger opening instead of slamming
+        fully shut.
+
+        A full (0/1) close drives the fingers to position 0 under the position
+        controller; against a rigid object the controller keeps fighting and the
+        resulting force can eject light/round objects (e.g. round_bottom_flask).
+        Targeting the object's grasp width lets the fingers stop on contact with
+        a gentle hold. Falls back silently if the robot has no gripper.
+        """
+        if self._gripper is None:
+            return
+        # Command only the gripper DOFs to the distance-derived targets, with
+        # explicit joint_indices so positions/indices stay the same length
+        # (avoids the full-DOF broadcast mismatch from ParallelGripper.forward).
+        targets = np.asarray(
+            self.get_gripper_joint_targets_from_distance(distance), dtype=np.float32
+        )
+        indices = np.asarray(self.get_gripper_joint_indices(), dtype=np.int32)
+        if indices.size == 0:
+            return
+        self.apply_action(
+            ArticulationAction(joint_positions=targets, joint_indices=indices)
+        )
+        self._gripper_state = GRIPPER_CLOSED
+        self._gripper_cmd_opening = float(targets[0])
 
     def set_gripper_state(self, state: int) -> None:
         """Set gripper state using discrete signal.
@@ -330,6 +360,21 @@ class BaseRobot(Robot, ABC):
             int: 0 = open, 1 = closed
         """
         return self._gripper_state
+
+    def get_gripper_commanded_opening(self) -> float:
+        """Last commanded per-finger opening (metres) — the gripper DRIVE target,
+        not the measured finger position. Survives controller handoffs (tracked
+        at robot level), so it can be recorded as the action's gripper channel:
+        replaying it reproduces the exact same drive target (e.g. a binary close
+        keeps squeezing toward 0 even when fingers rest on the object at >0).
+
+        Returns:
+            float: commanded opening; defaults to fully open before any command.
+        """
+        cmd = getattr(self, "_gripper_cmd_opening", None)
+        if cmd is None:
+            return float(self.gripper_open_positions[0])
+        return float(cmd)
 
     def sync_gripper_from_action(self, action) -> None:
         """Sync gripper state from action (velocity/force mode). No-op by default."""

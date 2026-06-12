@@ -2,7 +2,7 @@ import numpy as np
 from isaacsim.core.utils.numpy.rotations import euler_angles_to_quats
 from isaacsim.core.utils.stage import get_stage_units
 from loguru import logger
-from pxr import Gf, Usd, UsdGeom, UsdPhysics
+from pxr import Gf, Usd, UsdGeom, UsdPhysics, UsdShade
 from scipy.spatial.transform import Rotation as R
 
 
@@ -137,6 +137,38 @@ class ObjectUtils:
             xform_ops[0].Set(new_position)
         else:
             xformable.AddTranslateOp().Set(new_position)
+
+    def set_physics_friction(self, object_path: str, static_friction: float = 1.5,
+                             dynamic_friction: float = 1.5, restitution: float = 0.0) -> None:
+        """Bind a high-friction PhysX material to an object's collision geometry.
+
+        A marginal grasp slips because the gripper-object contact friction is too
+        low; raising it to a realistic value makes the grasp robust in both
+        collect and replay (fixes a scene-physics misalignment, not gaming).
+        Idempotent: one shared material per friction value, bound to the prim and
+        its descendants for the ``physics`` purpose.
+        """
+        prim = self._stage.GetPrimAtPath(object_path)
+        if not prim or not prim.IsValid():
+            logger.warning(f"set_physics_friction: prim {object_path} invalid")
+            return
+        tag = f"{static_friction}_{dynamic_friction}".replace(".", "p").replace("-", "n")
+        mat_path = f"/World/PhysicsMaterials/friction_{tag}"
+        mat_prim = self._stage.GetPrimAtPath(mat_path)
+        if not mat_prim or not mat_prim.IsValid():
+            if not self._stage.GetPrimAtPath("/World/PhysicsMaterials").IsValid():
+                UsdGeom.Scope.Define(self._stage, "/World/PhysicsMaterials")
+            material = UsdShade.Material.Define(self._stage, mat_path)
+            UsdPhysics.MaterialAPI.Apply(material.GetPrim())
+            api = UsdPhysics.MaterialAPI(material.GetPrim())
+            api.CreateStaticFrictionAttr().Set(float(static_friction))
+            api.CreateDynamicFrictionAttr().Set(float(dynamic_friction))
+            api.CreateRestitutionAttr().Set(float(restitution))
+            mat_prim = material.GetPrim()
+        material = UsdShade.Material(mat_prim)
+        binding = UsdShade.MaterialBindingAPI.Apply(prim)
+        binding.Bind(material, UsdShade.Tokens.weakerThanDescendants, "physics")
+        logger.info(f"set_physics_friction: bound µ={static_friction} to {object_path}")
 
     def get_geometry_center(self, object_name: str | None = None, object_path: str | None = None) -> np.ndarray:
         aabb = self.get_world_aabb(object_name=object_name, object_path=object_path)

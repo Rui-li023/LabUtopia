@@ -75,6 +75,7 @@ class PressTask(BaseTask):
         y_offsets = [random.uniform(*b) for b in self._Y_BUCKETS]
         random.shuffle(y_offsets)
 
+        anchors: dict[str, list[float]] = {}
         for joint_path, dy in zip(self.joint_paths, y_offsets):
             base = self._joint_base_local_pos.get(joint_path)
             if base is None:
@@ -84,6 +85,7 @@ class PressTask(BaseTask):
             local_dy = dy / self._joint_lp_scale if self._joint_lp_scale != 0 else dy
             new_lp[1] = base[1] + local_dy
             self.object_utils.set_joint_local_pos(joint_path, new_lp, side=side)
+            anchors[joint_path] = [float(v) for v in new_lp]
             logger.info(
                 f"[press task] {joint_path} localPos{side}: {base.tolist()} -> {new_lp.tolist()} "
                 f"(world_dy={dy:.3f}, local_dy={local_dy:.3f})"
@@ -92,10 +94,29 @@ class PressTask(BaseTask):
         super().reset()
         self.robot.initialize()
 
+        # super().reset() re-initializes _episode_init_state, so record the
+        # anchors only now. They ride in init_state extra (JSON) and are
+        # restored by reset_with_init_state before world.reset() rebakes joints.
+        self._episode_init_state["extra"]["button_joint_anchors"] = anchors
+
         for path in self.button_paths:
             self._record_object_pose(path)
 
     def reset_with_init_state(self, init_state: dict) -> None:
+        # Restore the recorded per-episode button joint anchors BEFORE
+        # super().reset_with_init_state() — that calls world.reset(), which is
+        # when PhysX rebakes joint frames from the USD values (same ordering
+        # collect uses in reset()). An earlier attempt restored anchors with the
+        # wrong timing and corrupted the buttons; the ordering is the fix.
+        anchors = init_state.get("extra", {}).get("button_joint_anchors") or {}
+        for joint_path, lp in anchors.items():
+            side = self._joint_anchor_side.get(joint_path)
+            if side is None:
+                continue
+            self.object_utils.set_joint_local_pos(
+                joint_path, np.asarray(lp, dtype=np.float32), side=side
+            )
+            logger.info(f"[press task] replay restored anchor {joint_path} localPos{side}={lp}")
         super().reset_with_init_state(init_state)
 
     def step(self) -> Optional[Dict[str, Any]]:

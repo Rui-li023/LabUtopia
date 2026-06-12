@@ -51,7 +51,6 @@ class PlaceController(AtomicBaseController):
         self._place_offset_z_noise = 0.0
         self._retreat_x_noise = 0.0
         self._retreat_z_noise = 0.0
-        self._orientation_noise_axis = np.array([0, 0, 1.0])
         self._orientation_noise_deg = 0.0
 
     # ── Randomization ────────────────────────────────────────────
@@ -63,8 +62,8 @@ class PlaceController(AtomicBaseController):
         self._place_offset_z_noise = self._uniform(0.0, 0.015)
         self._retreat_x_noise = self._noisy(0.0, 0.03)
         self._retreat_z_noise = self._uniform(0.0, 0.03)
-        # Rotate only around the tool Z axis to keep the held object upright at release.
-        self._orientation_noise_axis = np.array([0, 0, 1.0])
+        # World-vertical yaw noise: keeps the held object level for side grasps
+        # (a tool-Z rotation only stays upright for top-down grasps).
         self._orientation_noise_deg = self._noisy(0.0, 10.0)
 
     # ── Forward ──────────────────────────────────────────────────
@@ -109,9 +108,8 @@ class PlaceController(AtomicBaseController):
         # Apply per-episode noise
         pre_place_z = max(0.0, pre_place_z + self._pre_place_z_noise)
         place_offset_z = max(0.0, place_offset_z + self._place_offset_z_noise)
-        end_effector_orientation = self._apply_axis_rotation(
-            end_effector_orientation, self._orientation_noise_axis,
-            self._orientation_noise_deg)
+        end_effector_orientation = self._apply_world_yaw(
+            end_effector_orientation, self._orientation_noise_deg)
 
         action = self._execute_phase(
             place_position, end_effector_orientation,
@@ -185,5 +183,4 @@ class PlaceController(AtomicBaseController):
         self._place_offset_z_noise = 0.0
         self._retreat_x_noise = 0.0
         self._retreat_z_noise = 0.0
-        self._orientation_noise_axis = np.array([0, 0, 1.0])
         self._orientation_noise_deg = 0.0

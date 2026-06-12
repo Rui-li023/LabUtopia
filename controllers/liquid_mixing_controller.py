@@ -310,6 +310,9 @@ class LiquidMixingController(BaseController):
                 object_name="beaker_05",
                 gripper_control=self.gripper_control,
                 gripper_position=state['gripper_position'],
+                # Contact-stop grasp width from the lookup table: a binary close
+                # position-slams the fingers to 0 and pops the rigid beaker out.
+                gripper_distances=self.pick_controller1.get_gripper_distance("beaker_05"),
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
                 pre_offset_x=0.1,
                 pre_offset_z=0.05,
@@ -324,6 +327,9 @@ class LiquidMixingController(BaseController):
                 object_name="beaker_04",
                 gripper_control=self.gripper_control,
                 gripper_position=state['gripper_position'],
+                # Contact-stop grasp width from the lookup table: a binary close
+                # position-slams the fingers to 0 and pops the rigid beaker out.
+                gripper_distances=self.pick_controller2.get_gripper_distance("beaker_04"),
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 20])).as_quat(),
                 pre_offset_x=0.07,
                 pre_offset_z=0.05,
@@ -338,6 +344,9 @@ class LiquidMixingController(BaseController):
                 object_name="beaker_03",
                 gripper_control=self.gripper_control,
                 gripper_position=state['gripper_position'],
+                # Contact-stop grasp width from the lookup table: a binary close
+                # position-slams the fingers to 0 and pops the rigid beaker out.
+                gripper_distances=self.pick_controller3.get_gripper_distance("beaker_03"),
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat(),
                 pre_offset_x=0.1,
                 pre_offset_z=0.05,

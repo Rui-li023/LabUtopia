@@ -45,8 +45,15 @@ class PickController(AtomicBaseController):
         # Per-episode noise (sampled lazily)
         self._pre_offset_z_noise = 0.0
         self._after_offset_z_noise = 0.0
-        self._orientation_axis = np.array([0, 0, 1.0])
         self._orientation_angle_deg = 0.0
+
+    def set_robot_position(self, position) -> None:
+        """Set the robot base position used to compute relative pick geometry.
+
+        Used by mobile manipulation, where the base moves between steps, so the
+        atomic pick must re-reference the (moving) base on each call.
+        """
+        self._robot_position = position
 
     # ── Randomization ────────────────────────────────────────────
 
@@ -55,8 +62,8 @@ class PickController(AtomicBaseController):
         # since downstream phases (e.g. pour) require >= 0.12 m clearance.
         self._pre_offset_z_noise = self._uniform(0.0, 0.04)
         self._after_offset_z_noise = self._uniform(0.0, 0.04)
-        # Rotate only around the tool Z axis to preserve grasp stability.
-        self._orientation_axis = np.array([0, 0, 1.0])
+        # Yaw noise around the WORLD vertical: varies grasp heading while
+        # keeping the held object level (tool-Z rotation tilts side grasps).
         self._orientation_angle_deg = self._noisy(0.0, 15.0)
 
     # ── Forward ──────────────────────────────────────────────────
@@ -103,9 +110,8 @@ class PickController(AtomicBaseController):
         # Apply per-episode noise
         pre_offset_z = max(0.0, pre_offset_z + self._pre_offset_z_noise)
         after_offset_z = max(0.0, after_offset_z + self._after_offset_z_noise)
-        end_effector_orientation = self._apply_axis_rotation(
-            end_effector_orientation, self._orientation_axis,
-            self._orientation_angle_deg)
+        end_effector_orientation = self._apply_world_yaw(
+            end_effector_orientation, self._orientation_angle_deg)
 
         action = self._execute_phase(
             picking_position, end_effector_orientation,
@@ -166,12 +172,28 @@ class PickController(AtomicBaseController):
             return self._null_action(n)
 
         elif self._event == 4:
-            self._close_gripper()
+            # Distance-based close when a grasp width is supplied: stops the
+            # fingers on contact instead of slamming to 0 (which ejects light/
+            # round objects). Falls back to the binary close otherwise.
+            if grip_dist is not None and grip_dist > 0:
+                self._robot.close_gripper_to_distance(grip_dist)
+                self._current_gripper_state = GRIPPER_CLOSED
+                # Record the commanded grip width so replay reproduces this exact
+                # (firm) grasp via the normalized gripper channel.
+                self._last_gripper_target_m = grip_dist
+            else:
+                self._close_gripper()
             self._lift_target = pos.copy()
             self._lift_target[2] += after_z / su
             if "glass" in obj_name:
+                # Attach the PARENT prim, not the Cylinder mesh: the world-space
+                # follow in grapper_manager writes the prim's translate op, which
+                # for the parent equals its world origin. The mesh child's
+                # translate is in parent-LOCAL units (scaled), so attaching it
+                # moves the rod by ~scale× too little and it never reaches the
+                # beaker (rod stayed at the pick spot, xy≈0.5 vs <0.04 needed).
                 grip_ctrl.add_object_to_gripper(
-                    "/World/glass_rod/Cylinder",
+                    "/World/glass_rod",
                     self._robot.gripper_center_prim_path)
             return self._null_action(n)
 
@@ -244,5 +266,4 @@ class PickController(AtomicBaseController):
         self._robot_position = None
         self._pre_offset_z_noise = 0.0
         self._after_offset_z_noise = 0.0
-        self._orientation_axis = np.array([0, 0, 1.0])
         self._orientation_angle_deg = 0.0

@@ -1,83 +1,107 @@
 name: level2_stopper_to_flask
-
-task_type: "stopper_flask"
-controller_type: "stopper_flask"
-
-mode: "collect"  # "collect", "infer", or "replay"
-usd_path: "assets/chemistry_lab/lab_002/lab_002.usd"
+task_type: stopper_flask
+controller_type: stopper_flask
+mode: collect
+usd_path: assets/chemistry_lab/lab_002/lab_002.usd
 max_episodes: 50
-
-# ── Replay mode ──────────────────────────────────────────────────────────────
 replay:
-  dataset_path: ""
-  # episode_indices: [0, 1, 2]
-
+  dataset_path: ''
 infer:
-  type: "local"
-  obs_names: {"image": 'camera_1_rgb', "image_2": 'camera_2_rgb'}
-  policy_model_path: ""
-  policy_config_path: ""
-  normalizer_path: ""
-  host: "127.0.0.1"
+  type: local
+  obs_names:
+    image: camera_1_rgb
+    image_2: camera_2_rgb
+  policy_model_path: ''
+  policy_config_path: ''
+  normalizer_path: ''
+  host: 127.0.0.1
   port: 8000
   n_obs_steps: 1
   timeout: 30
   max_retries: 3
-
 task:
   max_steps: 2000
   obj_paths:
-    # Source: rubber stopper on the table
-    - path: "/World/rubber_stopper"
-      position_range:
-        x: [0.19, 0.34]
-        y: [0.10, 0.25]
-        z: [0.84, 0.84]
-
-    # Target: round-bottom flask (stopper goes into its mouth)
-    - path: "/World/round_bottom_flask_01"
-      position_range:
-        x: [0.18, 0.30]
-        y: [-0.33, -0.18]
-        z: [0.84, 0.84]
-
+  - path: /World/rubber_stopper
+    position_range:
+      x:
+      - 0.19
+      - 0.34
+      'y':
+      - 0.1
+      - 0.25
+      z:
+      - 0.84
+      - 0.84
+  - path: /World/round_bottom_flask_01
+    position_range:
+      x:
+      - 0.18
+      - 0.3
+      'y':
+      - -0.33
+      - -0.18
+      z:
+      - 0.84
+      - 0.84
 cameras:
-  - prim_path: "/World/Camera1"
-    name: "image"
-    translation: [2, 0, 2]
-    resolution: [256, 256]
-    focal_length: 5
-    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
-    image_type: "rgb"
-
-  - prim_path: "/World/Camera2"
-    name: "image_2"
-    translation: [0.1, 0, 2.5]
-    resolution: [256, 256]
-    focal_length: 5
-    orientation: [0.70711, 0, 0, -0.70711]
-    image_type: "rgb"
-
-  - prim_path: "/World/Franka/panda_hand/arm_camera"
-    name: "wrist_image"
-    resolution: [256, 256]
-    image_type: "rgb"
-
+- prim_path: /World/Camera1
+  name: image
+  translation:
+  - 2
+  - 0
+  - 2
+  resolution:
+  - 256
+  - 256
+  focal_length: 5
+  orientation:
+  - 0.61237
+  - 0.35355
+  - 0.35355
+  - 0.61237
+  image_type: rgb
+- prim_path: /World/Camera2
+  name: image_2
+  translation:
+  - 0.1
+  - 0
+  - 2.5
+  resolution:
+  - 256
+  - 256
+  focal_length: 5
+  orientation:
+  - 0.70711
+  - 0
+  - 0
+  - -0.70711
+  image_type: rgb
+- prim_path: /World/Franka/panda_hand/arm_camera
+  name: wrist_image
+  resolution:
+  - 256
+  - 256
+  image_type: rgb
 robot:
-  type: "franka"
-  position: [-0.4, -0, 0.71]
+  type: franka
+  position:
+  - -0.4
+  - 0
+  - 0.71
   gripper:
-    control_mode: "position"
+    control_mode: position
     closing_speed: 0.15
     closing_force: 30.0
-
 collector:
-  type: "default"
+  type: default
   compression: gzip
-
 hydra:
   run:
     dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
-
 multi_run:
   run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+# Position-only collection: same control law as replay/inference
+# (RMPFlow virtual rollout + velocity strip + commanded gripper channel).
+collect_position_only: true

@@ -55,6 +55,11 @@ cameras:
     orientation: [0.70711, 0, 0, -0.70711]
     image_type: "rgb"
 
+  - prim_path: "/World/Franka/panda_hand/arm_camera"
+    name: "wrist_image"
+    resolution: [256, 256]
+    image_type: "rgb"
+
 robot:
   type: "franka"
   position: [-0.4, -0, 0.71]
@@ -69,3 +74,7 @@ hydra:
 
 multi_run:
   run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+# Position-only collection: same control law as replay/inference
+# (RMPFlow virtual rollout + velocity strip + commanded gripper channel).
+collect_position_only: true

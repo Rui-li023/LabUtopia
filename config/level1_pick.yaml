@@ -18,13 +18,13 @@ replay:
 infer:
   type: "remote"
   obs_names: {"image": 'observation/image', "image_2": 'observation/wrist_image', "wrist_image": 'observation/wrist_image_2'}
-  prompt: "Pick up the conical bottle from the table and lift it clear of the surface."
+  prompt: "Pick up the conical bottle."
   policy_model_path: ""
   policy_config_path: ""
   normalizer_path: ""
   host: "127.0.0.1"
-  port: 18081
-  action_chunk_len: 50
+  port: 18084
+  action_chunk_len: 40
   image_color: bgr
   n_obs_steps: 1
   timeout: 30
@@ -75,3 +75,6 @@ hydra:
 
 multi_run:
   run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+# Position-only collection: same control law as replay/inference
+# (RMPFlow virtual rollout + velocity strip + commanded gripper channel).
+collect_position_only: true

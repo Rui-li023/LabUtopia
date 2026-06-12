@@ -50,6 +50,10 @@ class FlaskToCorkTask(BaseTask):
         self.source_obj = self.cfg.task.obj_paths[0]["path"]
         self.target_obj = self.cfg.task.obj_paths[1]["path"]
         self.support_obj = self.cfg.task.obj_paths[2]["path"]
+        # NOTE: tried raising gripper↔flask friction (µ=2.0) — collect stayed ~83%
+        # and replay dropped to 72%; the round-bottom-flask grasp is marginal for
+        # geometric/stability reasons, not friction. Reverted. (ObjectUtils.
+        # set_physics_friction kept as a reusable utility.)
 
     def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1

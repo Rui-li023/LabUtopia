@@ -6,9 +6,19 @@ controller_type: "press"
 mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/chemistry_lab/lab_003/lab_003.usd"
 instrument_path: "/World/instrument"
-target_button_path: "/World/target_button"
-distractor_button1_path: "/World/distractor_button_1"
-distractor_button2_path: "/World/distractor_button_2"
+target_button_path: "/World/instrument/target_button"
+distractor_button1_path: "/World/instrument/distractor_button_1"
+distractor_button2_path: "/World/instrument/distractor_button_2"
+# Prismatic joints that constrain each button. Order MUST match the three
+# button paths above (target, distractor1, distractor2). The target joint is
+# named "PrismaticJoint" (no numeric suffix) in lab_003.usd.
+button_joint_paths:
+  - "/World/instrument/PrismaticJoint"
+  - "/World/instrument/PrismaticJoint_01"
+  - "/World/instrument/PrismaticJoint_02"
+# instrument xform is scaled 0.001 (mm authoring), so world-space Y offsets
+# applied to joint localPos must be divided by this scale.
+button_joint_localpos_scale: 0.001
 max_episodes: 100
 
 # ── Replay mode ─────────────────────────────────────────────────────────────
@@ -51,7 +61,7 @@ task:
       test_materials:
         - "/World/Looks/Material_4_plastic_light_white"
         - "/World/Looks/Material_7_stainless"
-    - path: /World/target_button/button
+    - path: /World/instrument/target_button/button
       materials:
         - /World/Looks/OmniPBR_Button_Red
         - /World/Looks/OmniPBR_Button_Blue
@@ -136,3 +146,7 @@ hydra:
 
 multi_run:
   run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+# Position-only collection: same control law as replay/inference
+# (RMPFlow virtual rollout + velocity strip + commanded gripper channel).
+collect_position_only: true

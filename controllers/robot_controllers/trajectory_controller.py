@@ -67,15 +67,39 @@ class FrankaTrajectoryController(RMPFlowController):
                 except (AttributeError, TypeError):
                     self._gripper_dof_indices = []
 
-    def _map_gripper_state_to_positions(self, state: float) -> np.ndarray:
-        """Map binary gripper command (0=open, 1=closed) to finger positions.
+    # Inward over-close (metres) applied to intermediate grips in replay. A
+    # non-zero margin was tested (4 mm) and HURT (flask 81%→52%): over-closing
+    # re-clips the neck. Driving to the recorded contact width is best, so this
+    # is disabled (kept as a tuning knob).
+    _GRIP_MARGIN = 0.0
 
-        Training convention: action[7] ∈ {0, 1}. Threshold at 0.5 since
-        model outputs cluster around 0 or 1 — intermediate values are noise.
+    def _map_gripper_state_to_positions(self, state: float) -> np.ndarray:
+        """Map the recorded gripper channel to per-finger positions.
+
+        Unified convention: action[7] is normalized "closedness" in [0,1] —
+        0 = fully open, 1 = fully closed (same polarity as the legacy binary 0/1,
+        now continuous).
+
+        The binary endpoints reproduce the EXACT original open/closed joint
+        targets, so already-collected {0,1} data replays byte-identically (no
+        regression). Intermediate values (new continuous collects, e.g. the flask
+        neck grip ≈ 0.65) interpolate between open and closed, so delicate grips
+        reproduce instead of being slammed shut.
         """
-        if float(state) >= 0.5:
-            return self._gripper_closed_joint_pos.copy()
-        return self._gripper_open_joint_pos.copy()
+        s = float(min(max(state, 0.0), 1.0))
+        open_j = np.asarray(self._gripper_open_joint_pos, dtype=np.float64)
+        close_j = np.asarray(self._gripper_closed_joint_pos, dtype=np.float64)
+        if s <= 1e-6:
+            return open_j.copy()
+        if s >= 1.0 - 1e-6:
+            return close_j.copy()
+        pos = open_j + s * (close_j - open_j)
+        # Firm-grip margin (intermediate values only): the recorded opening is
+        # the finger REST pose against the object; commanding a hair tighter
+        # recreates collect's inward holding force so delicate grips don't slip
+        # in replay. Clamped to the closed limit; endpoints are untouched.
+        pos = np.maximum(close_j, pos - self._GRIP_MARGIN)
+        return pos.astype(np.float64)
 
     def _gripper_action_extras(self, gripper_state: float, n_dof: int):
         """Return (efforts, velocities) for the current gripper mode.

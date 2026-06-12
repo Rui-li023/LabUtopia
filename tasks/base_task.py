@@ -115,7 +115,11 @@ class BaseTask(ABC):
         for obj_path, material_path in self._episode_init_state["object_materials"].items():
             self._bind_material(obj_path, material_path)
             logger.info(f"Bound material {material_path} to object {obj_path}")
-        self._apply_init_state_poses(self._episode_init_state)
+        task_cfg = getattr(self.cfg, "task", None)
+        restore_orient = bool(getattr(task_cfg, "replay_restore_orientation", False))
+        self._apply_init_state_poses(
+            self._episode_init_state, restore_orientation=restore_orient
+        )
         self._restore_distractor_visibility(self._episode_init_state)
         self._restore_camera_poses(self._episode_init_state)
         self.robot.initialize()
@@ -857,9 +861,20 @@ class BaseTask(ABC):
             support_surface_path=support_surface_path,
         )
         if position is None:
-            raise RuntimeError(
-                f"Failed to place '{obj_path}' without overlap after "
-                f"{self._placement_max_sample_attempts} attempts"
+            # Don't kill the whole run over one crowded layout: fall back to the
+            # range centre. If the placement is genuinely bad the episode fails
+            # its success criterion and is discarded — a recoverable outcome,
+            # unlike the RuntimeError that aborted entire collect campaigns
+            # (level4 device_operation died on '/World/DryingBox_01').
+            position = np.array([
+                (position_range["x"][0] + position_range["x"][1]) / 2.0,
+                (position_range["y"][0] + position_range["y"][1]) / 2.0,
+                (position_range["z"][0] + position_range["z"][1]) / 2.0,
+            ])
+            logger.warning(
+                f"No overlap-free placement for '{obj_path}' after "
+                f"{self._placement_max_sample_attempts} attempts; "
+                f"falling back to range centre {position.tolist()}"
             )
 
         self.object_utils.set_object_position(object_path=obj_path, position=position)
@@ -939,24 +954,73 @@ class BaseTask(ABC):
                 }
 
     def _apply_init_state_poses(self, init_state: dict, restore_orientation: bool = False) -> None:
-        """Restore object world poses from ``init_state['object_poses']``.
+        """Restore object world poses from ``init_state['object_poses']``,
+        position pivot-aware (see ``_restore_object_pose``).
+
+        Orientation restore is OFF: even restricted to non-pivoted prims (the
+        flask alone) it zeroes the grasp — re-applying the recorded orient op via
+        set_world_pose mis-poses the flask so the recorded trajectory misses.
+        (Determinism test confirmed replay is deterministic: the SAME episodes
+        fail every run — they're the most-marginal saved grasps, not random
+        physics; position-only restore + continuous grip = 70–81%.)
 
         Args:
             init_state: Dict containing ``object_poses`` with position and orientation.
-            restore_orientation: If True, restore orientation; if False, only restore position.
+            restore_orientation: If True (default), restore orientation as well as position.
         """
         for path, pose in init_state.get("object_poses", {}).items():
             position = np.asarray(pose["position"])
-            if restore_orientation and "orientation" in pose:
-                self.object_utils.set_world_pose(
-                    path,
-                    position,
-                    np.asarray(pose["orientation"]),
-                )
-                logger.info(f"Restored object {path} to position {pose['position']} and orientation {pose['orientation']}")
-            else:
-                self.object_utils.set_object_position(object_path=path, position=position)
-                logger.info(f"Restored object {path} to position {pose['position']}")
+            orientation = (
+                np.asarray(pose["orientation"])
+                if restore_orientation and "orientation" in pose
+                else None
+            )
+            self._restore_object_pose(path, position, orientation)
+            msg = f"Restored object {path} to position {pose['position']}"
+            if orientation is not None:
+                msg += f" orientation {pose['orientation']}"
+            logger.info(msg)
+
+    def _restore_object_pose(self, path: str, world_position: np.ndarray, orientation: np.ndarray | None = None) -> None:
+        """Place an object at its recorded **world** pose, pivot-aware.
+
+        ``set_object_position`` / ``set_world_pose`` write the recorded world
+        position into the local ``xformOp:translate`` (op[0]). For objects whose
+        xform stack has a pivot/rotation (e.g. ``cork_ring``:
+        ``[translate, translate:pivot, rotateXYZ, scale, !invert!pivot]``) the
+        world pose differs from that local translate by a constant offset, so the
+        object lands metres away. Recorded positions come from ``get_world_pose``
+        (world space), so correct for that offset with one feedback step:
+        ``world = translate + offset`` (offset independent of translate), hence
+        ``translate = target - offset`` makes ``world == target``. Orientation is
+        applied first because it changes that offset.
+        """
+        # Restore orientation only for objects with a clean xform stack (no
+        # pivot). Orienting a pivoted prim (e.g. cork_ring's rotateXYZ around a
+        # large translate:pivot) corrupts its world position — earlier a global
+        # orientation restore zeroed the flask success because it moved the
+        # *target* off, not because the flask grasp needs default orientation.
+        if orientation is not None and not self._has_xform_pivot(path):
+            self.object_utils.set_world_pose(path, world_position, orientation)
+        else:
+            self.object_utils.set_object_position(object_path=path, position=world_position)
+        world = self.object_utils.get_world_pose(path)
+        if world is None or world.get("position") is None:
+            return
+        offset = np.asarray(world["position"]) - np.asarray(world_position)
+        if np.linalg.norm(offset) > 1e-4:
+            self.object_utils.set_object_position(
+                object_path=path, position=np.asarray(world_position) - offset
+            )
+
+    def _has_xform_pivot(self, path: str) -> bool:
+        """True if the prim's xform stack uses a pivot (so orientation can't be
+        safely restored via set_world_pose without corrupting its position)."""
+        prim = self.object_utils._stage.GetPrimAtPath(path)
+        if not prim or not prim.IsValid():
+            return False
+        order = prim.GetAttribute("xformOpOrder").Get()
+        return bool(order) and any("pivot" in str(op) for op in order)
 
     # -------------------------------------------------------------------------
     # Step state helpers

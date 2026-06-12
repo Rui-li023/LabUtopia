@@ -59,6 +59,8 @@ from factories.robot_factory import create_robot
 from utils.object_utils import ObjectUtils
 from factories.task_factory import create_task
 from factories.controller_factory import create_controller
+from robots.franka.rmpflow_controller import RMPFlowController
+from controllers.atomic_actions.atomic_base_controller import AtomicBaseController
 
 
 
@@ -162,6 +164,29 @@ def main():
         robot=robot,
     )
     
+    # Position-only collection: make RMPFlow roll out an internal virtual robot
+    # (ignore measured joint state) so its position targets advance at planned
+    # speed while the real arm tracks them with pure position PD — the identical
+    # control law replay and inference use. Must be set BEFORE the controller is
+    # constructed (atomic controllers build their RMPFlowController in __init__).
+    # Applies to collect AND to replay of a position-only dataset (the replay
+    # config inherits the flag): controllers with scripted phases in replay
+    # (e.g. pour's scripted pick) must drive the arm with the exact same
+    # control law the data was collected with, or the hand-off joint state
+    # diverges from what the recorded actions assume.
+    if bool(getattr(cfg, "collect_position_only", False)):
+        RMPFlowController.ignore_robot_state_updates = True
+        AtomicBaseController.record_commanded_gripper = True
+        logger.info("[collect_position_only] RMPFlow virtual-robot rollout ON, "
+                    "velocity feed-forward stripped, gripper channel = commanded")
+
+    # Long-horizon tasks (level4) chain many atomic actions, so per-episode
+    # action noise compounds across the sequence; disable it via config.
+    if not bool(getattr(cfg, "action_randomization", True)):
+        AtomicBaseController.randomization_enabled = False
+        logger.info("[action_randomization=false] per-episode action noise "
+                    "neutralized (deterministic mid-range parameters)")
+
     task_controller = create_controller(
         cfg.controller_type,
         cfg=cfg,
@@ -170,8 +195,32 @@ def main():
     
     video_writer = None
     video_output_path = None
+
+    _arm_stiffness_scale = float(getattr(cfg, "arm_stiffness_scale", 1.0))
+
+    def _apply_arm_gains():
+        # Scale the arm position-drive gains so pure joint-position control (no
+        # velocity feed-forward) tracks briskly instead of crawling. Re-applied
+        # after each reset because re-init restores USD defaults.
+        if _arm_stiffness_scale == 1.0:
+            return
+        try:
+            ac = robot.get_articulation_controller()
+            kps, kds = ac.get_gains()
+            if kps is None:
+                return
+            kps = list(kps); kds = list(kds)
+            for j in range(min(7, len(kps))):
+                kps[j] = kps[j] * _arm_stiffness_scale
+                kds[j] = kds[j] * (_arm_stiffness_scale ** 0.5)
+            ac.set_gains(kps=kps, kds=kds)
+            logger.info(f"[gains] arm kp x{_arm_stiffness_scale} -> kp[:7]={[round(float(k),1) for k in kps[:7]]}")
+        except Exception as e:
+            logger.warning(f"[gains] failed to scale arm gains: {e}")
+
     task.reset()
-    
+    _apply_arm_gains()
+
     while simulation_app.is_running():
         world.step(render=True)
         
@@ -192,7 +241,7 @@ def main():
                     max_episodes = cfg.max_episodes
 
                 # Check if we've completed all episodes BEFORE setting up the next one
-                if task_controller.episode_num >= max_episodes:
+                if task_controller.episode_num >= max_episodes or getattr(task_controller, "_replay_done", False):
                     logger.info(f"All {max_episodes} episodes completed. Shutting down.")
                     task_controller.close()
                     simulation_app.close()
@@ -210,6 +259,7 @@ def main():
                 else:
                     task_controller.reset()
                     task.reset()
+                _apply_arm_gains()
 
                 continue
                 
@@ -219,14 +269,139 @@ def main():
             
             action, done, is_success = task_controller.step(state)
             if action is not None:
-                robot.get_articulation_controller().apply_action(action)
+                # collect_position_only: apply the scripted action as a PURE joint
+                # POSITION command (drop RMPFlow's velocity/effort feed-forward), so
+                # collection uses the exact same control law as replay & inference
+                # (which only have joint positions). Makes the recorded joints a
+                # complete control signal -> collect == replay == policy execution.
+                if bool(getattr(cfg, "collect_position_only", False)) \
+                        and getattr(action, "joint_positions", None) is not None:
+                    # Position-only control law in collect AND in the scripted
+                    # phases of replay (recorded replay actions carry no
+                    # velocities, so this is a no-op for them). Velocity-ONLY
+                    # actions (joint_positions=None, e.g. the pour controller's
+                    # wrist rotation on a velocity-switched DOF) are the task's
+                    # defining actuation — leave them intact.
+                    action.joint_velocities = None
+                    action.joint_efforts = None
+                # Sync BEFORE potentially stripping the finger channels below —
+                # velocity/force modes read the finger target to decide open/close.
                 robot.sync_gripper_from_action(action)
+                # Replay parity for velocity/force gripper modes: during collect
+                # the scripted (RMPFlow) action position-commands only the 7 arm
+                # DOFs — fingers are driven solely by apply_gripper_effort(). The
+                # replayed 9-DOF action would ALSO position-slam the fingers
+                # (drive spring to 0 crushes/ejects what collect's gentle
+                # velocity close held), so strip the finger channels and let
+                # apply_gripper_effort() reproduce collect's exact actuation.
+                if (cfg.mode == "replay"
+                        and getattr(robot, "_gripper_control_mode", "position") != "position"
+                        and getattr(action, "joint_positions", None) is not None
+                        and len(action.joint_positions) > 7):
+                    # None = "leave this DOF uncommanded" (dims must stay = DOF count)
+                    action.joint_positions = list(action.joint_positions[:7]) + \
+                        [None] * (len(action.joint_positions) - 7)
+                    if action.joint_velocities is not None and len(action.joint_velocities) > 7:
+                        action.joint_velocities = list(action.joint_velocities[:7]) + \
+                            [None] * (len(action.joint_velocities) - 7)
+                robot.get_articulation_controller().apply_action(action)
             robot.apply_gripper_effort()
+            # CONSISTENCY-DIAG (no object binding): localize where collect vs
+            # replay diverge by checking (1) object position at the grasp and
+            # release instants, and (2) arm-tracking error every frame (actual
+            # vs commanded joints), reported as a per-episode max.
+            try:
+                def _round(v):
+                    try:
+                        return [round(float(x), 4) for x in v]
+                    except Exception:
+                        return v
+                def _oquat():
+                    try:
+                        _op = state.get('object_path')
+                        if _op:
+                            _q = task.object_utils.get_world_pose(_op).get('orientation')
+                            return [round(float(x), 3) for x in _q]
+                    except Exception:
+                        return None
+                    return None
+                # Per-frame arm-tracking error (arm-motion consistency). Track the
+                # frame & joint where the max occurs to localize the spike.
+                robot._frame_diag = getattr(robot, "_frame_diag", 0) + 1
+                if action is not None and getattr(action, "joint_positions", None) is not None \
+                        and len(action.joint_positions) >= 7:
+                    _cmd_arm = [float(v) for v in action.joint_positions[:7]]
+                    _act_arm = [float(v) for v in robot.get_joint_positions()[:7]]
+                    _perr = [abs(a - c) for a, c in zip(_act_arm, _cmd_arm)]
+                    _err = max(_perr)
+                    robot._last_err = _err
+                    if _err > getattr(robot, "_ep_max_arm_err", 0.0):
+                        robot._ep_max_arm_err = _err
+                        robot._argmax_diag = (robot._frame_diag, _perr.index(_err),
+                                              [round(e, 3) for e in _perr])
+                    # Approach trace: instantaneous error every 25 frames BEFORE the
+                    # first gripper close (shows how the arm converges to the grasp).
+                    if not getattr(robot, "_closed_once", False) and robot._frame_diag % 25 == 0:
+                        logger.info(
+                            f"[APPROACH] mode={cfg.mode} ep={task_controller.episode_num} "
+                            f"frame={robot._frame_diag} arm_err={round(_err, 4)} "
+                            f"max_joint={_perr.index(_err)} per_joint={[round(e, 3) for e in _perr]}"
+                        )
+                # Closed if EITHER the tracked gripper state says closed (collect &
+                # force-replay) OR the commanded finger target is closed (position
+                # replay, where the finger is in action.joint_positions[7]). The OR
+                # makes the grasp/release transitions fire in every mode.
+                _gs = 0
+                try:
+                    if int(robot.get_gripper_state()) == 1:
+                        _gs = 1
+                except Exception:
+                    pass
+                if action is not None and getattr(action, "joint_positions", None) is not None \
+                        and len(action.joint_positions) >= 8 and float(action.joint_positions[7]) <= 0.02:
+                    _gs = 1
+                _prev = getattr(robot, "_prev_gs_diag", 0)
+                # Finger-close trace: measured finger DOFs every 5 frames for 60
+                # frames after each close transition (collect vs replay contact).
+                _ft = getattr(robot, "_finger_trace_left", 0)
+                if _gs == 1 and _prev == 0:
+                    robot._finger_trace_left = 60
+                elif _ft > 0:
+                    robot._finger_trace_left = _ft - 1
+                    if _ft % 5 == 0:
+                        _fp = [round(float(v), 4) for v in robot.get_joint_positions()[7:9]]
+                        logger.info(f"[FINGER] mode={cfg.mode} ep={task_controller.episode_num} "
+                                    f"t-close={60 - _ft} fingers={_fp}")
+                if _gs == 1 and _prev == 0:  # grasp instant
+                    robot._closed_once = True
+                    logger.info(
+                        f"[GRASP-DIAG] mode={cfg.mode} ep={task_controller.episode_num} "
+                        f"obj_pos={_round(state.get('object_position'))} obj_quat={_oquat()} "
+                        f"arm_err_now={round(float(getattr(robot, '_last_err', 0.0)), 4)} "
+                        f"arm_err_peak_approach={round(float(robot._ep_max_arm_err), 4)}"
+                    )
+                elif _gs == 0 and _prev == 1:  # release instant
+                    logger.info(
+                        f"[RELEASE-DIAG] mode={cfg.mode} ep={task_controller.episode_num} "
+                        f"obj_pos={_round(state.get('object_position'))} obj_quat={_oquat()} "
+                        f"arm_err_max={round(float(getattr(robot, '_ep_max_arm_err', 0.0)), 4)}"
+                    )
+                robot._prev_gs_diag = _gs
+            except Exception:
+                pass
             if done:
                 if is_success:
                     logger.success(f"Episode {task_controller.episode_num} succeeded.")
                 else:
                     logger.warning(f"Episode {task_controller.episode_num} failed.")
+                _am = getattr(robot, "_argmax_diag", (None, None, None))
+                logger.info(f"[EP-ARM-ERR] mode={cfg.mode} ep={task_controller.episode_num} "
+                            f"max_arm_track_err={round(float(getattr(robot, '_ep_max_arm_err', 0.0)), 4)} "
+                            f"at_frame={_am[0]}/{getattr(robot, '_frame_diag', 0)} joint={_am[1]} per_joint_err={_am[2]}")
+                robot._ep_max_arm_err = 0.0
+                robot._frame_diag = 0
+                robot._argmax_diag = (None, None, None)
+                robot._closed_once = False
                 task_controller.print_failure_reason()
                 task.on_task_complete(is_success)
                 continue

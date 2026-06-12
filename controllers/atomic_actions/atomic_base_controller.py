@@ -4,6 +4,12 @@ import typing
 
 from robots.base_robot import BaseRobot, GRIPPER_CLOSED, GRIPPER_OPEN
 
+# Franka per-finger opening at the fully-open pose (metres). Used to normalize
+# the recorded gripper channel to [0,1]. Must match the open joint target the
+# replay mapping interpolates from (franka gripper_open_position = 0.05) so a
+# recorded grip round-trips to the same finger opening.
+GRIPPER_MAX_OPEN = 0.05
+
 
 class AtomicBaseController:
     """Base class for finite-state-machine atomic action controllers.
@@ -14,6 +20,23 @@ class AtomicBaseController:
 
     Subclasses override ``_sample_randomization()`` and implement ``forward()``.
     """
+
+    # Class-wide flag set by main.py alongside cfg.collect_position_only. When
+    # True, record[7] is the robot-level COMMANDED gripper opening (the drive
+    # target) instead of the measured finger position. Replaying a commanded
+    # channel re-issues the exact same drive target — e.g. a binary close keeps
+    # squeezing toward 0 in replay just like collect did, instead of driving to
+    # the measured contact width (which only touches, so the object slips).
+    record_commanded_gripper: bool = False
+
+    # Class-wide flag set by main.py from cfg.action_randomization. When False,
+    # per-episode action noise is neutralized: _noisy() returns the base value,
+    # _uniform() returns the range midpoint, _apply_quat_noise() is identity.
+    # Sampling still runs, so parameters that are *defined* by _uniform (shake
+    # amplitude, stir radius/speed) keep a sane deterministic mid-range value
+    # instead of a zero default. Used for long-horizon (level4) tasks where
+    # noise compounds across many chained atomic actions.
+    randomization_enabled: bool = True
 
     def __init__(
         self,
@@ -118,10 +141,14 @@ class AtomicBaseController:
     @staticmethod
     def _noisy(value: float, noise: float) -> float:
         """Return *value* ± uniform(*noise*)."""
+        if not AtomicBaseController.randomization_enabled:
+            return float(value)
         return value + float(np.random.uniform(-noise, noise))
 
     @staticmethod
     def _uniform(lo: float, hi: float) -> float:
+        if not AtomicBaseController.randomization_enabled:
+            return float((lo + hi) / 2.0)
         return float(np.random.uniform(lo, hi))
 
     # ── Quaternion Helpers ───────────────────────────────────────
@@ -156,6 +183,8 @@ class AtomicBaseController:
     def _apply_quat_noise(cls, quat: np.ndarray,
                           max_angle_deg: float = 15.0) -> np.ndarray:
         """Apply a random axis-angle perturbation to *quat*."""
+        if not cls.randomization_enabled:
+            return np.asarray(quat, dtype=np.float64)
         axes = [np.array([1,0,0.]), np.array([0,1,0.]), np.array([0,0,1.])]
         axis = axes[int(np.random.randint(0, 3))]
         angle = float(np.random.uniform(-max_angle_deg, max_angle_deg))
@@ -175,9 +204,29 @@ class AtomicBaseController:
         around the tool spin axis regardless of how the gripper is oriented in
         the world. This preserves grasp alignment for both top-down and
         horizontal picks.
+
+        NOTE: for orientation NOISE on grasps that carry containers, use
+        ``_apply_world_yaw`` instead — a tool-Z rotation is an upright yaw only
+        for TOP-DOWN grasps; for side grasps (ee pitched 90°) the tool Z axis
+        is horizontal, so rotating around it ROLLS the held object (tilted
+        beakers during carry/place).
         """
         delta = cls._axis_angle_to_quat(axis, angle_deg)
         result = cls._quat_multiply(np.asarray(quat, dtype=np.float64), delta)
+        norm = np.linalg.norm(result)
+        return result / norm if norm > 0 else result
+
+    @classmethod
+    def _apply_world_yaw(cls, quat: np.ndarray, angle_deg: float) -> np.ndarray:
+        """Rotate *quat* around the WORLD vertical axis (pre-multiply).
+
+        A world-Z rotation varies the approach/wrist heading while keeping the
+        held object level for ANY grasp style: identical to the old tool-Z
+        noise for top-down grasps, and a pure (no-roll) heading change for side
+        grasps.
+        """
+        delta = cls._axis_angle_to_quat(np.array([0.0, 0.0, 1.0]), angle_deg)
+        result = cls._quat_multiply(delta, np.asarray(quat, dtype=np.float64))
         norm = np.linalg.norm(result)
         return result / norm if norm > 0 else result
 
@@ -246,7 +295,26 @@ class AtomicBaseController:
 
         record = np.zeros(8, dtype=np.float64)
         record[:7] = arm
-        record[7] = float(self._last_gripper_state)
+        # Unified gripper channel: normalized "closedness" in [0,1] — 0 = fully
+        # open, 1 = fully closed — keeping the legacy binary 0/1 polarity but now
+        # CONTINUOUS, so delicate grips reproduce in replay (round-bottom-flask
+        # neck grip ≈ 0.65) instead of a binary slam that ejects them. Uses the
+        # MEASURED finger opening: it reflects the physical hold across the whole
+        # episode (incl. the pick→place controller handoff), where a per-
+        # controller commanded target would reset to "open" during placing.
+        if AtomicBaseController.record_commanded_gripper and self._robot is not None:
+            # Commanded channel (position-only collect): normalize the robot-level
+            # drive target so replay's hybrid map inverts it exactly —
+            # s = 1 - cmd/0.05  ↔  pos = 0.05*(1-s). Binary open/close land on the
+            # exact endpoints {0,1}; distance grips round-trip to the same target.
+            opening = float(np.clip(self._robot.get_gripper_commanded_opening(),
+                                    0.0, GRIPPER_MAX_OPEN))
+            record[7] = float(np.clip(1.0 - opening / GRIPPER_MAX_OPEN, 0.0, 1.0))
+        elif current_joint_positions is not None and len(current_joint_positions) > 7:
+            opening = float(np.clip(current_joint_positions[7], 0.0, GRIPPER_MAX_OPEN))
+            record[7] = float(np.clip(1.0 - opening / GRIPPER_MAX_OPEN, 0.0, 1.0))
+        else:
+            record[7] = 1.0 if int(self._last_gripper_state) == GRIPPER_CLOSED else 0.0
         self._last_record_positions = record.copy()
         return record
 
@@ -254,11 +322,13 @@ class AtomicBaseController:
 
     def _open_gripper(self):
         self._current_gripper_state = GRIPPER_OPEN
+        self._last_gripper_target_m = GRIPPER_MAX_OPEN
         if self._robot is not None:
             self._robot.open_gripper()
 
     def _close_gripper(self):
         self._current_gripper_state = GRIPPER_CLOSED
+        self._last_gripper_target_m = 0.0
         if self._robot is not None:
             self._robot.close_gripper()
 

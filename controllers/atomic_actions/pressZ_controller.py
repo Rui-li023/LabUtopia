@@ -40,6 +40,11 @@ class PressZController(AtomicBaseController):
                                 else 0.2 / get_stage_units())
         self._position_threshold = 0.01 / get_stage_units()
 
+        # Press-target height above the button (metres, +z = up). Lower = deeper
+        # press. 0.005 (vs the old 0.025) sinks the position-only steady-state
+        # below the 0.761 success threshold so the press completes promptly.
+        self._press_depth = 0.005
+
         # Per-episode noise
         self._offset_noise = 0.0
         self._press_depth_noise = 0.0
@@ -95,7 +100,14 @@ class PressZController(AtomicBaseController):
             action = self._null_action(n)
 
         elif self._event == 2:
-            depth = 0.025 + self._press_depth_noise
+            # Press target height above the button (+z = up). A pure-position PD
+            # (position-only collection) leaves a steady-state error against the
+            # spring-loaded button: with the old +0.025 the button settled at
+            # ~0.769, ~8 mm short of the 0.761 success threshold, so the arm
+            # idled for thousands of frames while the button crept across.
+            # Commanding a deeper press (lower EE target) moves the steady-state
+            # below the threshold so success fires promptly — no long idle tail.
+            depth = self._press_depth + self._press_depth_noise
             target_position[2] += depth / su
             action = self._cspace_controller.forward(
                 target_end_effector_position=target_position,

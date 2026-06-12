@@ -148,3 +148,7 @@ hydra:
 
 multi_run:
   run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+# Position-only collection: same control law as replay/inference
+# (RMPFlow virtual rollout + velocity strip + commanded gripper channel).
+collect_position_only: true

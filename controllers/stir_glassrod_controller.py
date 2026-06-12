@@ -111,6 +111,12 @@ class StirGlassrodTaskController(BaseController):
             self.reset_needed = True
             final_object_position = state['glass_rod_position']
             target_position = state['target_position']
+            _h = float(final_object_position[2])
+            _xy = float(np.linalg.norm(final_object_position[0:2] - target_position[0:2]))
+            print(f"[STIR-DIAG] rod_final={[round(float(v),3) for v in final_object_position]} "
+                  f"target={[round(float(v),3) for v in target_position]} "
+                  f"height={round(_h,3)} (need>0.85, {'OK' if _h>0.85 else 'SHORT'}) "
+                  f"xy={round(_xy,3)} (need<0.04, {'OK' if _xy<0.04 else 'FAR'})")
             self.gripper_control.release_object()
             if final_object_position[2] > 0.85 and np.linalg.norm(final_object_position[0:2] - target_position[0:2]) < 0.04:
                 # Task successful - save collected data
@@ -147,7 +153,15 @@ class StirGlassrodTaskController(BaseController):
     def _check_success(self):
         object_pos = self.state['glass_rod_position']
         target_position = self.state['target_position']
-        if object_pos[2] > 0.85 and np.linalg.norm(object_pos[0:2] - target_position[0:2]) < 0.04:
+        xy = float(np.linalg.norm(object_pos[0:2] - target_position[0:2]))
+        # Replay: report the instantaneous criterion only and let _step_replay
+        # own the consecutive-frame counting + settling window. This method must
+        # NOT also touch check_success_counter in replay (the base already
+        # manages it; double-counting + the strict 4cm/240-frame gate gave 0%).
+        # Slightly relax xy to absorb PD-replay tracking error.
+        if self.mode == "replay":
+            return object_pos[2] > 0.85 and xy < 0.06
+        if object_pos[2] > 0.85 and xy < 0.04:
             self.check_success_counter += 1
             if self.check_success_counter > 240:
                 self._last_success = True

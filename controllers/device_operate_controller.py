@@ -43,7 +43,8 @@ class DeviceOperateController(BaseController):
         self.initial_beaker_position = None
         self.initial_beaker3_position = None
         self.initial_button_position = None
-            
+        self._max_button_press = 0.0
+
     def _init_collect_mode(self, cfg, robot):
         """Initialize controller for data collection mode."""
         super()._init_collect_mode(cfg, robot)
@@ -83,7 +84,9 @@ class DeviceOperateController(BaseController):
         self.press_controller = PressController(
             name="press_controller",
             cspace_controller=rmp_controller,
-            events_dt=[0.004, 0.05, 0.02],
+            # Atomic PressController is a 4-phase press-and-retract cycle
+            # (DEFAULT_DT); the old 3-element timing is now invalid.
+            events_dt=[0.005, 0.1, 0.01, 0.005],
             initial_offset=0.05,
             robot=robot,
         )
@@ -102,10 +105,14 @@ class DeviceOperateController(BaseController):
         self.current_phase = Phase.OPEN_DOOR
         self.last_phase = None
         self.success_steps.clear()
-        self.initial_handle_position = None  
+        self.initial_handle_position = None
         self.initial_beaker_position = None
         self.initial_beaker3_position = None
+        # Was missing: without this the press-displacement baseline carried
+        # over from the previous episode.
+        self.initial_button_position = None
         self.end_handle_position = None
+        self._max_button_press = 0.0
         
         if self.mode == "collect":
             self.active_controller = self.open_controller
@@ -156,7 +163,9 @@ class DeviceOperateController(BaseController):
             dist = np.linalg.norm(object_pos[:2] - target_pos[:2])
             return dist < 0.2 and abs(object_pos[2] - target_pos[2]) < 0.1  
         elif self.current_phase == Phase.PRESS_BUTTON:
-            return state['button_position'][0] - self.initial_button_position[0] > 0.005
+            print(f"[device-op] button peak displacement: "
+                  f"{self._max_button_press:.4f} (need > 0.005)")
+            return self._max_button_press > 0.005
         return False
 
     def _advance_to_next_phase(self):
@@ -204,7 +213,17 @@ class DeviceOperateController(BaseController):
             self.initial_beaker3_position = state['beaker3_position']
         if self.initial_button_position is None:
             self.initial_button_position = state['button_position']
-            
+
+        # Track the button's peak displacement during the press phase: the
+        # phase check runs once after the controller is done (post-retract),
+        # by which time a spring-loaded button has already bounced back.
+        if (self.current_phase == Phase.PRESS_BUTTON
+                and state.get('button_position') is not None):
+            disp = float(state['button_position'][0]
+                         - self.initial_button_position[0])
+            if disp > self._max_button_press:
+                self._max_button_press = disp
+
         if self.current_phase == Phase.FINISHED:
             self.reset_needed = True
             print(self.success_steps)
@@ -286,7 +305,13 @@ class DeviceOperateController(BaseController):
                     current_joint_positions=state['joint_positions'],
                     gripper_control=self.gripper_control,
                     end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat(),
-                    press_distance = 0.005
+                    # 0.03 (was 0.005): the press phase advances to retract
+                    # when the EE is within 0.02 of the target, so a 0.005
+                    # press target could retract before even touching the
+                    # button; PD steady-state error vs the button spring eats
+                    # the rest (same family as the heat/centrifuge presses).
+                    # L1 press uses the 0.04 default successfully.
+                    press_distance = 0.03
                 )
             if 'camera_data' in state:
                 self.data_collector.cache_step(

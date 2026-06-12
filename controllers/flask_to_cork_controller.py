@@ -32,6 +32,16 @@ class FlaskToCorkTaskController(BaseController):
         self._phase_instructions: dict[Phase, str] = {}
         self._phase_task_indices: dict[Phase, int] = {}
 
+        # Per-finger grasp target for the round-bottom flask neck (Franka:
+        # 0 = closed, 0.04 = open). Too small → the fingers slam past contact and
+        # clip through the neck mesh (physics ejects the flask); too large → no
+        # contact and it drops. A sweep over 0.004–0.012 put picking success at
+        # 20% → 47% → 87% (0.008) → 87% (0.010) → 93% (0.012); 0.008–0.012 hold
+        # the flask with zero picking failures, so 0.010 is the robust default.
+        # Overridable via cfg.task.gripper_distance for further tuning.
+        task_cfg = getattr(cfg, "task", None)
+        self._gripper_distance = float(getattr(task_cfg, "gripper_distance", 0.010))
+
     # ------------------------------------------------------------------ setup
 
     def _init_collect_mode(self, cfg, robot):
@@ -70,7 +80,28 @@ class FlaskToCorkTaskController(BaseController):
     # ---------------------------------------------------------- success checks
 
     def _check_success(self) -> bool:
+        # In replay the phase machine (which only advances in _step_collect) is
+        # frozen at PICKING, so a phase-based check would score the recorded
+        # pick+place trajectory against "is the flask lifted" — which is false
+        # once the flask has been set down at the end of the episode. Score
+        # replay against the final task goal instead: flask resting on target,
+        # using the same thresholds as the PLACING phase check.
+        if self.mode == "replay":
+            return self._check_placed_on_target()
         return self._check_phase_success()
+
+    def _check_placed_on_target(self) -> bool:
+        object_pos = self.state["object_position"]
+        target_pos = self.state["target_position"]
+        xy_dist = float(np.linalg.norm(object_pos[:2] - target_pos[:2]))
+        z_drop = float(abs(object_pos[2] - self.initial_position[2]))
+        # Replay leaves no failure reason (base _step_replay), so record the
+        # placement metrics for diagnosis.
+        self._last_failure_reason = (
+            f"replay placement: xy_dist={xy_dist:.3f} (<0.08) "
+            f"z_drop={z_drop:.3f} (<0.15)"
+        )
+        return xy_dist < 0.08 and z_drop < 0.15
 
     def _check_phase_success(self) -> bool:
         object_pos = self.state["object_position"]
@@ -155,6 +186,10 @@ class FlaskToCorkTaskController(BaseController):
 
         if self.mode == "collect":
             return self._step_collect(state)
+        if self.mode == "replay":
+            # Replay is handled by BaseController (trajectory playback + success
+            # check); this override only exists to seed initial_position/size.
+            return self._step_replay(state)
         return self._step_infer(state)
 
     # ------------------------------------------------------- collect-mode step
@@ -225,7 +260,11 @@ class FlaskToCorkTaskController(BaseController):
                 end_effector_orientation=ee_orient,
                 pre_offset_x=0.04,
                 pre_offset_z=0.02,
-                after_offset_z=0.25
+                after_offset_z=0.25,
+                # Round-bottom flask: close to the neck width (per-finger target)
+                # instead of a full 0/1 close, which ejected the flask. Tuned via
+                # cfg.task.gripper_distance (see __init__); default 0.010.
+                gripper_distances=self._gripper_distance,
             )
 
         # PLACING

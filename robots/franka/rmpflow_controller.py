@@ -27,6 +27,16 @@ class RMPFlowController(mg.MotionPolicyController):
         use_default_config (bool, optional): Whether to use default config files. Defaults to True.
     """
 
+    # Class-wide flag set by main.py BEFORE controllers are constructed (used by
+    # position-only collection, cfg.collect_position_only). When True, RmpFlow
+    # rolls out an internal "virtual robot" instead of reading the measured joint
+    # state each frame, so the commanded position targets advance at full planned
+    # speed even though the real arm (pure position PD, no velocity feed-forward)
+    # tracks them with some lag — the exact same control situation as replay and
+    # inference. Without this, position-only control makes RmpFlow's closed loop
+    # converge to a crawl (targets stay glued to the lagging measured state).
+    ignore_robot_state_updates: bool = False
+
     def __init__(
         self, 
         name: str, 
@@ -54,6 +64,11 @@ class RMPFlowController(mg.MotionPolicyController):
         
         print(self.rmp_flow_config)
         self.rmp_flow = mg.lula.motion_policies.RmpFlow(**self.rmp_flow_config)
+        if RMPFlowController.ignore_robot_state_updates:
+            # Virtual-robot rollout (see class flag above). After reset() the
+            # internal state is None, so the first compute re-seeds it from the
+            # measured robot state — no extra re-sync needed per episode.
+            self.rmp_flow.set_ignore_state_updates(True)
 
         self.articulation_rmp = mg.ArticulationMotionPolicy(robot_articulation, self.rmp_flow, physics_dt)
 

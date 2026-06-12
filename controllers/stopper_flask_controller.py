@@ -69,6 +69,16 @@ class StopperFlaskTaskController(BaseController):
     # ---------------------------------------------------------- success checks
 
     def _check_success(self) -> bool:
+        # In replay the phase machine (only advanced in _step_collect) is frozen
+        # at PICKING, so a phase-based check scores against "is the stopper
+        # lifted" — false once it's been set on the flask. Score replay against
+        # the final goal instead, using the PLACING thresholds.
+        if self.mode == "replay":
+            object_pos = self.state["object_position"]
+            target_pos = self.state["target_position"]
+            xy_dist = float(np.linalg.norm(object_pos[:2] - target_pos[:2]))
+            z_offset = float(abs(object_pos[2] - target_pos[2]))
+            return xy_dist < 0.04 and z_offset < 0.15
         return self._check_phase_success()
 
     def _check_phase_success(self) -> bool:
@@ -149,6 +159,8 @@ class StopperFlaskTaskController(BaseController):
 
         if self.mode == "collect":
             return self._step_collect(state)
+        if self.mode == "replay":
+            return self._step_replay(state)
         return self._step_infer(state)
 
     # ------------------------------------------------------- collect-mode step

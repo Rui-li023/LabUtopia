@@ -397,12 +397,18 @@ class BaseController(ABC):
     def _advance_replay_episode(self) -> None:
         """Pre-load the next replay episode so that ``get_current_init_state()``
         returns the correct init state on the next reset cycle."""
+        self._replay_obj_zmax = None
         if self._current_replay_idx + 1 < len(self._replay_loader):
             self._current_replay_idx += 1
             ep = self._replay_loader.get_episode(self._current_replay_idx)
             self._current_actions = ep.actions
             self._current_init_state = ep.init_state
             logger.info(f"[Replay] Next episode {ep.episode_idx}: {len(self._current_actions)} actions preloaded.")
+        else:
+            # Loader exhausted — signal the main loop to shut down before it
+            # re-runs the last episode (episode_num lags one behind here, which
+            # otherwise replays the final episode a spurious extra time).
+            self._replay_done = True
 
     def _step_replay(self, state) -> tuple[Any, bool, bool]:
         """Execute one step in replay mode.
@@ -426,6 +432,19 @@ class BaseController(ABC):
             self._current_action_step += 1
 
         action = self.trajectory_controller.get_next_action()
+
+        # Attach-in-replay: reproduce collect's add_object_to_gripper for objects
+        # that were kinematically attached during collection (e.g. the glass rod),
+        # so the grasp is reproduced deterministically instead of slipping.
+        self._replay_handle_attach(state)
+
+        # Track peak object height this episode (replay diagnostic: was it lifted?)
+        if isinstance(self.state, dict):
+            _obj = self.state.get("object_position")
+            if _obj is not None:
+                _z = float(np.asarray(_obj, dtype=float)[2])
+                _prev = getattr(self, "_replay_obj_zmax", None)
+                self._replay_obj_zmax = _z if _prev is None else max(_prev, _z)
 
         if self._check_success():
             self.check_success_counter += 1
@@ -457,13 +476,62 @@ class BaseController(ABC):
             self._replay_settle_used = getattr(self, "_replay_settle_used", 0) + 1
             if self._replay_settle_used <= settle_budget:
                 return None, False, False
-            logger.warning("[Replay] Task failed — all actions exhausted.")
+            diag = ""
+            if isinstance(self.state, dict):
+                obj = self.state.get("object_position")
+                tgt = self.state.get("target_position")
+                if obj is not None:
+                    obj = np.asarray(obj, dtype=float)
+                    zmax = getattr(self, "_replay_obj_zmax", None)
+                    lifted = "" if zmax is None else f" zmax={zmax:.3f} dz_lift={zmax - obj[2]:.3f}"
+                    if tgt is not None:
+                        tgt = np.asarray(tgt, dtype=float)
+                        xy = float(np.linalg.norm(obj[:2] - tgt[:2]))
+                        dz = float(abs(obj[2] - tgt[2]))
+                        diag = (f" obj={np.round(obj, 3).tolist()} tgt={np.round(tgt, 3).tolist()} "
+                                f"xy={xy:.3f} dz={dz:.3f}{lifted}")
+                    else:
+                        diag = f" obj={np.round(obj, 3).tolist()}{lifted}"
+            logger.warning(f"[Replay] Task failed — all actions exhausted.{diag}")
             self._replay_settle_used = 0
+            self._replay_obj_zmax = None
             self._advance_replay_episode()
             self.reset_needed = True
             return None, True, False
 
         return action, False, False
+
+    def _replay_handle_attach(self, state) -> None:
+        """Re-create collect's kinematic gripper attach during replay for objects
+        that were attached at collect time (name contains 'glass'), so the grasp
+        reproduces deterministically. No-op for real-grasp objects."""
+        obj = str(state.get("object_path") or "")
+        task_cfg = getattr(self.cfg, "task", None)
+        attach_enabled = "glass" in obj.lower() or bool(getattr(task_cfg, "attach_grasp", False))
+        if not attach_enabled:
+            return
+        if self._current_actions is None:
+            return
+        idx = self._current_action_step - 1
+        if idx < 0 or idx >= len(self._current_actions):
+            return
+        if getattr(self, "_replay_gripper", None) is None:
+            from controllers.robot_controllers.grapper_manager import Gripper
+            self._replay_gripper = Gripper()
+        closed = float(self._current_actions[idx][7]) > 0.5
+        gframe = getattr(self.robot, "gripper_center_prim_path",
+                         "/World/Franka/panda_hand/tool_center")
+        g = self._replay_gripper
+        if closed and g.grasped_object_path is None:
+            try:
+                g.add_object_to_gripper(obj, gframe)
+            except Exception as exc:
+                logger.warning(f"[Replay] attach failed: {exc}")
+                return
+        elif not closed and g.grasped_object_path is not None:
+            g.release_object()
+        if g.grasped_object_path is not None:
+            g.update_grasped_object_position()
 
     @abstractmethod
     def _check_success(self) -> bool:

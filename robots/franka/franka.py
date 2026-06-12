@@ -300,6 +300,7 @@ class Franka(BaseRobot):
         else:
             self._gripper.open()
         self._gripper_state = GRIPPER_OPEN
+        self._gripper_cmd_opening = float(self._gripper_open_position[0])
 
     def close_gripper(self) -> None:
         """Close the gripper."""
@@ -310,6 +311,7 @@ class Franka(BaseRobot):
         else:
             self._gripper.close()
         self._gripper_state = GRIPPER_CLOSED
+        self._gripper_cmd_opening = float(self._gripper_closed_position[0])
 
     def sync_gripper_from_action(self, action) -> None:
         """Update gripper velocity/effort from an action's gripper position target.
