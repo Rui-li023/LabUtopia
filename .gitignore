@@ -220,3 +220,14 @@ missing_assets.txt
 # Claude Code local config
 .claude/
 local/
+
+# Local working artifacts (not for the public repo):
+# knowledge-base notes, generated configs, machine-specific campaign scripts/logs
+/docs/
+config/_autorun.yaml
+scripts/level1_eval/
+scripts/level23_campaign/
+scripts/level2_flask/
+scripts/level345_collect/
+scripts/lerobot_export/_run_all.sh
+scripts/patch_level1_infer.py
