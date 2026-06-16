@@ -24,6 +24,7 @@ class PickPourTask(BaseTask):
         )
         self._episode_init_state["extra"]["current_obj_idx"] = self.current_obj_idx
         self.randomize_object_position(self.target_path, self.cfg.task.left_pos)
+        self._apply_source_mass_override()
 
     def reset_with_init_state(self, init_state: dict) -> None:
         super().reset_with_init_state(init_state)
@@ -33,6 +34,26 @@ class PickPourTask(BaseTask):
             prim = self.stage.GetPrimAtPath(obj_cfg["path"])
             if prim.IsValid():
                 set_prim_visibility(prim, i == current_obj_idx)
+        self._apply_source_mass_override()
+
+    def _apply_source_mass_override(self) -> None:
+        """Lower the source object's mass for a wobble-free pour, when requested.
+
+        Opt-in via the pour configs only (so the shared lab USD and the ~10 other
+        tasks that grasp these beakers are untouched):
+
+            task:
+              source_mass_kg: 0.05      # absolute override, OR
+              source_mass_scale: 0.33   # multiply the body's current PhysX mass
+        """
+        task = getattr(self.cfg, "task", None)
+        mass_kg = getattr(task, "source_mass_kg", None) if task else None
+        scale = getattr(task, "source_mass_scale", None) if task else None
+        if mass_kg is None and scale is None:
+            return
+        self.object_utils.set_object_mass(
+            self.current_obj_path + "/mesh", mass_kg=mass_kg, scale=scale
+        )
 
     def step(self) -> dict[str, Any] | None:
         self.frame_idx += 1

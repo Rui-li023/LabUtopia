@@ -73,6 +73,22 @@ class PickPourTaskController(BaseController):
         elif self.mode == "infer":
             self.inference_engine.reset()
 
+    # Grasp width (m) for the pour source, replacing the binary slam-close that
+    # ejected light glassware (and forced the source mass to be inflated). Beakers
+    # are NOT keyed in PickController.get_gripper_distance (exact-match -> 0.0), so
+    # default them here; override per-config with task.source_grip_distance.
+    _SOURCE_GRIP_DEFAULTS = {"beaker": 0.020, "graduated_cylinder": 0.018, "conical_bottle": 0.020}
+
+    def _source_grip_distance(self, object_name: str) -> float:
+        override = getattr(getattr(self.cfg, "task", None), "source_grip_distance", None)
+        if override is not None:
+            return float(override)
+        name = (object_name or "").lower()
+        for key, width in self._SOURCE_GRIP_DEFAULTS.items():
+            if key in name:
+                return width
+        return 0.020
+
     def _check_success(self) -> bool:
         """Evaluate whether the current state meets the task success criterion."""
         return self._check_phase_success()
@@ -228,7 +244,8 @@ class PickPourTaskController(BaseController):
                     gripper_control=self.gripper_control,
                     gripper_position=state['gripper_position'],
                     end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
-                    after_offset_z=0.3
+                    after_offset_z=0.3,
+                    gripper_distances=self._source_grip_distance(state['object_name']),
                 )
             else:
                 action, record_array = self.pour_controller.forward(
@@ -274,6 +291,22 @@ class PickPourTaskController(BaseController):
         self._last_success = False
         self.current_phase = Phase.FINISHED
         return None, True, False
+
+    def _step_replay(self, state):
+        """Replay plays back the full recorded pick+pour trajectory.
+
+        The base ``_step_replay`` never advances ``current_phase``, so without
+        this override ``_check_phase_success`` would stay in the PICKING branch
+        forever and replay would only ever validate the 0.12 m lift — never the
+        strict pour gate. Advance PICKING->POURING once the source is lifted (the
+        same threshold collect/infer use) so replay actually re-checks the pour in
+        real physics. Pure recorded-action playback — no object binding.
+        """
+        if (self.current_phase == Phase.PICKING
+                and self.initial_position is not None
+                and state['object_position'][2] > self.initial_position[2] + 0.12):
+            self.current_phase = Phase.POURING
+        return super()._step_replay(state)
 
     def _step_infer(self, state):
         """Execute inference mode step."""

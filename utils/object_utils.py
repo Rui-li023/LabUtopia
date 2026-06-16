@@ -170,6 +170,69 @@ class ObjectUtils:
         binding.Bind(material, UsdShade.Tokens.weakerThanDescendants, "physics")
         logger.info(f"set_physics_friction: bound µ={static_friction} to {object_path}")
 
+    def set_object_mass(self, object_path: str, mass_kg: float | None = None,
+                        scale: float | None = None) -> float | None:
+        """Override a rigid body's mass (kg) at runtime.
+
+        Several graspable glassware meshes have an inflated ``physics:density``
+        (e.g. beaker2 = 12 vs 4-5 for the cylinders) that was raised to keep the
+        binary slam-close from ejecting them; the heavy mass then introduces
+        inertial wobble during the pour tilt. This lets a task lower the source
+        mass for a clean collect once the grasp uses a distance/force hold.
+
+        Either ``mass_kg`` (absolute) or ``scale`` (multiply the body's current
+        PhysX mass) may be given. Authors ``physics:mass`` so a re-parse keeps the
+        value, and pushes it to the live body via SingleRigidPrim when physics is
+        already initialized. Returns the resulting mass, or None on failure.
+        """
+        prim = self._stage.GetPrimAtPath(object_path)
+        if not prim or not prim.IsValid():
+            logger.warning(f"set_object_mass: prim {object_path} invalid")
+            return None
+        rp = None
+        try:
+            from isaacsim.core.prims import SingleRigidPrim
+            rp = SingleRigidPrim(object_path)
+        except Exception as exc:  # physics view not ready yet — fall back to USD attr
+            logger.info(f"set_object_mass: runtime view unavailable ({exc}); authoring physics:mass")
+        target = mass_kg
+        if target is None and scale is not None:
+            # Scale from the ORIGINAL authored mass, cached on first call — scaling
+            # the live (already-overridden) mass every reset compounds toward zero.
+            if not hasattr(self, "_original_masses"):
+                self._original_masses = {}
+            base = self._original_masses.get(object_path)
+            if base is None:
+                base = None
+                if rp is not None:
+                    try:
+                        base = float(rp.get_mass())
+                    except Exception:
+                        base = None
+                if base is None or base <= 0.0:
+                    logger.warning(f"set_object_mass: cannot read current mass of {object_path}; "
+                                   f"scale={scale} ignored")
+                    return None
+                self._original_masses[object_path] = base
+            target = base * float(scale)
+        if target is None:
+            return None
+        # Author physics:mass (precedence over density) and neutralise density.
+        mass_api = UsdPhysics.MassAPI.Apply(prim)
+        mass_api.GetMassAttr().Set(float(target))
+        dens = prim.GetAttribute("physics:density")
+        if dens and dens.IsValid() and dens.HasAuthoredValue():
+            dens.Set(0.0)
+        # Push to the live body so the change takes effect this episode.
+        if rp is not None:
+            try:
+                rp.set_mass(float(target))
+                target = float(rp.get_mass())
+            except Exception as exc:
+                logger.info(f"set_object_mass: live set deferred ({exc})")
+        logger.info(f"set_object_mass: {object_path} -> {target:.4f} kg")
+        return target
+
     def get_geometry_center(self, object_name: str | None = None, object_path: str | None = None) -> np.ndarray:
         aabb = self.get_world_aabb(object_name=object_name, object_path=object_path)
         if aabb is None:

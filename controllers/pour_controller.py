@@ -93,6 +93,22 @@ class PourTaskController(BaseController):
         elif self.mode == "infer":
             self.inference_engine.reset()
 
+    # Grasp width (m) for the pour source, replacing the binary slam-close that
+    # ejected light glassware (and forced the source mass to be inflated). Beakers
+    # are NOT keyed in PickController.get_gripper_distance (exact-match -> 0.0), so
+    # default them here; override per-config with task.source_grip_distance.
+    _SOURCE_GRIP_DEFAULTS = {"beaker": 0.020, "graduated_cylinder": 0.018, "conical_bottle": 0.020}
+
+    def _source_grip_distance(self, object_name: str) -> float:
+        override = getattr(getattr(self.cfg, "task", None), "source_grip_distance", None)
+        if override is not None:
+            return float(override)
+        name = (object_name or "").lower()
+        for key, width in self._SOURCE_GRIP_DEFAULTS.items():
+            if key in name:
+                return width
+        return 0.020
+
     def _check_success(self) -> bool:
         """Evaluate whether the current state meets the task success criterion.
 
@@ -137,6 +153,7 @@ class PourTaskController(BaseController):
                 pre_offset_x=0.05,
                 pre_offset_z=0.05,
                 after_offset_z=0.5,
+                gripper_distances=self._source_grip_distance(state['object_name']),
             )
             return action, False, False
         if self.current_phase != Phase.POURING:
@@ -292,7 +309,8 @@ class PourTaskController(BaseController):
                     end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
                     pre_offset_x=0.05,
                     pre_offset_z=0.05,
-                    after_offset_z=0.5
+                    after_offset_z=0.5,
+                    gripper_distances=self._source_grip_distance(state['object_name']),
                 )
             else:
                 action, record_array = self.pour_controller.forward(
@@ -358,6 +376,7 @@ class PourTaskController(BaseController):
                     gripper_control=self.gripper_control,
                     gripper_position=state['gripper_position'],
                     end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 15])).as_quat(),
+                    gripper_distances=self._source_grip_distance(state['object_name']),
                 )
             
         else:
