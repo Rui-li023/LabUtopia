@@ -30,6 +30,10 @@ infer:
 
 task:
   max_steps: 4000
+  # Realistic gripper<->glassware friction so the near-zero-squeeze grasp holds
+  # the beaker/conical through transport+pour (and reproduces in open-loop replay)
+  # without ejection. Applied to both grasped objects in collect AND replay.
+  grasp_friction: 1.5
   door_paths:
     - path: "/World/DryingBox_01"
       position_range:

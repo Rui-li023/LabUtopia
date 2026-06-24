@@ -126,8 +126,45 @@ class DeviceOperateController(BaseController):
             pass
 
     def _check_success(self) -> bool:
-        """Evaluate whether the current state meets the task success criterion."""
-        return self._check_phase_success(self.state)
+        """Terminal success criterion for the whole task (used by replay).
+
+        The phase-based ``_check_phase_success`` only tests the *current* phase,
+        which never advances under replay (no atomic/policy driver runs), so it
+        cannot score a replayed episode. Instead check the task's end state
+        directly: the beaker is in the device interior, beaker3 is on its target
+        platform, and the spring button was pressed (peak displacement). These
+        placements imply the earlier door-open / pick phases happened, so the
+        full sequence is covered. Thresholds reuse the per-phase PLACE checks.
+        """
+        state = self.state
+        if not isinstance(state, dict):
+            return False
+        beaker = state.get('beaker_position')
+        interior = state.get('device_interior_position')
+        beaker3 = state.get('beaker3_position')
+        b3_target = state.get('beaker3_target_position')
+        if beaker is None or interior is None or beaker3 is None or b3_target is None:
+            return False
+        beaker = np.asarray(beaker, dtype=float)
+        interior = np.asarray(interior, dtype=float)
+        beaker3 = np.asarray(beaker3, dtype=float)
+        b3_target = np.asarray(b3_target, dtype=float)
+        # Placement window tightened 0.2 -> 0.10 m XY: the device interior is a
+        # small cavity, and 0.2 m admitted beakers visibly off-centre/half-out.
+        # Final placements measure ~0.005-0.025 m in replay, so 0.10 keeps the
+        # 100% pass while rejecting sloppy placements. Z window kept at 0.1 m.
+        beaker_in_interior = (np.linalg.norm(beaker[:2] - interior[:2]) < 0.10
+                              and abs(beaker[2] - interior[2]) < 0.1)
+        beaker3_placed = (np.linalg.norm(beaker3[:2] - b3_target[:2]) < 0.10
+                          and abs(beaker3[2] - b3_target[2]) < 0.1)
+        button_pressed = self._max_button_press > 0.005
+        if self.mode == "replay" and beaker_in_interior:
+            print(f"[device-op replay] beaker_in_interior=True "
+                  f"beaker3_placed={beaker3_placed} "
+                  f"(dxy={np.linalg.norm(beaker3[:2]-b3_target[:2]):.3f} "
+                  f"dz={abs(beaker3[2]-b3_target[2]):.3f}) "
+                  f"button={self._max_button_press:.4f}")
+        return beaker_in_interior and beaker3_placed and button_pressed
 
     def _step_collect(self, state):
         """Execute one step in collect mode (dispatched from base step)."""
@@ -207,6 +244,9 @@ class DeviceOperateController(BaseController):
         Returns:
             Tuple containing action, done flag, and success flag
         """
+        # _step_replay (base) reads self.state in _check_success; this override
+        # bypasses BaseController.step, so set it here too.
+        self.state = state
         if self.initial_beaker_position is None:
             self.initial_beaker_position = state['beaker_position']
         if self.initial_beaker3_position is None:
@@ -214,11 +254,14 @@ class DeviceOperateController(BaseController):
         if self.initial_button_position is None:
             self.initial_button_position = state['button_position']
 
-        # Track the button's peak displacement during the press phase: the
+        # Track the button's peak displacement across the whole episode: the
         # phase check runs once after the controller is done (post-retract),
         # by which time a spring-loaded button has already bounced back.
-        if (self.current_phase == Phase.PRESS_BUTTON
-                and state.get('button_position') is not None):
+        # Tracked unconditionally (not gated on current_phase) so the terminal
+        # success check works in replay, where phases never advance — the
+        # button only moves during the press anyway, so the peak is the same.
+        if (state.get('button_position') is not None
+                and self.initial_button_position is not None):
             disp = float(state['button_position'][0]
                          - self.initial_button_position[0])
             if disp > self._max_button_press:
@@ -339,6 +382,8 @@ class DeviceOperateController(BaseController):
             
             return action, False, False
 
+        elif self.mode == "replay":
+            return self._step_replay(state)
         else:
             return self._step_infer(state)
 

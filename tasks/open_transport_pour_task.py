@@ -26,6 +26,23 @@ class OpenTransportPourTask(BaseTask):
         self.beaker_path      = cfg.task.obj_paths[0]["path"]
         self.target_plat_path = cfg.task.obj_paths[1]["path"]
 
+    _GRASP_OBJECTS = ("/World/beaker2", "/World/conical_bottle02")
+
+    def _apply_grasp_friction(self) -> None:
+        """Raise gripper<->object contact friction on the grasped glassware so the
+        near-zero-squeeze grasp holds through transport/pour instead of slipping,
+        and reproduces in open-loop replay. Realistic glass-on-gripper µ — a
+        scene-physics correction. Applied in BOTH collect and replay reset for
+        parity. No-op unless task.grasp_friction is set."""
+        task = getattr(self.cfg, "task", None)
+        mu = getattr(task, "grasp_friction", None) if task else None
+        if mu is None:
+            return
+        for path in self._GRASP_OBJECTS:
+            self.object_utils.set_physics_friction(
+                path, static_friction=float(mu), dynamic_friction=float(mu)
+            )
+
     def reset(self) -> None:
         super().reset()
         self.robot.initialize()
@@ -33,9 +50,11 @@ class OpenTransportPourTask(BaseTask):
             pos = np.array([np.random.uniform(*x_range), np.random.uniform(*y_range), z])
             self.object_utils.set_object_position(obj_path, pos)
             self._record_object_pose(obj_path)
+        self._apply_grasp_friction()
 
     def reset_with_init_state(self, init_state: dict) -> None:
         super().reset_with_init_state(init_state)
+        self._apply_grasp_friction()
 
     def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1

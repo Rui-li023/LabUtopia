@@ -34,6 +34,22 @@ class CleanBeakerTask(BaseTask):
         super().__init__(cfg, world, stage, robot)
         self.world.reset()
 
+    def _apply_grasp_friction(self) -> None:
+        """Raise gripper↔beaker contact friction so the near-zero-squeeze grasp
+        (grip 0.024 — the least-bad point in a razor-thin width window) holds the
+        beaker through the shake/pour instead of slipping out, and reproduces in
+        open-loop replay. Realistic glass-on-gripper µ; a scene-physics
+        correction, not gaming. Applied in BOTH collect and replay reset for
+        parity. No-op unless task.grasp_friction is set in the config."""
+        task = getattr(self.cfg, "task", None)
+        mu = getattr(task, "grasp_friction", None) if task else None
+        if mu is None:
+            return
+        for path in (self.BEAKER_1, self.BEAKER_2, self.TARGET_BEAKER):
+            self.object_utils.set_physics_friction(
+                path, static_friction=float(mu), dynamic_friction=float(mu)
+            )
+
     def reset(self) -> None:
         super().reset()
         self.robot.initialize()
@@ -62,8 +78,11 @@ class CleanBeakerTask(BaseTask):
         self.object_utils.set_object_position(self.PLAT_2, p2_pos)
         self._record_object_pose(self.PLAT_2)
 
+        self._apply_grasp_friction()
+
     def reset_with_init_state(self, init_state: dict) -> None:
         super().reset_with_init_state(init_state)
+        self._apply_grasp_friction()
 
     def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1

@@ -20,6 +20,11 @@ replay:
   # episode_indices: [0, 1, 2]
 
 task:
+  # Raise gripper<->beaker contact friction so the near-zero-squeeze grasp
+  # (grip 0.024) holds through the shake/pour instead of slipping out, and
+  # reproduces in open-loop replay. Realistic glass-on-gripper µ — a
+  # scene-physics correction. Applied to both beakers in collect AND replay.
+  grasp_friction: 1.5
   material_paths:
     - paths:
         - "/World/table_hard/table_hard/table1/Group_2/table_surface/surface_1"

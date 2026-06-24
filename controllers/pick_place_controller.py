@@ -207,6 +207,15 @@ class PickPlaceTaskController(BaseController):
             self.reset_needed = True
             return None, True, self._last_success
 
+        # Advance the prompt PICKING -> PLACING once the object is lifted (mirrors
+        # the collect handoff at _check_phase_success: object_z > initial_z + 0.1),
+        # so the VLA hears the PLACE instruction for the place portion. Otherwise
+        # current_phase only ever moves to FINISHED (in is_success), leaving the
+        # prompt stuck on "pick" and under-prompting the place sub-task.
+        if (self.current_phase == Phase.PICKING and
+                self.state['object_position'][2] > self.initial_position[2] + 0.1):
+            self.current_phase = Phase.PLACING
+
         state['language_instruction'] = self.get_language_instruction()
 
         action = self.inference_engine.step_inference(state)

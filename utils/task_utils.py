@@ -61,6 +61,17 @@ class TaskUtils:
         
         return source_size[2] / 2
     
+    def rotation_angle_deg(self, initial_quat, current_quat) -> float:
+        """Return the rotation angle (degrees) between two quaternions [x,y,z,w].
+
+        Used by success gates to measure a pour tilt: track the per-frame peak of
+        this against the object's initial orientation.
+        """
+        if np.dot(initial_quat, current_quat) < 0:
+            current_quat = -np.array(current_quat)
+        relative_rotation = R.from_quat(initial_quat).inv() * R.from_quat(current_quat)
+        return float(np.degrees(np.linalg.norm(relative_rotation.as_rotvec())))
+
     def check_rotation_angle(self, initial_quat, current_quat, threshold_degrees=45):
         """Check if rotation angle between two quaternions exceeds threshold.
 
@@ -72,13 +83,4 @@ class TaskUtils:
         Returns:
             bool: True if rotation angle exceeds threshold.
         """
-        if np.dot(initial_quat, current_quat) < 0:
-            current_quat = -np.array(current_quat)
-        r1 = R.from_quat(initial_quat)
-        r2 = R.from_quat(current_quat)
-        relative_rotation = r1.inv() * r2
-        rotvec = relative_rotation.as_rotvec()
-        angle_rad = np.linalg.norm(rotvec)
-        angle_deg = np.degrees(angle_rad)
-        # print(f"Angle: {angle_deg} degrees")
-        return angle_deg > threshold_degrees
+        return self.rotation_angle_deg(initial_quat, current_quat) > threshold_degrees

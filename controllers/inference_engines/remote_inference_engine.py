@@ -1,3 +1,5 @@
+import time
+
 import torch
 import numpy as np
 from typing import Dict
@@ -28,23 +30,35 @@ class RemoteInferenceEngine(BaseInferenceEngine):
         self.port = getattr(self.cfg.infer, 'port', None)
         self.api_key = getattr(self.cfg.infer, 'api_key', None)
         
-        # Initialize OpenPI WebSocket client
-        try:
-            self.client = WebsocketClientPolicy(
-                host=self.host,
-                port=self.port,
-                api_key=self.api_key
-            )
-            
-            # Get server metadata
-            self.server_metadata = self.client.get_server_metadata()
-            
-            logger.success("OpenPI client initialized successfully")
-            logger.info(f"Host: {self.host}, Port: {self.port}, Server metadata: {self.server_metadata}")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize OpenPI client: {e}")
-            raise
+        # Initialize OpenPI WebSocket client.
+        # NB: openpi-client's WebsocketClientPolicy._wait_for_server only retries
+        # ConnectionRefusedError. Behind an SSH -L tunnel the local listener always
+        # accepts, so when the (tunnelled) server is slow to accept under local
+        # GPU/CPU load — e.g. heavy scenes like pour_liquid whose USD load saturates
+        # the box right when the engine connects — connect() raises TimeoutError and
+        # the whole run crashes (exit -11). Retry the construction to ride that out.
+        # This engine is the FIRST/ONLY WS client (eval_model.sh deliberately does
+        # NOT pre-handshake — a dangling readiness connection poisons single-client
+        # servers like lingbot/gr00t). 15×10s rides out a freshly-submitted server's
+        # model load (~30-90s) on top of the ~80s Isaac boot before this runs.
+        last_err = None
+        for attempt in range(1, 16):
+            try:
+                self.client = WebsocketClientPolicy(
+                    host=self.host,
+                    port=self.port,
+                    api_key=self.api_key
+                )
+                self.server_metadata = self.client.get_server_metadata()
+                logger.success(f"OpenPI client initialized successfully (attempt {attempt})")
+                logger.info(f"Host: {self.host}, Port: {self.port}, Server metadata: {self.server_metadata}")
+                return
+            except Exception as e:
+                last_err = e
+                logger.warning(f"OpenPI client connect attempt {attempt}/15 failed: {e!r}; retry in 10s")
+                time.sleep(10)
+        logger.error(f"Failed to initialize OpenPI client after 15 attempts: {last_err}")
+        raise last_err
     
     def _prepare_observation(self, obs_dict: Dict[str, torch.Tensor]) -> Dict:
         """

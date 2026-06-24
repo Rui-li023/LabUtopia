@@ -8,6 +8,7 @@ from controllers.base_controller import BaseController
 from controllers.atomic_actions.pick_controller import PickController
 from controllers.atomic_actions.place_controller import PlaceController
 from robots.franka.rmpflow_controller import RMPFlowController
+from utils.task_utils import TaskUtils
 class TaskPhase(Enum):
     """Task phase enumeration"""
     PICKING1 = "picking1"        # Door opening stage
@@ -31,7 +32,12 @@ class LiquidMixingController(BaseController):
         self.initial_beaker_position1 = None
         self.initial_beaker_position2 = None
         self.initial_beaker_position3 = None
-        
+        # Init success-gate peak trackers here too (not only in reset()) so a
+        # step() before the first reset() (collect frame 0) can't AttributeError.
+        self._zmax5 = None; self._zmax4 = None; self._zmax3 = None
+        self._quat_init_5 = None; self._quat_init_4 = None; self._quat_init_3 = None
+        self._tilt_peak_5 = 0.0; self._tilt_peak_4 = 0.0; self._tilt_peak_3 = 0.0
+
     def _init_collect_mode(self, cfg, robot):
         """Initialize data collection mode"""
         super()._init_collect_mode(cfg, robot)
@@ -142,6 +148,14 @@ class LiquidMixingController(BaseController):
         self.initial_beaker_position1 = None
         self.initial_beaker_position2 = None
         self.initial_beaker_position3 = None
+        # Per-episode peak-height trackers for the terminal replay success check.
+        self._zmax5 = None
+        self._zmax4 = None
+        self._zmax3 = None
+        # Per-episode peak pour-tilt trackers (each beaker must actually tilt to
+        # pour, not just lift-and-return). Initial /mesh quat captured on first step.
+        self._quat_init_5 = None; self._quat_init_4 = None; self._quat_init_3 = None
+        self._tilt_peak_5 = 0.0; self._tilt_peak_4 = 0.0; self._tilt_peak_3 = 0.0
         self.every_controller_index = 0
         self.current_phase = TaskPhase.PICKING1
         if self.mode == "collect":
@@ -162,8 +176,49 @@ class LiquidMixingController(BaseController):
             self.inference_engine.reset()
             
     def _check_success(self) -> bool:
-        """Evaluate whether the current state meets the task success criterion."""
-        return self._check_phase_success(self.state)
+        """Terminal success criterion for the whole task (used by replay).
+
+        The task's point is the MIXING: each of beaker_05/04/03 is picked, poured
+        into the central mix point, and set back down. Success therefore certifies,
+        per beaker: (a) it was LIFTED clear of its start height (the cycle ran —
+        essential, else all three sit at their start poses at frame 0 and read as
+        success before anything happens); (b) it actually POURED (peak tilt >30°,
+        scripted pour ~50-180°), so a mere lift-and-lower can't pass; (c) it ended
+        UPRIGHT (current orientation within 30° of its initial upright pose), i.e.
+        it was set back down, not dropped/tipped. The exact return-to-start slot is
+        NOT required — the pour is the goal, and open-loop replay can't reproduce a
+        precise 3-beaker return. The phase-based ``_check_phase_success`` is dead
+        copy-paste (refs nonexistent phases) and is not used here.
+        """
+        tu = TaskUtils.get_instance()
+        beaker_specs = (
+            ("/World/beaker_05", self.initial_beaker_position1, "_zmax5", "_tilt_peak_5", "_quat_init_5"),
+            ("/World/beaker_04", self.initial_beaker_position2, "_zmax4", "_tilt_peak_4", "_quat_init_4"),
+            ("/World/beaker_03", self.initial_beaker_position3, "_zmax3", "_tilt_peak_3", "_quat_init_3"),
+        )
+        all_ok = True
+        dbg = []
+        for path, init, zmax_attr, tilt_attr, qi_attr in beaker_specs:
+            zmax = getattr(self, zmax_attr, None)
+            qi = getattr(self, qi_attr, None)
+            if init is None or zmax is None or qi is None:
+                return False
+            init = np.asarray(init, dtype=float)
+            lifted = (zmax - init[2]) > 0.05               # was picked up
+            tilted = getattr(self, tilt_attr, 0.0) > 30.0  # actually poured
+            # Ended upright: current /mesh orientation back near the initial
+            # upright pose (set down, not dropped/tipped). Replaces the strict
+            # return-to-start-slot requirement.
+            q = self.object_utils.get_transform_quat(object_path=path + "/mesh")
+            end_tilt = tu.rotation_angle_deg(qi, q) if q is not None else 999.0
+            upright = end_tilt < 30.0
+            if not (lifted and tilted and upright):
+                all_ok = False
+            dbg.append(f"{path.split('/')[-1]}:lift={zmax-init[2]:.3f},"
+                       f"tilt={getattr(self, tilt_attr, 0.0):.0f},end={end_tilt:.0f}")
+        if self.mode == "replay" and (all_ok or self.every_controller_index % 300 == 0):
+            print(f"[liqmix replay] all_ok={all_ok} {' '.join(dbg)}")
+        return all_ok
 
     def _check_phase_success(self, state: Dict[str, Any]) -> bool:
         """Check if the current phase is successfully completed
@@ -241,13 +296,40 @@ class LiquidMixingController(BaseController):
         Returns:
             Tuple: (action, done, success)
         """
+        # _step_replay (base) reads self.state in _check_success; this override
+        # bypasses BaseController.step, so set it here too.
+        self.state = state
         if self.initial_beaker_position1 is None:
             self.initial_beaker_position1 = self.object_utils.get_geometry_center(object_path="/World/beaker_05")
         if self.initial_beaker_position2 is None:
             self.initial_beaker_position2 = self.object_utils.get_geometry_center(object_path="/World/beaker_04")
         if self.initial_beaker_position3 is None:
             self.initial_beaker_position3 = self.object_utils.get_geometry_center(object_path="/World/beaker_03")
-        
+
+        # Track each beaker's peak height this episode. The terminal success
+        # check (used by replay) needs to distinguish "beaker back at its start
+        # pose because the pick/pour/place cycle completed" from "beaker still
+        # at its start pose because nothing has happened yet" — both look
+        # identical position-wise. A beaker counts as cycled only once it has
+        # been lifted clear of its start height.
+        tu = TaskUtils.get_instance()
+        for attr, qiattr, tattr, path in (
+                ("_zmax5", "_quat_init_5", "_tilt_peak_5", "/World/beaker_05"),
+                ("_zmax4", "_quat_init_4", "_tilt_peak_4", "/World/beaker_04"),
+                ("_zmax3", "_quat_init_3", "_tilt_peak_3", "/World/beaker_03")):
+            c = self.object_utils.get_geometry_center(object_path=path)
+            if c is not None:
+                z = float(np.asarray(c, dtype=float)[2])
+                prev = getattr(self, attr, None)
+                setattr(self, attr, z if prev is None else max(prev, z))
+            # Live orientation from the /mesh subprim (rigid body); track peak tilt.
+            q = self.object_utils.get_transform_quat(object_path=path + "/mesh")
+            if q is not None:
+                if getattr(self, qiattr, None) is None:
+                    setattr(self, qiattr, q)
+                setattr(self, tattr, max(getattr(self, tattr, 0.0),
+                                         tu.rotation_angle_deg(getattr(self, qiattr), q)))
+
         self.every_controller_index += 1
         if self.mode == "collect":
             return self._step_collect(state)
@@ -285,6 +367,12 @@ class LiquidMixingController(BaseController):
             else:
                 # All phases completed
                 print("All phases completed, task successful!")
+                # DIAG: peak pour-tilt per beaker in COLLECT (compare vs the
+                # [liqmix replay] line — if collect ~94° but replay over-rotates
+                # to 130°+, the velocity-controlled pour isn't reproducing).
+                print(f"[liqmix collect] pour-tilt peaks: "
+                      f"b05={self._tilt_peak_5:.0f} b04={self._tilt_peak_4:.0f} "
+                      f"b03={self._tilt_peak_3:.0f}")
                 self._last_failure_reason = ""
                 self.data_collector.write_cached_data(state['joint_positions'][:-1])
                 self._last_success = True
@@ -300,6 +388,16 @@ class LiquidMixingController(BaseController):
         # Check if the task is successful (simplified version, actually may need more complex logic)
         return action, False, self.is_success()
         
+    def _beaker_grip(self, pick_ctrl, name: str) -> float:
+        """Grasp width for a poured beaker. Prefers cfg.task.beaker_grip (a single
+        override for all three beakers — used to sweep the grip vs the ~60mm beaker
+        diameter), else falls back to the per-name lookup table."""
+        task = getattr(self.cfg, "task", None)
+        g = getattr(task, "beaker_grip", None) if task else None
+        if g is not None:
+            return float(g)
+        return pick_ctrl.get_gripper_distance(name)
+
     def _get_phase_action(self, state: Dict[str, Any]):
         """Get the corresponding action based on the current phase"""
         if self.current_phase == TaskPhase.PICKING1:
@@ -312,7 +410,7 @@ class LiquidMixingController(BaseController):
                 gripper_position=state['gripper_position'],
                 # Contact-stop grasp width from the lookup table: a binary close
                 # position-slams the fingers to 0 and pops the rigid beaker out.
-                gripper_distances=self.pick_controller1.get_gripper_distance("beaker_05"),
+                gripper_distances=self._beaker_grip(self.pick_controller1, "beaker_05"),
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
                 pre_offset_x=0.1,
                 pre_offset_z=0.05,
@@ -329,7 +427,7 @@ class LiquidMixingController(BaseController):
                 gripper_position=state['gripper_position'],
                 # Contact-stop grasp width from the lookup table: a binary close
                 # position-slams the fingers to 0 and pops the rigid beaker out.
-                gripper_distances=self.pick_controller2.get_gripper_distance("beaker_04"),
+                gripper_distances=self._beaker_grip(self.pick_controller2, "beaker_04"),
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 20])).as_quat(),
                 pre_offset_x=0.07,
                 pre_offset_z=0.05,
@@ -346,7 +444,7 @@ class LiquidMixingController(BaseController):
                 gripper_position=state['gripper_position'],
                 # Contact-stop grasp width from the lookup table: a binary close
                 # position-slams the fingers to 0 and pops the rigid beaker out.
-                gripper_distances=self.pick_controller3.get_gripper_distance("beaker_03"),
+                gripper_distances=self._beaker_grip(self.pick_controller3, "beaker_03"),
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat(),
                 pre_offset_x=0.1,
                 pre_offset_z=0.05,

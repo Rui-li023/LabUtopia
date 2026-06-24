@@ -30,6 +30,12 @@ infer:
 
 task:
   max_steps: 4000
+  # Realistic gripper<->beaker friction so each near-zero-squeeze grasp (grip
+  # 0.022, zero squeeze margin) holds the beaker through its pour and reproduces
+  # in open-loop replay without ejection. µ=2.0 (rubber-on-glass is realistically
+  # 1-2): at µ=1.5 the hold was marginal — beaker_04/05 slipped during the triple
+  # pour. Applied to beaker_03/04/05 in collect AND replay.
+  grasp_friction: 2.0
 
 cameras:
   - prim_path: "/World/Camera1"

@@ -148,7 +148,13 @@ class StirGlassrodTaskController(BaseController):
                     self.obj_added = True
                     
         self.gripper_control.update_grasped_object_position()
-        return action, False, self._check_success()
+        # _check_success latches _last_success once the 240-frame stir-hold gate
+        # passes; early-terminate so the episode is counted instead of running to
+        # the 2000-frame cap (matches the shake_beaker infer fix).
+        if self._check_success():
+            self.reset_needed = True
+            return action, True, True
+        return action, False, False
     
     def _check_success(self):
         object_pos = self.state['glass_rod_position']

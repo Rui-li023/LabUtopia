@@ -123,6 +123,19 @@ class BaseTask(ABC):
         self._restore_distractor_visibility(self._episode_init_state)
         self._restore_camera_poses(self._episode_init_state)
         self.robot.initialize()
+        # Force/velocity gripper modes need the DOF drive-mode switch that only
+        # post_reset() performs (it maps control_mode -> position/velocity/effort
+        # drive via _apply_gripper_drive_mode). Position mode — the default —
+        # already replays correctly without it, so skip it there to keep the
+        # existing position-mode replay tasks byte-for-byte unchanged. The
+        # set_joint_positions(default) inside post_reset is immediately
+        # overwritten by the recorded-pose restore below, so it is harmless here.
+        if getattr(self.robot, "_gripper_control_mode", "position") != "position":
+            self.robot.post_reset()
+            logger.info(
+                f"[gripper-mode] replay post_reset applied drive mode for "
+                f"control_mode={self.robot._gripper_control_mode}"
+            )
 
         # Restore robot joint positions from recorded init state
         robot_joint_positions = init_state.get("robot_init_joint_positions")

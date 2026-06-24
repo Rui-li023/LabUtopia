@@ -10,6 +10,7 @@ from controllers.atomic_actions.pick_controller import PickController
 from controllers.atomic_actions.place_controller import PlaceController
 from robots.franka.rmpflow_controller import RMPFlowController
 from isaacsim.core.utils.numpy.rotations import euler_angles_to_quats
+from utils.task_utils import TaskUtils
 
 class TaskPhase(Enum):
     OPENING = "opening"
@@ -24,7 +25,12 @@ class OpenTransportPourController(BaseController):
     def __init__(self, cfg, robot):
         super().__init__(cfg, robot)
         self.every_controller_index = 0
-        
+        # Init success-gate peak trackers here too (not only in reset()) so a
+        # step() before the first reset() (collect frame 0) can't AttributeError.
+        self._z_init_beaker2 = None; self._zmax_beaker2 = None
+        self._z_init_conical = None; self._zmax_conical = None
+        self._quat_init_conical = None; self._tilt_peak_conical = 0.0
+
     def _generate_random_sequence(self):
         task_groups = [self.task_group_a, self.task_group_b, self.task_group_c]
         
@@ -121,6 +127,13 @@ class OpenTransportPourController(BaseController):
         self.beaker_transported = False
         self.stir_step_count = 0
         self.every_controller_index = 0
+        # Mode-safe peak trackers for the success gates, reset per episode.
+        # beaker2 is transported (lift gate); conical_bottle02 is poured (lift +
+        # tilt gate). Updated every frame in step() (all modes — phases never
+        # advance in replay, so gates must not use the collect-only sub-controllers).
+        self._z_init_beaker2 = None; self._zmax_beaker2 = None
+        self._z_init_conical = None; self._zmax_conical = None
+        self._quat_init_conical = None; self._tilt_peak_conical = 0.0
         if self.mode == "collect":
             self._generate_random_sequence()
             self.current_phase = self.randomized_sequence[0]
@@ -134,10 +147,79 @@ class OpenTransportPourController(BaseController):
             self._set_initial_active_controller()
         elif self.mode == "infer":
             self.inference_engine.reset()
-            
+
+    def _track_success_signals(self) -> None:
+        """Accumulate peak lift (beaker2 + conical) and peak pour-tilt (conical)
+        every frame, all modes. Uses only all-mode signals: live geometry centre
+        for height and the /mesh subprim quaternion (where PhysicsRigidBodyAPI
+        lives — the top-level prim's xform stays at the authored value) for tilt."""
+        tu = TaskUtils.get_instance()
+        b2 = self.object_utils.get_geometry_center(object_path="/World/beaker2")
+        if b2 is not None:
+            z = float(b2[2])
+            if self._z_init_beaker2 is None:
+                self._z_init_beaker2 = z; self._zmax_beaker2 = z
+            self._zmax_beaker2 = max(self._zmax_beaker2, z)
+        c = self.object_utils.get_geometry_center(object_path="/World/conical_bottle02")
+        if c is not None:
+            z = float(c[2])
+            if self._z_init_conical is None:
+                self._z_init_conical = z; self._zmax_conical = z
+            self._zmax_conical = max(self._zmax_conical, z)
+        q = self.object_utils.get_transform_quat(object_path="/World/conical_bottle02/mesh")
+        if q is not None:
+            if self._quat_init_conical is None:
+                self._quat_init_conical = q
+            self._tilt_peak_conical = max(self._tilt_peak_conical,
+                                          tu.rotation_angle_deg(self._quat_init_conical, q))
+
     def _check_success(self) -> bool:
-        """Evaluate whether the current state meets the task success criterion."""
-        return self._check_phase_success(self.state)
+        """Terminal success criterion for the whole task (used by replay).
+
+        The phase-based ``_check_phase_success`` references phases that don't
+        exist in this controller's enum (``PICKING``/``STIRRING``) — dead
+        copy-paste that always returns False past phase 1 — and phases never
+        advance under replay anyway. Score the task end state directly: beaker2
+        ended on ``target_plat`` and conical_bottle02 ended on ``target_plat2``
+        (the pour into beaker1 is transient; the bottle is then placed on
+        target_plat2). Both placements are absolute positions, so this is true
+        only after the episode completes, never at the start. Phase order is
+        randomised at collect time, but the final placed state is fixed.
+        """
+        if not isinstance(self.state, dict):
+            return False
+        beaker2 = self.object_utils.get_geometry_center(object_path="/World/beaker2")
+        plat = self.object_utils.get_geometry_center(object_path="/World/target_plat")
+        conical = self.object_utils.get_geometry_center(object_path="/World/conical_bottle02")
+        plat2 = self.object_utils.get_geometry_center(object_path="/World/target_plat2")
+        if beaker2 is None or plat is None or conical is None or plat2 is None:
+            return False
+        beaker2 = np.asarray(beaker2, dtype=float)
+        plat = np.asarray(plat, dtype=float)
+        conical = np.asarray(conical, dtype=float)
+        plat2 = np.asarray(plat2, dtype=float)
+        beaker_on = (np.linalg.norm(beaker2[:2] - plat[:2]) < 0.06
+                     and abs(beaker2[2] - plat[2]) < 0.12)
+        conical_on = (np.linalg.norm(conical[:2] - plat2[:2]) < 0.06
+                      and abs(conical[2] - plat2[2]) < 0.12)
+        if not (beaker_on and conical_on):
+            return False
+
+        # Task certification beyond final placement (mode-safe peak trackers):
+        #  - beaker2 was lifted (transported), not nudged onto the plat;
+        #  - conical was lifted AND actually POURED (tilt >30°) — otp is a pour
+        #    task that previously certified zero pours. 30° is calibrated against
+        #    the scripted ~50° pour; transport keeps the bottle upright (<30°).
+        if self._z_init_beaker2 is None or self._z_init_conical is None:
+            return False
+        lift_b2 = self._zmax_beaker2 - self._z_init_beaker2
+        lift_c = self._zmax_conical - self._z_init_conical
+        ok = (lift_b2 > 0.05 and lift_c > 0.05 and self._tilt_peak_conical > 30.0)
+        if self.mode == "replay":
+            print(f"[otp replay] beaker_on={beaker_on} conical_on={conical_on} "
+                  f"lift_b2={lift_b2:.3f} lift_c={lift_c:.3f} "
+                  f"tilt_c={self._tilt_peak_conical:.0f} -> {'OK' if ok else 'FAIL'}")
+        return ok
 
     def _check_phase_success(self, state: Dict[str, Any]) -> bool:
         if self.current_phase == TaskPhase.OPENING:
@@ -191,6 +273,10 @@ class OpenTransportPourController(BaseController):
         )
 
     def step(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
+        # _step_replay (base) reads self.state in _check_success; this override
+        # bypasses BaseController.step, so set it here too.
+        self.state = state
+        self._track_success_signals()
         self.every_controller_index += 1
         if self.mode == "collect":
             return self._step_collect(state)
@@ -275,6 +361,11 @@ class OpenTransportPourController(BaseController):
                 object_name="conical_bottle02",
                 gripper_control=self.gripper_control,
                 gripper_position=state['gripper_position'],
+                # 0.018: the peak of a shallow curve — 0.018→7/10, 0.016→5/10,
+                # 0.022→4/10. The tapered conical slips under the open-loop pour
+                # torque; firmer doesn't help past 0.018 and looser is worse.
+                # ~70% is the grip-distance ceiling for this grasp.
+                gripper_distances=0.018,
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 20])).as_quat(),
                 pre_offset_x=0.07,
                 pre_offset_z=0.05,

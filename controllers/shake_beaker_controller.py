@@ -145,7 +145,14 @@ class ShakeBeakerTaskController(BaseController):
         state['language_instruction'] = self.get_language_instruction()
         action = self.inference_engine.step_inference(state)
 
-        return action, self._last_success, self.is_success()
+        # is_success() carries its own debounce (5 shake cycles + 60-frame hold);
+        # latch + early-terminate so the episode is counted instead of running to
+        # the 2000-frame cap (self._last_success is otherwise only set in collect).
+        if self.is_success():
+            self._last_success = True
+            self.reset_needed = True
+            return action, True, True
+        return action, False, False
         
     def _check_success(self) -> bool:
         """Evaluate whether the current state meets the task success criterion."""

@@ -7,6 +7,7 @@ from .atomic_actions.pick_controller import PickController
 from .atomic_actions.place_controller import PlaceController
 from .atomic_actions.pour_controller import PourController
 from .atomic_actions.shake_controller import ShakeController
+from utils.task_utils import TaskUtils
 
 class CleanBeakerTaskController(BaseController):
     """
@@ -21,14 +22,20 @@ class CleanBeakerTaskController(BaseController):
     """
     
     def __init__(self, cfg, robot):
+        # BaseController.__init__ already dispatches to the correct
+        # _init_{collect,replay,infer}_mode for cfg.mode. The old code
+        # re-dispatched here with a 2-way `collect / else infer` branch, which
+        # in replay mode wrongly built an inference engine (loading a missing
+        # checkpoint config) and crashed. Let the base handle the dispatch.
         super().__init__(cfg, robot)
         self._current_step = 1
         self.frame_count = 0
-        
-        if self.mode == "collect":
-            self._init_collect_mode(cfg, robot)
-        else:
-            self._init_infer_mode(cfg, robot)
+        # Init success-gate peak trackers here too (not only in reset()) so a
+        # step() before the first reset() (collect frame 0) can't AttributeError.
+        self._z_init_b1 = None; self._zmax_b1 = None
+        self._z_init_b2 = None; self._zmax_b2 = None
+        self._quat_init_b1 = None; self._quat_init_b2 = None
+        self._tilt_peak_b1 = 0.0; self._tilt_peak_b2 = 0.0
     
     def _init_collect_mode(self, cfg, robot):
         """
@@ -110,8 +117,54 @@ class CleanBeakerTaskController(BaseController):
         self._current_step = 1
         self.frame_count = 0
         self._logged_step_1 = False
+        # Mode-safe peak trackers for the success gates (lift + pour tilt),
+        # reset per episode so stale values can't leak. Updated every frame in
+        # step() (ALL modes — phases never advance in replay, so success gates
+        # must never depend on the collect-only atomic controllers).
+        self._z_init_b1 = None; self._zmax_b1 = None
+        self._z_init_b2 = None; self._zmax_b2 = None
+        self._quat_init_b1 = None; self._quat_init_b2 = None
+        self._tilt_peak_b1 = 0.0; self._tilt_peak_b2 = 0.0
+
+    def _track_success_signals(self, state) -> None:
+        """Accumulate peak lift + peak tilt for both beakers every frame (all
+        modes). _check_success reads these; they use only all-mode signals
+        (object pose/quat), never atomic-controller internals."""
+        if not isinstance(state, dict):
+            return
+        tu = TaskUtils.get_instance()
+        p1 = state.get('beaker_1_position')
+        if p1 is not None:
+            z = float(p1[2])
+            if self._z_init_b1 is None:
+                self._z_init_b1 = z; self._zmax_b1 = z
+            self._zmax_b1 = max(self._zmax_b1, z)
+        # Live orientation: the rigid body (PhysicsRigidBodyAPI) is on the /mesh
+        # subprim — physics updates ITS xformOp, not the top-level prim's (which
+        # stays at the authored value). Mirrors pick_pour_task's source_quaternion.
+        q1 = self.object_utils.get_transform_quat(object_path=self.cfg.beaker_1 + "/mesh")
+        if q1 is not None:
+            if self._quat_init_b1 is None:
+                self._quat_init_b1 = q1
+            self._tilt_peak_b1 = max(self._tilt_peak_b1, tu.rotation_angle_deg(self._quat_init_b1, q1))
+        p2 = state.get('beaker_2_position')
+        if p2 is not None:
+            z = float(p2[2])
+            if self._z_init_b2 is None:
+                self._z_init_b2 = z; self._zmax_b2 = z
+            self._zmax_b2 = max(self._zmax_b2, z)
+        q2 = self.object_utils.get_transform_quat(object_path=self.cfg.beaker_2 + "/mesh")
+        if q2 is not None:
+            if self._quat_init_b2 is None:
+                self._quat_init_b2 = q2
+            self._tilt_peak_b2 = max(self._tilt_peak_b2, tu.rotation_angle_deg(self._quat_init_b2, q2))
 
     def step(self, state):
+        # _step_replay (base) reads self.state in its diagnostics and
+        # _check_success; this override bypasses BaseController.step, so set it
+        # here too (mirrors the base contract).
+        self.state = state
+        self._track_success_signals(state)
         if self.mode == "collect":
             return self._step_collect(state)
         elif self.mode == "replay":
@@ -150,7 +203,12 @@ class CleanBeakerTaskController(BaseController):
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
                 pre_offset_x=0.05,
                 pre_offset_z=0.05,
-                gripper_distances=0.027
+                # 0.024: the least-bad point in a razor-thin window. 0.027 = zero
+                # squeeze → replay slip (0%); 0.022/0.020 = 2-4 mm squeeze →
+                # EJECTS in collect (rate 5%/0%). 0.024 gives collect ~71% and
+                # replay ~80% (beaker2 still slips ~2/10 — the open-loop pour
+                # can't be held tighter without ejecting). See delivery report.
+                gripper_distances=0.024
             )
             if self.pick_beaker2.is_done():
                 print(f"[cleanbeaker] step 1 (pick beaker2) done")
@@ -202,7 +260,9 @@ class CleanBeakerTaskController(BaseController):
                 gripper_control=self.gripper_control,
                 gripper_position=state['gripper_position'],
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat(),
-                gripper_distances=0.027
+                # 0.024 (was 0.027): same squeeze margin as beaker2 — beaker1
+                # slipped during the replayed shake/pour (ended 22 cm off plat1).
+                gripper_distances=0.024
             )
             if self.pick_beaker1.is_done():
                 print(f"[cleanbeaker] step 4 (pick beaker1) done; beaker1_pos={state['beaker_1_position'].tolist() if hasattr(state['beaker_1_position'], 'tolist') else state['beaker_1_position']}")
@@ -319,7 +379,29 @@ class CleanBeakerTaskController(BaseController):
             )
             return ok
 
-        return beaker_on_plat(beaker1_pos, plat1_pos, "beaker1↔plat1") and beaker_on_plat(beaker2_pos, plat2_pos, "beaker2↔plat2")
+        ok1 = beaker_on_plat(beaker1_pos, plat1_pos, "beaker1↔plat1")
+        ok2 = beaker_on_plat(beaker2_pos, plat2_pos, "beaker2↔plat2")
+        if not (ok1 and ok2):
+            return False
+
+        # Pour-task certification (mode-safe peak trackers from step()): each
+        # beaker must have been (a) LIFTED clear of the table — rejects a beaker
+        # that drifted onto a plat without being grasped — AND (b) actually
+        # POURED, i.e. tilted >30°. Calibrated from replay data: a real scripted
+        # pour reaches ~50° on both beakers, while transport keeps them upright
+        # (<30°), so 30° cleanly separates pour from carry. Both gates read only
+        # all-mode signals (object pose/quat + step() peak trackers), never the
+        # collect-only atomic controllers.
+        if self._z_init_b1 is None or self._z_init_b2 is None:
+            return False
+        lift1 = self._zmax_b1 - self._z_init_b1
+        lift2 = self._zmax_b2 - self._z_init_b2
+        ok = (lift1 > 0.05 and lift2 > 0.05
+              and self._tilt_peak_b1 > 30.0 and self._tilt_peak_b2 > 30.0)
+        print(f"[cleanbeaker debug] lift1={lift1:.3f} lift2={lift2:.3f} "
+              f"tilt1={self._tilt_peak_b1:.0f} tilt2={self._tilt_peak_b2:.0f} "
+              f"-> {'OK' if ok else 'FAIL'}")
+        return ok
     
     def is_success(self):
         Maxframe = 5000

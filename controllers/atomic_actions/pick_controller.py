@@ -213,8 +213,13 @@ class PickController(AtomicBaseController):
     def get_gripper_distance(self, item_name):
         table = {
             "rod": 0.003, "tube": 0.01, "beaker": 0.022,
-            "beaker_l": 0.03, "beaker_04": 0.025, "beaker_05": 0.025,
-            "beaker_03": 0.025, "Erlenmeyer flask": 0.018,
+            # beaker_03/04/05 (liquid_mixing only): NO grip-distance value makes
+            # the triple-pour reproduce open-loop. 0.022 = zero margin → flung
+            # during pour; 0.020 = ejects-on-grasp (lift 0.007). The pour-tilt
+            # slip is irreducible with position-grip here. Kept at 0.022 (best
+            # collect); liquid_mixing replay needs force-mode or attach (TODO).
+            "beaker_l": 0.03, "beaker_04": 0.022, "beaker_05": 0.022,
+            "beaker_03": 0.022, "Erlenmeyer flask": 0.018,
             "pipette": 0.008, "microscope slide": 0.002,
             "graduated_cylinder_01": 0.005, "graduated_cylinder_02": 0.018,
             "graduated_cylinder_04": 0.030,

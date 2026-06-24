@@ -207,27 +207,46 @@ class OpenCloseTaskController(BaseController):
         Returns:
             Tuple containing the action, done flag, and success flag.
         """
+        operate_type = self.cfg.task.get("operate_type", "door")
         language_instruction = self.get_language_instruction()
         if language_instruction is not None:
             state['language_instruction'] = language_instruction
         else:
-            state['language_instruction'] = "Open the door of the object"
-        
+            state['language_instruction'] = f"Open the {operate_type} of the object"
+
         action = self.inference_engine.step_inference(state)
-        
-        if self._check_success():
+
+        # Two-phase tracking in infer (current_phase is otherwise only advanced in
+        # _step_collect). The task is open-THEN-close, so: latch the OPEN criterion
+        # for REQUIRED_SUCCESS_STEPS, then hand the SAME VLA the close instruction
+        # (re-snapshot initial_handle_position + reset counter, mirroring the
+        # collect handoff at lines 136-143); only finish once close also latches.
+        # Without this, infer is stuck on "open" forever — a correct open+close run
+        # returns the handle toward start, drops the open check, and scores 0.
+        if self.current_phase == "open":
+            if self._check_open_success(state):
+                self.check_success_counter += 1
+            else:
+                self.check_success_counter = 0
+            if self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS:
+                self.open_success = True
+                print("Open phase success (infer)! Switching to close phase...")
+                self.current_phase = "close"
+                self.check_success_counter = 0
+                self.initial_handle_position = state['object_position']
+            return action, False, False
+
+        if self._check_close_success(state):
             self.check_success_counter += 1
         else:
             self.check_success_counter = 0
-            
-        success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
-        if success:
+        if self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS:
             self._last_failure_reason = ""
-            print("Task success!")
+            print("Close phase success (infer)! Task completed!")
             self._last_success = True
             self.reset_needed = True
             return None, True, True
-            
+
         return action, False, False
         
     def _check_success(self) -> bool:

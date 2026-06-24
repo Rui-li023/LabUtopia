@@ -300,6 +300,10 @@ class PlacePressTaskController(BaseController):
             abs(object_pos[0] - target_position[0]) < 0.05 and
             abs(object_pos[1] - target_position[1]) < 0.05 and
             end_button_position[2] < 0.761 ):
+            # Infer path: latch success so the terminal frame (current_phase ==
+            # FINISHED -> returns (None, True, self._last_success)) is counted by
+            # main.py. Without this, geometric successes are logged as failures.
+            self._last_success = True
             self.current_phase = Phase.FINISHED
             return True
         return False

@@ -4,7 +4,7 @@ import numpy as np
 import typing
 from scipy.spatial.transform import Rotation as R
 
-from .atomic_base_controller import AtomicBaseController
+from .atomic_base_controller import AtomicBaseController, GRIPPER_MAX_OPEN
 from robots.base_robot import GRIPPER_CLOSED
 
 CONTROL_FREQUENCY = 60
@@ -129,7 +129,22 @@ class PourController(AtomicBaseController):
 
         record = np.zeros(8, dtype=np.float64)
         record[:7] = arm[:7]
-        record[7] = float(gripper_state)
+        # Gripper channel: mirror AtomicBaseController._build_record_array.
+        # The old hard-coded `float(gripper_state)` wrote 1.0 (binary full
+        # close) for the entire pour while the hand physically held the pick's
+        # contact-stop WIDTH — the record lied about the executed command.
+        # Replay then reproduced the lie, position-slamming the fingers to 0
+        # mid-pour and ejecting the held container (clean_beaker's beaker flew
+        # to the floor; liquid_mixing's first pick never survived its pour).
+        if AtomicBaseController.record_commanded_gripper and self._robot is not None:
+            opening = float(np.clip(self._robot.get_gripper_commanded_opening(),
+                                    0.0, GRIPPER_MAX_OPEN))
+            record[7] = float(np.clip(1.0 - opening / GRIPPER_MAX_OPEN, 0.0, 1.0))
+        elif current_joint_positions is not None and len(current_joint_positions) > 7:
+            opening = float(np.clip(current_joint_positions[7], 0.0, GRIPPER_MAX_OPEN))
+            record[7] = float(np.clip(1.0 - opening / GRIPPER_MAX_OPEN, 0.0, 1.0))
+        else:
+            record[7] = float(gripper_state)
         return record
 
     # ── Forward ──────────────────────────────────────────────────
