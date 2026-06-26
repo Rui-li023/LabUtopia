@@ -1,4 +1,8 @@
 from typing import Any, Dict, Optional
+
+import numpy as np
+from loguru import logger
+
 from .base_task import BaseTask
 
 
@@ -38,10 +42,30 @@ class LiquidMixingTask(BaseTask):
                 path, static_friction=float(mu), dynamic_friction=float(mu)
             )
 
+    def _apply_beaker_reposition(self) -> None:
+        """Shift the 3 grasped beakers toward the robot (x) by cfg.task.beaker_x_shift
+        so they sit in the Franka's comfortable workspace (~0.5 m reach) instead of
+        the far edge (~0.58-0.64 m), where open-loop tracking error is largest and
+        the grasp misses. Done BEFORE _record_object_pose so the moved poses are
+        snapshotted into init_state and replay restores them. No-op unless set."""
+        task = getattr(self.cfg, "task", None)
+        dx = getattr(task, "beaker_x_shift", None) if task else None
+        if dx is None:
+            return
+        for path in self._GRASP_OBJECTS:
+            wp = self.object_utils.get_world_pose(path)
+            if wp is None:
+                continue
+            p = np.asarray(wp["position"], dtype=float)
+            newp = np.array([p[0] + float(dx), p[1], p[2]])
+            self.object_utils.set_object_position(path, newp)
+            logger.info(f"[reposition] {path}: x {p[0]:.3f} -> {newp[0]:.3f}")
+
     def reset(self) -> None:
         super().reset()
         self.robot.initialize()
         self._apply_grasp_friction()
+        self._apply_beaker_reposition()
         # Snapshot the manipulation objects so replay restores the exact scene
         # (the missing piece vs clean_beaker/otp — see _RECORD_OBJECTS).
         for path in self._RECORD_OBJECTS:

@@ -50,17 +50,31 @@ class LiquidMixingController(BaseController):
             robot_articulation=robot
         )
         
+        # pick_controller1 (beaker_05, the first/cold-start pick that misses most
+        # in open-loop replay). events_dt is config-overridable (cfg.task.pick1_events_dt)
+        # so we can sweep approach timing — slower approach + a pre-close dwell give
+        # the open-loop arm time to land on the beaker before the gripper closes.
+        _task = getattr(cfg, "task", None)
+        _pick1_dt = getattr(_task, "pick1_events_dt", None) if _task else None
         self.pick_controller1 = PickController(
             name="pick_controller",
             cspace_controller=rmp_controller,
-            events_dt=[0.002, 0.002, 0.005, 1, 0.05, 0.01, 1]
+            # event 3 = 0.05 (a ~20-step PRE-CLOSE DWELL): beaker_05 is the first/
+            # cold-start pick and had NO dwell (event 3 = 1 = instant close), unlike
+            # pick2/3 which already pause; the open-loop arm closed before landing on
+            # the beaker -> grasp miss. The dwell lets it settle first. Swept result:
+            # beaker_05 replay grasp 20% -> 80%. Slowing the approach did NOT help
+            # (the issue is closing too early, not approach speed).
+            events_dt=(list(_pick1_dt) if _pick1_dt is not None
+                       else [0.002, 0.002, 0.005, 0.05, 0.05, 0.01, 1])
         )
         
         self.pour_controller1 = PourController(
             name="pour_controller",
             cspace_controller=rmp_controller,
             events_dt=[0.006, 0.005, 0.008, 0.005, 0.008, 0.5],
-            position_threshold=0.02
+            position_threshold=0.02,
+            position_pour=True,
         )
         
         self.place_controller1 = PlaceController(
@@ -70,17 +84,24 @@ class LiquidMixingController(BaseController):
             robot=robot,
         )
         
+        # pick_controller2 (beaker_04, the middle pick that grasps only ~1/5 in
+        # open-loop replay). Same dwell as pick3 (beaker_03, 5/5) yet fails, so the
+        # culprit is its approach params (pre_offset_x=0.07 vs pick3's 0.10, yaw 20
+        # vs 10) — config-overridable to sweep.
+        _pick2_dt = getattr(_task, "pick2_events_dt", None) if _task else None
         self.pick_controller2 = PickController(
             name="pick_controller",
             cspace_controller=rmp_controller,
-            events_dt=[0.002, 0.002, 0.005, 0.2, 0.05, 0.01, 0.1]
+            events_dt=(list(_pick2_dt) if _pick2_dt is not None
+                       else [0.002, 0.002, 0.005, 0.2, 0.05, 0.01, 0.1])
         )
         
         self.pour_controller2 = PourController(
             name="pour_controller",
             cspace_controller=rmp_controller,
             events_dt=[0.006, 0.005, 0.008, 0.005, 0.008, 0.5],
-            position_threshold=0.02
+            position_threshold=0.02,
+            position_pour=True,
         )
         
         self.place_controller2 = PlaceController(
@@ -100,7 +121,8 @@ class LiquidMixingController(BaseController):
             name="pour_controller",
             cspace_controller=rmp_controller,
             events_dt=[0.006, 0.005, 0.008, 0.005, 0.008, 0.5],
-            position_threshold=0.02
+            position_threshold=0.02,
+            position_pour=True,
         )
         
         self.place_controller3 = PlaceController(
@@ -398,6 +420,12 @@ class LiquidMixingController(BaseController):
             return float(g)
         return pick_ctrl.get_gripper_distance(name)
 
+    def _cfg_task_get(self, key: str, default: float) -> float:
+        """Read a float override from cfg.task (for param sweeps), else default."""
+        task = getattr(self.cfg, "task", None)
+        v = getattr(task, key, None) if task else None
+        return float(v) if v is not None else float(default)
+
     def _get_phase_action(self, state: Dict[str, Any]):
         """Get the corresponding action based on the current phase"""
         if self.current_phase == TaskPhase.PICKING1:
@@ -428,8 +456,13 @@ class LiquidMixingController(BaseController):
                 # Contact-stop grasp width from the lookup table: a binary close
                 # position-slams the fingers to 0 and pops the rigid beaker out.
                 gripper_distances=self._beaker_grip(self.pick_controller2, "beaker_04"),
-                end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 20])).as_quat(),
-                pre_offset_x=0.07,
+                # pre_offset_x 0.07 -> 0.10 (FIX): the shorter approach offset made
+                # beaker_04 (the middle pick) miss in open-loop replay (grasp 0/5);
+                # 0.10 -> 5/5 and lifts liquid_mixing replay to 4/5=80%. Swept: yaw
+                # didn't matter (kept 20); a longer dwell HURT pick2 (reverted to 0.2).
+                end_effector_orientation=R.from_euler(
+                    'xyz', np.radians([0, 90, self._cfg_task_get("pick2_yaw_deg", 20.0)])).as_quat(),
+                pre_offset_x=self._cfg_task_get("pick2_pre_offset_x", 0.10),
                 pre_offset_z=0.05,
                 after_offset_z=0
             )
@@ -457,6 +490,7 @@ class LiquidMixingController(BaseController):
                 source_size=self.object_utils.get_object_size(object_path="/World/beaker_05"),
                 target_position=np.array([0.32, 0.32, 0.90]),
                 current_joint_velocities=self.robot.get_joint_velocities(),
+                current_joint_positions=self.robot.get_joint_positions(),
                 pour_speed=-1,
                 source_name="beaker_05",
                 gripper_position=state['gripper_position'],
@@ -469,6 +503,7 @@ class LiquidMixingController(BaseController):
                 source_size=self.object_utils.get_object_size(object_path="/World/beaker_04"),
                 target_position=np.array([0.32, 0.32, 0.90]),
                 current_joint_velocities=self.robot.get_joint_velocities(),
+                current_joint_positions=self.robot.get_joint_positions(),
                 pour_speed=-1,
                 source_name="beaker_04",
                 gripper_position=state['gripper_position'],
@@ -481,6 +516,7 @@ class LiquidMixingController(BaseController):
                 source_size=self.object_utils.get_object_size(object_path="/World/beaker_03"),
                 target_position=np.array([0.32, 0.32, 0.90]),
                 current_joint_velocities=self.robot.get_joint_velocities(),
+                current_joint_positions=self.robot.get_joint_positions(),
                 pour_speed=-1,
                 source_name="beaker_03",
                 gripper_position=state['gripper_position'],

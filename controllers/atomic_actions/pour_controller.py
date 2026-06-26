@@ -35,7 +35,19 @@ class PourController(AtomicBaseController):
         speed: float = 1,
         position_threshold: float = 0.006,
         control_frequency: float = CONTROL_FREQUENCY,
+        position_pour: bool = False,
+        pour_angle_rad: float = 2.0,
     ) -> None:
+        # Opt-in: drive the pour tilt with POSITION control on the wrist (joint 6)
+        # instead of VELOCITY. The velocity pour records the *integrated commanded
+        # velocity* as the wrist angle, which drifts from the real joint (tracking
+        # error + held-beaker inertia), so open-loop replay reproduces a different
+        # tilt and the beaker slips. A position pour ramps joint 6 to a fixed angle
+        # via self._t (phase progress) and records the real commanded position, so
+        # replay reproduces it exactly. Requires current_joint_positions in forward.
+        self._position_pour = bool(position_pour)
+        self._pour_angle_rad = float(pour_angle_rad)
+        self._pour_arm0 = None
         dt = events_dt
         if dt is None:
             dt = [d / speed for d in self.DEFAULT_DT]
@@ -208,6 +220,37 @@ class PourController(AtomicBaseController):
                 self._next_event()
                 return action, self._build_record_array(action, current_joint_positions)
 
+        elif self._position_pour and self._event in (2, 3, 4, 5):
+            # Position-controlled pour tilt: hold the arm at the pour-start pose
+            # and ramp ONLY wrist joint 6 to a fixed angle (self._t = phase
+            # progress), then back. Records the real commanded position, so
+            # open-loop replay reproduces the tilt exactly (the velocity pour
+            # recorded an integrated-velocity angle that drifted from the joint).
+            if self._event == 2 and self._pour_arm0 is None:
+                articulation_controller.switch_dof_control_mode(dof_index=6, mode="position")
+                base = (current_joint_positions[:7]
+                        if current_joint_positions is not None
+                        else self._last_arm_positions)
+                self._pour_arm0 = (np.asarray(base, dtype=np.float64).copy()
+                                   if base is not None else None)
+            if self._pour_arm0 is None:
+                action = self._null_action(nv)
+            else:
+                direction = -1.0 if speed < 0 else 1.0
+                delta = direction * self._pour_angle_rad
+                frac = float(np.clip(self._t, 0.0, 1.0))
+                arm = self._pour_arm0.copy()
+                if self._event == 2:      # ramp to full tilt
+                    arm[6] = self._pour_arm0[6] + delta * frac
+                elif self._event == 3:    # hold at full tilt
+                    arm[6] = self._pour_arm0[6] + delta
+                elif self._event == 4:    # ramp back to upright
+                    arm[6] = self._pour_arm0[6] + delta * (1.0 - frac)
+                else:                     # event 5: hold upright
+                    arm[6] = self._pour_arm0[6]
+                jp = [float(x) for x in arm[:7]] + [None] * (nv - 7)
+                action = ArticulationAction(joint_positions=jp)
+
         elif self._event == 2:
             articulation_controller.switch_dof_control_mode(dof_index=6, mode="velocity")
             vels = [None] * nv
@@ -261,3 +304,4 @@ class PourController(AtomicBaseController):
         self._x_offset_noise = 0.0
         self._orient_noise = np.zeros(3)
         self._last_arm_positions = None
+        self._pour_arm0 = None
