@@ -1,298 +1,170 @@
+from typing import Any, Dict, Optional, Tuple
+
 import numpy as np
-from typing import Dict, Any, Tuple, Optional
-from scipy.spatial.transform import Rotation as R
-from isaacsim.core.api.articulations import ArticulationSubset
 from isaacsim.core.utils.types import ArticulationAction
+from loguru import logger
+from scipy.spatial.transform import Rotation as R
 
-from .base_controller import BaseController
-from .robot_controllers.ridgebase.ridgebase_controller import RidgebaseController
 from .atomic_actions.pick_controller import PickController
-from utils.object_utils import ObjectUtils
+from .mobile_base_controller import (
+    PHASE_NAVIGATE,
+    PHASE_PICK,
+    MobileManipControllerBase,
+)
 
 
-class MobilePickController(BaseController):
+class MobilePickController(MobileManipControllerBase):
+    """Level-5 mobile pick: navigate to the bench dock, then pick the object.
+
+    Phases (recorded per step): 0 = navigate, 1 = pick.
+    Success: object lifted more than LIFT_THRESHOLD above its initial height.
     """
-    Mobile pick controller for controlling the Ridgebase robot to navigate and pick objects.
-    
-    Combines navigation and pick operations in two phases:
-    1. Navigation phase: Navigate to target position
-    2. Pick phase: Pick the target object
-    
-    Supports two modes:
-    - collect mode: Collect trajectory data for both navigation and pick
-    - infer mode: Use learned policies (reserved interface)
-    
-    Attributes:
-        ridgebase_controller: Ridgebase low-level motion controller
-        pick_controller: Pick operation controller
-        franka_subset: Articulation subset for Franka arm
-        waypoints_set: Whether the path points have been set
-        pick_started: Whether the pick phase has started
-        navigation_done: Whether the navigation phase is done
-        initial_object_z: Initial z position of the target object
-    """
-    
-    def __init__(self, cfg, robot):
-        """
-        Initialize the mobile pick controller.
-        
-        Args:
-            cfg: Configuration object
-            robot: Robot instance
-        """
-        # Initialize base controller
-        super().__init__(cfg, robot, use_default_config=True)
-        
-        # Initialize Ridgebase controller for navigation
-        self.ridgebase_controller = RidgebaseController(
-            robot_articulation=robot,
-            max_linear_speed=cfg.task.max_linear_speed if hasattr(cfg.task, 'max_linear_speed') else 0.02,
-            max_angular_speed=cfg.task.max_angular_speed if hasattr(cfg.task, 'max_angular_speed') else 1.5,
-            position_threshold=cfg.task.position_threshold if hasattr(cfg.task, 'position_threshold') else 0.05,
-            angle_threshold=cfg.task.angle_threshold if hasattr(cfg.task, 'angle_threshold') else 0.02
-        )
-        
-        # Initialize Pick controller
+
+    LIFT_THRESHOLD = 0.10
+
+    def __init__(self, cfg: Any, robot: Any) -> None:
+        super().__init__(cfg, robot)
+        self.navigation_done = False
+        self.initial_object_z: Optional[float] = None
+        grasp_euler = getattr(cfg.task, "grasp_ee_euler_deg", [-90, 90, 30])
+        self._grasp_orientation = R.from_euler(
+            "xyz", np.radians([float(v) for v in grasp_euler])).as_quat()
+
+    def _init_collect_mode(self, cfg: Any, robot: Any = None) -> None:
+        super()._init_collect_mode(cfg, robot)
         self.pick_controller = PickController(
             name="pick_controller",
             cspace_controller=self.rmp_controller,
-            events_dt=[0.004, 0.002, 0.01, 0.02, 0.05, 0.004, 0.008]
+            events_dt=[0.004, 0.002, 0.01, 0.02, 0.05, 0.004, 0.008],
         )
-        
-        # Create Franka arm subset for pick operations
-        self.franka_subset = ArticulationSubset(
-            robot,
-            ['panda_joint1', 'panda_joint2', 'panda_joint3', 'panda_joint4', 
-             'panda_joint5', 'panda_joint6', 'panda_joint7', 
-             'panda_finger_joint1', 'panda_finger_joint2']
-        )
-        
-        # State tracking
-        self.waypoints_set = False
-        self.pick_started = False
-        self.navigation_done = False
-        self.initial_object_z = None
-        self.object_utils = ObjectUtils.get_instance()
-        
-        # Final angle for navigation (face the pick target)
-        self.final_nav_angle = cfg.task.final_nav_angle if hasattr(cfg.task, 'final_nav_angle') else np.pi/2
-        
+
     def reset(self) -> None:
-        """Reset the controller state"""
         super().reset()
-        self.waypoints_set = False
-        self.pick_started = False
         self.navigation_done = False
         self.initial_object_z = None
-        self.pick_controller.reset()
-    
-    def step(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
-        """
-        Perform one control step.
-        
-        Args:
-            state: The current state dictionary
-            
-        Returns:
-            tuple: (action, done, is_success)
-        """
         if self.mode == "collect":
-            return self._step_collect(state)
-        elif self.mode == "replay":
-            return self._step_replay(state)
-        else:
-            return self._step_infer(state)
-    
+            self.pick_controller.reset()
+
+    # ── Success ──────────────────────────────────────────────────────────
+
+    def _check_success(self) -> bool:
+        if self.state is None:
+            return False
+        obj = self.state.get("object_position")
+        init = self.state.get("initial_object_position")
+        if obj is None or init is None:
+            return False
+        return float(obj[2]) - float(init[2]) > self.LIFT_THRESHOLD
+
+    # ── Collect ──────────────────────────────────────────────────────────
+
     def _step_collect(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
-        """
-        Control step in collect mode.
-        
-        Handles both navigation and pick phases, collecting data throughout.
-        
-        Args:
-            state: The state dictionary
-            
-        Returns:
-            tuple: (action, done, is_success)
-        """
-        # Record initial object z position
-        if self.initial_object_z is None and state.get('object_position') is not None:
-            self.initial_object_z = state['object_position'][2]
-        
-        # Phase 1: Navigation
+        if self.initial_object_z is None and state.get("object_position") is not None:
+            self.initial_object_z = float(state["object_position"][2])
+
         if not self.navigation_done:
             return self._navigation_phase(state)
-        
-        # Phase 2: Pick
-        else:
-            return self._pick_phase(state)
-    
+        return self._pick_phase(state)
+
     def _navigation_phase(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
-        """
-        Handle navigation phase.
-        
-        Args:
-            state: The state dictionary
-            
-        Returns:
-            tuple: (action, done, is_success)
-        """
-        # Set waypoints on first call
-        if not self.waypoints_set and state.get('waypoints') is not None:
-            self.ridgebase_controller.set_waypoints(state['waypoints'], self.final_nav_angle)
-            self.waypoints_set = True
-            
-            # Save navigation start and end positions as task properties
-            if hasattr(self, 'data_collector'):
-                task_properties = {
-                    "start_position": state['current_pose'][:3].tolist(),  # [x, y, theta]
-                    "end_position": state['waypoints'][-1][:3],  # Last waypoint [x, y, theta]
-                    "object_name": state.get('object_name', 'unknown'),
-                    "object_position": state.get('object_position', [0, 0, 0]).tolist() if state.get('object_position') is not None else [0, 0, 0]
-                }
-                self.data_collector.set_task_properties(task_properties)
-        
-        current_pose = state['current_pose']
-        action, done = self.ridgebase_controller.get_action(current_pose)
-        
-        # Collect navigation data
-        if 'camera_data' in state and not done:
-            # Get current joint positions from robot
-            current_joint_positions = self.robot.get_joint_positions()[:-2]  # Exclude gripper joints
-            
-            self.data_collector.cache_step(
-                camera_images=state['camera_data'],
-                joint_angles=current_joint_positions,
-                language_instruction="Navigate to the pick location"
-            )
-        
-        # Check if navigation is complete
-        if done or self.ridgebase_controller.is_path_complete():
-            print("Navigation completed, starting pick task!")
+        if not self.waypoints_set:
+            self._ensure_waypoints(state)
+            if self.waypoints_set:
+                self.data_collector.set_task_properties({
+                    "start_position": [float(v) for v in state["current_pose"]],
+                    "dock_point": [float(v) for v in state["dock_point"]],
+                    "object_name": state.get("object_name", "unknown"),
+                    "spawn_mode": str(getattr(self.cfg.task.spawn, "mode", "far")),
+                })
+        action, nav_done, action11 = self._nav_step(state)
+        self._record_step(state, action11, PHASE_NAVIGATE)
+        if nav_done:
+            logger.info("Navigation complete — starting pick phase")
             self.navigation_done = True
-            self.pick_started = True
-            # Navigation data is cached, will be saved together with pick data at episode end
-        
         return action, False, False
-    
+
     def _pick_phase(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
-        """
-        Handle pick phase.
-        
-        Args:
-            state: The state dictionary
-            
-        Returns:
-            tuple: (action, done, is_success)
-        """
-        # Update RMP controller with robot base pose
-        robot_base_path = "/World/Ridgebase/panda_link0"
-        pose = self.object_utils.get_object_xform_position(object_path=robot_base_path)
-        quat = self.object_utils.get_transform_quat(object_path=robot_base_path, w_first=True)
-        self.rmp_controller.rmp_flow.set_robot_base_pose(pose, quat)
-        self.pick_controller.set_robot_position(pose)
-        
-        # Get Franka arm joint positions
-        joint_positions = self.franka_subset.get_joint_positions()
-        
-        # Get end effector position
-        end_effector_position = self.object_utils.get_object_xform_position(
-            object_path="/World/Ridgebase/endeffector"
-        )
-        
-        # Execute pick action
-        action, record_array = self.pick_controller.forward(
-            picking_position=state['object_position'],
-            current_joint_positions=joint_positions,
-            object_name=state['object_name'],
-            object_size=state['object_size'] if state['object_size'] is not None else np.array([0.06, 0.06, 0]),
-            gripper_control=self.gripper_control,
-            gripper_position=end_effector_position,
-            end_effector_orientation=R.from_euler('xyz', np.radians([-90, 90, 30])).as_quat(),
-        )
-        
-        # Collect pick data (full joint positions including arm)
-        if 'camera_data' in state and not self.pick_controller.is_done():
-            # Get current joint positions from robot
-            current_joint_positions = self.robot.get_joint_positions()[:-2]  # Exclude gripper joints
-            
-            self.data_collector.cache_step(
-                camera_images=state['camera_data'],
-                joint_angles=current_joint_positions,
-                action=record_array,
-                language_instruction=self.get_language_instruction()
+        base_pos = self._sync_arm_base_pose()
+        self.pick_controller.set_robot_position(base_pos)
+
+        if not self.pick_controller.is_done():
+            object_size = (state["object_size"] if state.get("object_size") is not None
+                           else np.array([0.06, 0.06, 0.07]))
+            action, record8 = self.pick_controller.forward(
+                picking_position=state["object_position"],
+                current_joint_positions=self.franka_subset.get_joint_positions(),
+                object_name=state["object_name"],
+                object_size=object_size,
+                gripper_control=self.gripper_control,
+                gripper_position=self.robot.get_gripper_position(),
+                end_effector_orientation=self._grasp_orientation.copy(),
+                gripper_distances=self.pick_controller.get_gripper_distance(state["object_name"]),
             )
-        
-        if action is not None:
-            action = ArticulationAction(
-                joint_positions=action.joint_positions, 
-                joint_velocities=action.joint_velocities, 
-                joint_indices=self.franka_subset.joint_indices[:len(action.joint_positions)]
-            )
-        
-        # Check if pick is complete
-        if self.pick_controller.is_done():
-            print("Pick task completed!")
-            
-            # Check if pick was successful (object lifted)
-            current_z = state['object_position'][2]
-            pick_success = (current_z - self.initial_object_z) > 0.1
-            
-            if pick_success:
-                self._last_failure_reason = ""
-                print("Pick successful - object lifted!")
-                # Save complete episode trajectory data (navigation + pick)
-                if hasattr(self, 'data_collector'):
-                    final_joint_positions = self.robot.get_joint_positions()[:-2]  # Exclude gripper joints
-                    self.data_collector.write_cached_data(final_joint_positions)
-            else:
-                self._last_failure_reason = "Pick failed: object not lifted enough (height diff <= 0.1)"
-                print("Pick failed - object not lifted enough")
-                self.data_collector.clear_cache()
-            
-            self._last_success = pick_success
-            self.reset_needed = True
-            return action, True, pick_success
-        
-        return action, False, False
-    
-    def _check_success(self) -> bool:
-        """Evaluate whether the current state meets the task success criterion."""
-        if self.initial_object_z is None or self.state is None:
-            return False
-        current_z = self.state.get('object_position', [0, 0, 0])[2]
-        return (current_z - self.initial_object_z) > 0.1
+            self._record_step(state, self._arm_record_to_11(record8), PHASE_PICK)
+            return self._remap_arm_action(action), False, False
+
+        # Atomic pick finished: evaluate the lift.
+        lifted = (self.initial_object_z is not None
+                  and float(state["object_position"][2]) - self.initial_object_z > self.LIFT_THRESHOLD)
+        if lifted:
+            self._last_failure_reason = ""
+            self.data_collector.write_cached_data()
+            self._last_success = True
+        else:
+            self._last_failure_reason = (
+                f"Pick failed: object not lifted more than {self.LIFT_THRESHOLD} m")
+            self.data_collector.clear_cache()
+            self._last_success = False
+        self.reset_needed = True
+        return None, True, self._last_success
+
+    # ── Infer ────────────────────────────────────────────────────────────
 
     def _step_infer(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
-        """
-        Control step in inference mode (reserved interface).
-        
-        Args:
-            state: The state dictionary
-            
-        Returns:
-            tuple: (action, done, is_success)
-        """
-        # Similar structure to collect mode but using inference engine
-        # This is a placeholder for future implementation
+        """Scripted navigation (stand-in for an external nav model) + VLA arm."""
+        if self.initial_object_z is None and state.get("object_position") is not None:
+            self.initial_object_z = float(state["object_position"][2])
+
         if not self.navigation_done:
-            return self._navigation_phase(state)
+            self._ensure_waypoints(state)
+            action, nav_done, _ = self._nav_step(state)
+            if nav_done:
+                logger.info("[infer] Navigation complete — handing over to policy")
+                self.navigation_done = True
+            return action, False, False
+
+        self._sync_arm_base_pose()
+        state["language_instruction"] = self.get_language_instruction()
+        action = self.inference_engine.step_inference(state)
+        if isinstance(action, ArticulationAction):
+            action = self._remap_arm_action(action)
+
+        if self._check_success():
+            self.check_success_counter += 1
         else:
-            return self._pick_phase(state)
-    
+            self.check_success_counter = 0
+        if self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS:
+            self._last_success = True
+            self.reset_needed = True
+            return None, True, True
+        return action, False, False
+
+    # ── Language ─────────────────────────────────────────────────────────
+
     def get_language_instruction(self) -> Optional[str]:
+        object_name = self.clean_object_name(self.state["object_name"]) if self.state else "object"
         if not self.navigation_done:
             return self._get_cached_instruction(
-                'mobile_pick:navigate',
+                "mobile_pick:navigate",
                 self._build_instruction_templates(
-                    'Navigate to the pick location',
-                    'Navigate the robot to the pick location and stop beside the target object',
+                    f"Move to the bench and pick up the {object_name}",
+                    f"Drive to the lab bench, stop in front of it, and pick up the {object_name}",
                 ),
             )
         return self._get_cached_instruction(
-            'mobile_pick:pick',
+            "mobile_pick:pick",
             self._build_instruction_templates(
-                'Pick up the object',
-                'Pick up the object from the table and lift it clear of the surface',
+                f"Pick up the {object_name}",
+                f"Pick up the {object_name} from the bench and lift it clear of the surface",
             ),
         )
