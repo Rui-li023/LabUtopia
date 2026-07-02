@@ -131,7 +131,11 @@ class PickController(AtomicBaseController):
             return np.array([-1, 0, 0])
         h = picking_position[:2] - self._robot_position[:2]
         n = np.linalg.norm(h)
-        return -h / n if n > 0 else np.array([-1, 0, 0])
+        if n <= 0:
+            return np.array([-1, 0, 0])
+        # 3-dim so it broadcasts against the 3-dim target position (the 2-dim
+        # form crashed mobile pick with a (3,)+(2,) shape mismatch).
+        return np.array([-h[0] / n, -h[1] / n, 0.0])
 
     def _execute_phase(self, pos, orient, jpos, obj_name, grip_ctrl,
                        grip_pos, pre_z, after_z, pre_x, grip_dist):

@@ -48,6 +48,12 @@ class PourController(AtomicBaseController):
         self._position_pour = bool(position_pour)
         self._pour_angle_rad = float(pour_angle_rad)
         self._pour_arm0 = None
+        # Articulation DOF index of the wrist (panda_joint7) used for
+        # switch_dof_control_mode. 6 on a bare Franka; mobile bases with
+        # leading base DOFs must set the true articulation index (e.g. 9 on
+        # Ridgebase). Subset-relative indexing of jp/vels (always [6]) is
+        # unaffected — callers pass ARM-subset arrays.
+        self.wrist_dof_index = 6
         dt = events_dt
         if dt is None:
             dt = [d / speed for d in self.DEFAULT_DT]
@@ -191,7 +197,7 @@ class PourController(AtomicBaseController):
         nv = current_joint_velocities.shape[0]
 
         if self._event >= len(self._events_dt):
-            articulation_controller.switch_dof_control_mode(dof_index=6, mode="velocity")
+            articulation_controller.switch_dof_control_mode(dof_index=self.wrist_dof_index, mode="velocity")
             action = ArticulationAction(joint_velocities=[None] * nv)
             return action, self._build_record_array(action, current_joint_positions)
 
@@ -227,7 +233,7 @@ class PourController(AtomicBaseController):
             # open-loop replay reproduces the tilt exactly (the velocity pour
             # recorded an integrated-velocity angle that drifted from the joint).
             if self._event == 2 and self._pour_arm0 is None:
-                articulation_controller.switch_dof_control_mode(dof_index=6, mode="position")
+                articulation_controller.switch_dof_control_mode(dof_index=self.wrist_dof_index, mode="position")
                 base = (current_joint_positions[:7]
                         if current_joint_positions is not None
                         else self._last_arm_positions)
@@ -252,25 +258,25 @@ class PourController(AtomicBaseController):
                 action = ArticulationAction(joint_positions=jp)
 
         elif self._event == 2:
-            articulation_controller.switch_dof_control_mode(dof_index=6, mode="velocity")
+            articulation_controller.switch_dof_control_mode(dof_index=self.wrist_dof_index, mode="velocity")
             vels = [None] * nv
             vels[6] = speed
             action = ArticulationAction(joint_velocities=vels)
 
         elif self._event == 3:
-            articulation_controller.switch_dof_control_mode(dof_index=6, mode="velocity")
+            articulation_controller.switch_dof_control_mode(dof_index=self.wrist_dof_index, mode="velocity")
             vels = [None] * nv
             vels[6] = 0
             action = ArticulationAction(joint_velocities=vels)
 
         elif self._event == 4:
-            articulation_controller.switch_dof_control_mode(dof_index=6, mode="velocity")
+            articulation_controller.switch_dof_control_mode(dof_index=self.wrist_dof_index, mode="velocity")
             vels = [None] * nv
             vels[6] = -speed
             action = ArticulationAction(joint_velocities=vels)
 
         elif self._event == 5:
-            articulation_controller.switch_dof_control_mode(dof_index=6, mode="velocity")
+            articulation_controller.switch_dof_control_mode(dof_index=self.wrist_dof_index, mode="velocity")
             vels = [None] * nv
             vels[6] = 0
             action = ArticulationAction(joint_velocities=vels)
