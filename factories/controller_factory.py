@@ -20,6 +20,7 @@ from controllers.close_controller import CloseTaskController
 from controllers.open_close_controller import OpenCloseTaskController
 from controllers.navigation_controller import NavigationController
 from controllers.mobile_pick_controller import MobilePickController
+from controllers.mobile_transport_pour_controller import MobileTransportPourController
 
 _controller_registry: Dict[str, Type[BaseController]] = {}
 
@@ -51,6 +52,7 @@ register_controller("open_transport_pour", OpenTransportPourController)
 register_controller("liquid_mixing", LiquidMixingController)
 register_controller("navigation", NavigationController)
 register_controller("mobile_pick", MobilePickController)
+register_controller("mobile_transport_pour", MobileTransportPourController)
 
 from controllers.flask_to_cork_controller import FlaskToCorkTaskController
 register_controller("flask_to_cork", FlaskToCorkTaskController)
