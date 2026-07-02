@@ -16,10 +16,11 @@ PHASE_PICK = 1
 PHASE_CARRY_NAVIGATE = 2
 PHASE_POUR = 3
 
-# Per-finger joint targets used to invert the normalized gripper channel in
-# replay/infer (mirrors FrankaTrajectoryController._map_gripper_state_to_positions).
-_FINGER_OPEN = 0.04
-_FINGER_CLOSED = 0.0
+# Physical per-finger travel limit (m). The gripper channel is normalized
+# against GRIPPER_MAX_OPEN (0.05) everywhere in this repo — the exact inverse
+# is finger = GRIPPER_MAX_OPEN * (1 - s), clamped to the physical limit so a
+# recorded fully-open value (s ~= 0.2) replays back to exactly 0.04.
+_FINGER_LIMIT = 0.04
 
 
 class _NullTrajectory:
@@ -173,7 +174,7 @@ class MobileManipControllerBase(BaseController):
         """Convert a recorded 11-dim action to a 12-DOF position command."""
         act = np.asarray(act, dtype=np.float64)
         s = float(np.clip(act[10], 0.0, 1.0))
-        finger = _FINGER_OPEN + s * (_FINGER_CLOSED - _FINGER_OPEN)
+        finger = float(np.clip(GRIPPER_MAX_OPEN * (1.0 - s), 0.0, _FINGER_LIMIT))
         positions = np.concatenate([act[:10], [finger, finger]])
         return self.all_subset.make_articulation_action(
             joint_positions=positions, joint_velocities=None)
