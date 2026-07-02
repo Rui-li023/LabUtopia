@@ -1,0 +1,113 @@
+name: level5_close_pick_pour
+
+task_type: "mobile_transport_pour"
+controller_type: "mobile_transport_pour"
+
+mode: "collect"  # "collect", "infer", or "replay"
+usd_path: "assets/navigation_lab/navigation_lab_01/lab.usd"
+max_episodes: 100
+collect_position_only: true
+
+replay:
+  dataset_path: ""
+  # episode_indices: [0, 1, 2]
+
+infer:
+  type: "local"
+  obs_names: {"image": 'front_camera_rgb', "image_2": 'top_camera_rgb', "wrist_image": 'wrist_camera_rgb'}
+  policy_model_path: ""
+  policy_config_path: ""
+  normalizer_path: ""
+  host: "127.0.0.1"
+  port: 8000
+  n_obs_steps: 1
+  timeout: 30
+  max_retries: 3
+
+task:
+  max_steps: 3000
+  navigation_config_path: "config/navigation/navigation_assets.yaml"
+  pick_object_path: "/World/beaker"
+  object_position_range:
+    # tuned: the brief's x [-3.3,-2.6] / target x [-2.45,-2.15] allowed up to
+    # 1.15 m source-target separation; the base stays docked at the source in
+    # the close variant, so the pour target was often outside Franka reach
+    # (smoke run 1: pour gate unmet with the target ~1.0 m planar from base).
+    # Ranges below keep the target within ~0.85 m of dock A.
+    x: [-2.90, -2.70]
+    y: [0.62, 0.68]
+    z: [0.80, 0.80]
+  dock_standoff: 0.75            # tuned: 0.85 left the arm at its reach limit
+                                 # (~0.018 m grasp undershoot → beaker shoved out)
+  spawn:
+    mode: "near"
+    distance_range: [1.0, 2.0]
+  # tuned: close_pick's top-down grasp [0,180,0] cannot produce a real pour —
+  # the beaker axis is coaxial with wrist joint 7, so the pour controller's
+  # wrist ramp only yaw-spins the beaker (smoke logs: tilted=True from the
+  # 90-degree hover reorientation, returned=False forever). Use the L2
+  # pick_pour side-grasp family instead: [0,90,30] has a HORIZONTAL finger
+  # line (unlike the [-90,90,30] default Task 6 rejected), straddles a
+  # standing beaker, and puts the beaker axis perpendicular to joint 7 so
+  # the wrist ramp tilts and returns it exactly as in the static task.
+  grasp_ee_euler_deg: [0, 90, 30]
+  pour_ee_euler_deg: [0, 90, 15]
+  # tuned grip strategy: pick with the table default 0.022. Every tighter
+  # variant was tried and REGRESSED:
+  #   - pick grip 0.020 (from open): ejects on grasp, pick rate ~30% -> ~8%
+  #   - pour_regrip_distance 0.020 (in-hand re-squeeze at pour entry):
+  #     ejected the held beaker (dropped to bench before the tilt)
+  #   - pour_regrip_distance 0.021: pour-hold rate 1/23 vs 2/17 without it
+  # The residual pour failure mode is the smooth beaker pendulum-swiveling
+  # about the finger line during the wrist tilt (gate diagnostics: beaker
+  # held aloft, full j7 sweep, tilted=False) — the known position-grip
+  # limitation documented in the pick table for beaker_03/04/05; a real fix
+  # needs a force-mode gripper. pour_regrip_distance stays available in the
+  # controller but is intentionally NOT set here.
+  pour_target:
+    prim_path: "/World/target_beaker"
+    usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+    source_prim_path: "/World/beaker1"
+    position_range:
+      # tuned with object_position_range above: keeps the same-bench target
+      # 0.10-0.45 m beside the source so both are reachable from one dock.
+      x: [-2.60, -2.45]
+      y: [0.55, 0.61]
+      z: [0.79, 0.79]
+    carry_navigation: false
+  max_linear_speed: 0.04
+  max_angular_speed: 1.5
+  position_threshold: 0.08
+  angle_threshold: 0.1
+
+cameras:
+  - prim_path: "/World/Ridgebase/base_link/Camera"
+    name: "front_camera"
+    resolution: [256, 256]
+    image_type: "rgb"
+
+  - prim_path: "/World/Ridgebase/panda_hand/Camera"
+    name: "wrist_camera"
+    resolution: [256, 256]
+    clipping_range: [0, 10.0]
+    image_type: "rgb"
+
+  - prim_path: "/World/Ridgebase/base_link/Camera_01"
+    name: "top_camera"
+    resolution: [256, 256]
+    image_type: "rgb"
+
+robot:
+  type: "ridgebase"
+  position: [0.0, 0.0, 0.0]
+
+collector:
+  type: "mobile"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}

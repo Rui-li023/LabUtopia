@@ -48,6 +48,7 @@ class PourController(AtomicBaseController):
         self._position_pour = bool(position_pour)
         self._pour_angle_rad = float(pour_angle_rad)
         self._pour_arm0 = None
+        self._pour_dir_override = None  # set with _pour_arm0 (headroom guard)
         # Articulation DOF index of the wrist (panda_joint7) used for
         # switch_dof_control_mode. 6 on a bare Franka; mobile bases with
         # leading base DOFs must set the true articulation index (e.g. 9 on
@@ -239,10 +240,29 @@ class PourController(AtomicBaseController):
                         else self._last_arm_positions)
                 self._pour_arm0 = (np.asarray(base, dtype=np.float64).copy()
                                    if base is not None else None)
+                # Wrist-headroom guard (position pour only): panda_joint7 is
+                # limited to +/-2.897 rad. On mobile bases the RMP null-space
+                # solution can park the wrist low enough that the requested
+                # tilt (arm0[6] +/- pour_angle) would be clamped at the limit
+                # and never reach the success gate's 50-degree threshold, so
+                # flip the tilt sign when the commanded side lacks headroom
+                # (a beaker pours the same either way).
+                if self._pour_arm0 is not None:
+                    j7 = float(self._pour_arm0[6])
+                    want = -1.0 if (speed if speed is not None else -1.0) < 0 else 1.0
+                    limit = 2.897
+                    if want < 0 and (j7 - self._pour_angle_rad) < -limit:
+                        self._pour_dir_override = 1.0
+                    elif want > 0 and (j7 + self._pour_angle_rad) > limit:
+                        self._pour_dir_override = -1.0
+                    else:
+                        self._pour_dir_override = want
             if self._pour_arm0 is None:
                 action = self._null_action(nv)
             else:
-                direction = -1.0 if speed < 0 else 1.0
+                direction = (self._pour_dir_override
+                             if self._pour_dir_override is not None
+                             else (-1.0 if speed < 0 else 1.0))
                 delta = direction * self._pour_angle_rad
                 frac = float(np.clip(self._t, 0.0, 1.0))
                 arm = self._pour_arm0.copy()
@@ -311,3 +331,4 @@ class PourController(AtomicBaseController):
         self._orient_noise = np.zeros(3)
         self._last_arm_positions = None
         self._pour_arm0 = None
+        self._pour_dir_override = None

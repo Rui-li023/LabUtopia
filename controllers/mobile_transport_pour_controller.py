@@ -50,12 +50,38 @@ class MobileTransportPourController(MobileManipControllerBase):
         self.return_complete = False
         self.return_timer = 0.0
         self.carry_waypoints_set = False
+        # Post-done grace window (mirrors PickPourTaskController): the pour
+        # state machine's last hold event ends ~10 steps before the gate's
+        # 1 s upright-hold timer can complete, so without this the gate can
+        # NEVER be satisfied. Keep evaluating it for up to 240 extra steps.
+        self._post_done_wait = 0
+        self._POST_DONE_MAX = 240
         grasp_euler = getattr(cfg.task, "grasp_ee_euler_deg", [-90, 90, 30])
         self._grasp_orientation = R.from_euler(
             "xyz", np.radians([float(v) for v in grasp_euler])).as_quat()
         pour_euler = getattr(cfg.task, "pour_ee_euler_deg", [0, 90, 15])
         self._pour_orientation = R.from_euler(
             "xyz", np.radians([float(v) for v in pour_euler])).as_quat()
+        # Optional task-scoped grip override (metres of finger opening). The
+        # shared pick-table value for "beaker" (0.022) has zero squeeze
+        # margin — smoke runs dropped the beaker on the pour approach in 7/8
+        # pours (gate diagnostics: tilted=False with xy_dist in range).
+        grip = getattr(cfg.task, "source_grip_distance", None)
+        self._source_grip_distance: Optional[float] = (
+            float(grip) if grip is not None else None)
+        # Optional in-hand re-squeeze before the pour (metres of finger
+        # opening; None disables). With the pick-table beaker grip (0.022,
+        # zero squeeze margin) the smooth beaker pivots about the finger
+        # line during the wrist tilt and stays plumb under gravity — smoke
+        # diagnostics showed the beaker held aloft with the j7 sweep
+        # complete but tilted=False in 8/9 pours. Closing 2 mm tighter once
+        # the grasp is already static transmits the tilt torque WITHOUT the
+        # eject-on-grasp that closing to 0.020 from open caused (pick rate
+        # dropped ~30% -> ~8% when the pick itself used 0.020).
+        regrip = getattr(cfg.task, "pour_regrip_distance", None)
+        self._pour_regrip_distance: Optional[float] = (
+            float(regrip) if regrip is not None else None)
+        self._pour_regrip_done = False
 
     def _init_collect_mode(self, cfg: Any, robot: Any = None) -> None:
         super()._init_collect_mode(cfg, robot)
@@ -81,6 +107,8 @@ class MobileTransportPourController(MobileManipControllerBase):
         self.return_complete = False
         self.return_timer = 0.0
         self.carry_waypoints_set = False
+        self._post_done_wait = 0
+        self._pour_regrip_done = False
         if self.mode == "collect":
             self.pick_controller.reset()
             self.pour_controller.reset()
@@ -186,7 +214,10 @@ class MobileTransportPourController(MobileManipControllerBase):
                 gripper_control=self.gripper_control,
                 gripper_position=self.robot.get_gripper_position(),
                 end_effector_orientation=self._grasp_orientation.copy(),
-                gripper_distances=self.pick_controller.get_gripper_distance(state["object_name"]),
+                gripper_distances=(
+                    self._source_grip_distance
+                    if self._source_grip_distance is not None
+                    else self.pick_controller.get_gripper_distance(state["object_name"])),
             )
             self._record_step(state, self._arm_record_to_11(record8), PHASE_PICK)
             return self._remap_arm_action(action), False, False
@@ -227,6 +258,14 @@ class MobileTransportPourController(MobileManipControllerBase):
         # initialized articulation, so this can't happen in __init__).
         self.pour_controller.wrist_dof_index = int(self.franka_subset.joint_indices[6])
 
+        # One-shot in-hand re-squeeze at pour entry (see __init__ comment):
+        # tighten the already-static grasp so the beaker follows the wrist
+        # tilt instead of pendulum-swiveling about the finger line.
+        if not self._pour_regrip_done:
+            if self._pour_regrip_distance is not None:
+                self.robot.close_gripper_to_distance(self._pour_regrip_distance)
+            self._pour_regrip_done = True
+
         if self._pour_gate_satisfied():
             self._last_failure_reason = ""
             logger.success("Pour gate satisfied — episode success")
@@ -236,7 +275,13 @@ class MobileTransportPourController(MobileManipControllerBase):
             self.reset_needed = True
             return None, True, True
 
-        if not self.pour_controller.is_done():
+        # Keep stepping through the pour state machine, then through the
+        # post-done grace window (PourController.forward returns a null hold
+        # action once its events are exhausted) so the gate's upright-hold
+        # timer has time to complete before we declare failure.
+        if not self.pour_controller.is_done() or self._post_done_wait < self._POST_DONE_MAX:
+            if self.pour_controller.is_done():
+                self._post_done_wait += 1
             action, record8 = self.pour_controller.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
                 source_size=self.initial_object_size,
@@ -252,7 +297,24 @@ class MobileTransportPourController(MobileManipControllerBase):
                 self._record_step(state, self._arm_record_to_11(record8), PHASE_POUR)
             return self._remap_arm_action(action), False, False
 
-        return self._fail("TransportPour pour failed: pour controller finished without meeting the gate")
+        # Diagnostic failure message: report the gate internals so smoke logs
+        # distinguish reach failures (xy_dist > threshold) from tilt/return/
+        # hold-timer failures without a debugger attached.
+        obj = state.get("object_position")
+        target = state.get("pour_target_position")
+        xy_dist = (float(np.linalg.norm(np.asarray(obj[:2]) - np.asarray(target[:2])))
+                   if obj is not None and target is not None else float("nan"))
+        threshold = self.task_utils.get_pour_threshold(
+            state["object_name"], state["object_size"]) + 0.05
+        obj_z = float(obj[2]) if obj is not None else float("nan")
+        j7 = float(self.franka_subset.get_joint_positions()[6])
+        return self._fail(
+            "TransportPour pour failed: gate unmet "
+            f"(xy_dist={xy_dist:.3f}, threshold={threshold:.3f}, "
+            f"tilted={self.pour_complete}, returned={self.return_complete}, "
+            f"hold_timer={self.return_timer:.2f}, "
+            f"obj_z={obj_z:.3f} (init {self.initial_object_z}), j7={j7:.2f}, "
+            f"quat={'ok' if state.get('object_quaternion') is not None else 'None'})")
 
     # ── Infer ────────────────────────────────────────────────────────────
 
