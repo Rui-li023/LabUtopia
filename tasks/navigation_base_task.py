@@ -44,6 +44,27 @@ class NavigationBaseTask(BaseTask):
             nav_scene = self.navigation_assets[0]
             self.grid, self.W, self.H = load_grid(nav_scene["barrier_image_path"])
 
+    def _is_free_point(self, x: float, y: float) -> bool:
+        """True if (x, y) is inside bounds and on a free grid cell."""
+        nav_scene = self.navigation_assets[0]
+        xb, yb = nav_scene["x_bounds"], nav_scene["y_bounds"]
+        if not (xb[0] <= x <= xb[1] and yb[0] <= y <= yb[1]):
+            return False
+        W = len(self.grid[0])
+        H = len(self.grid)
+        i, j = real_to_grid(x, y, xb, yb, (W, H))
+        return self.grid[i][j] == 0
+
+    def reset_with_init_state(self, init_state: dict) -> None:
+        super().reset_with_init_state(init_state)
+        self.robot.initialize()
+        rwp = init_state.get("robot_world_position")
+        if rwp is not None:
+            self.robot.set_world_pose(position=np.asarray(rwp, dtype=float))
+        rjp = init_state.get("robot_init_joint_positions")
+        if rjp is not None:
+            self.robot.set_joint_positions(np.asarray(rjp, dtype=np.float32))
+
     # -------------------------------------------------------------------------
     # Path planning helpers (shared by both nav tasks)
     # -------------------------------------------------------------------------
@@ -68,6 +89,14 @@ class NavigationBaseTask(BaseTask):
             if self.grid[i][j] == 0:
                 return [x, y]
         return None
+
+    @staticmethod
+    def _path_length(waypoints: List[List[float]]) -> float:
+        """Total euclidean length of a waypoint path (xy only)."""
+        pts = np.asarray([[w[0], w[1]] for w in waypoints], dtype=float)
+        if len(pts) < 2:
+            return 0.0
+        return float(np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1)))
 
     def _build_waypoints(self, merged_path_real: list) -> List[List[float]]:
         """Convert a raw A* path to ``[[x, y, theta], ...]`` waypoints.
