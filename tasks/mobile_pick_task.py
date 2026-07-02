@@ -61,16 +61,6 @@ class MobilePickTask(NavigationBaseTask):
         super().reset_with_init_state(init_state)
         self.initial_object_position = None
 
-    def _record_object_pose(self, obj_path: str) -> None:
-        """Record an object's pose into the episode init state for replay."""
-        position = self.object_utils.get_object_xform_position(object_path=obj_path)
-        orientation = self.object_utils.get_transform_quat(object_path=obj_path)
-        if position is not None and orientation is not None:
-            self._episode_init_state["object_poses"][obj_path] = {
-                "position": np.asarray(position, dtype=np.float32),
-                "orientation": np.asarray(orientation, dtype=np.float32),
-            }
-
     # ── Spawn / path generation ──────────────────────────────────────────
 
     def _compute_dock_point(self, object_path: str) -> list:
@@ -80,7 +70,7 @@ class MobilePickTask(NavigationBaseTask):
     def _sample_spawn(self, nav_scene: dict) -> Optional[list]:
         if self.spawn_mode == "near":
             d = np.random.uniform(*self.spawn_distance_range)
-            # Aisle half-plane relative to the dock (y < dock_y): phi in (pi, 2pi)
+            # Aisle half-plane relative to the dock (y < dock_y): phi in (pi+0.3, 2pi-0.3)
             phi = np.random.uniform(np.pi + 0.3, 2 * np.pi - 0.3)
             x = self.dock_point[0] + d * np.cos(phi)
             y = self.dock_point[1] + d * np.sin(phi)

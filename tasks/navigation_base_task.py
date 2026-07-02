@@ -55,16 +55,6 @@ class NavigationBaseTask(BaseTask):
         i, j = real_to_grid(x, y, xb, yb, (W, H))
         return self.grid[i][j] == 0
 
-    def reset_with_init_state(self, init_state: dict) -> None:
-        super().reset_with_init_state(init_state)
-        self.robot.initialize()
-        rwp = init_state.get("robot_world_position")
-        if rwp is not None:
-            self.robot.set_world_pose(position=np.asarray(rwp, dtype=float))
-        rjp = init_state.get("robot_init_joint_positions")
-        if rjp is not None:
-            self.robot.set_joint_positions(np.asarray(rjp, dtype=np.float32))
-
     # -------------------------------------------------------------------------
     # Path planning helpers (shared by both nav tasks)
     # -------------------------------------------------------------------------
