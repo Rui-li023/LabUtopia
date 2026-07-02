@@ -60,6 +60,9 @@ class MobilePickTask(NavigationBaseTask):
     def reset_with_init_state(self, init_state: dict) -> None:
         super().reset_with_init_state(init_state)
         self.initial_object_position = None
+        # Recompute from the restored object pose — the dock derived in
+        # reset() belongs to the previous episode's randomization.
+        self.dock_point = self._compute_dock_point(self.target_object_path)
 
     # ── Spawn / path generation ──────────────────────────────────────────
 

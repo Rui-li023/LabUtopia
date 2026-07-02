@@ -1,7 +1,6 @@
 import os
 from typing import Any, Dict, Optional
 
-import numpy as np
 from loguru import logger
 
 from .mobile_pick_task import MobilePickTask
@@ -45,7 +44,6 @@ class MobileTransportPourTask(MobilePickTask):
     def reset(self) -> None:
         super().reset()
         self.randomize_object_position(self.pour_target_path, self.pour_target_position_range)
-        self._record_object_pose(self.pour_target_path)
         self.pour_dock = self._compute_dock_point(self.pour_target_path)
         self.carry_path = None
         if self.carry_navigation and self.dock_point is not None:
@@ -57,6 +55,7 @@ class MobileTransportPourTask(MobilePickTask):
     def reset_with_init_state(self, init_state: dict) -> None:
         super().reset_with_init_state(init_state)
         self.carry_path = None
+        self.pour_dock = self._compute_dock_point(self.pour_target_path)
 
     # ── Step ─────────────────────────────────────────────────────────────
 
