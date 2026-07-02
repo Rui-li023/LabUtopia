@@ -1,0 +1,79 @@
+name: level5_far_pick
+
+task_type: "mobile_pick"
+controller_type: "mobile_pick"
+
+mode: "collect"  # "collect", "infer", or "replay"
+usd_path: "assets/navigation_lab/navigation_lab_01/lab.usd"
+max_episodes: 100
+collect_position_only: true
+
+replay:
+  dataset_path: ""
+  # episode_indices: [0, 1, 2]
+
+infer:
+  type: "local"
+  obs_names: {"image": 'front_camera_rgb', "image_2": 'top_camera_rgb', "wrist_image": 'wrist_camera_rgb'}
+  policy_model_path: ""
+  policy_config_path: ""
+  normalizer_path: ""
+  host: "127.0.0.1"
+  port: 8000
+  n_obs_steps: 1
+  timeout: 30
+  max_retries: 3
+
+task:
+  max_steps: 4500
+  navigation_config_path: "config/navigation/navigation_assets.yaml"
+  pick_object_path: "/World/beaker"
+  object_position_range:
+    x: [-3.5, -1.8]
+    y: [0.55, 0.72]
+    z: [0.80, 0.80]
+  dock_standoff: 0.75            # tuned: 0.85 left the arm at its reach limit
+                                 # (~0.018 m grasp undershoot → beaker shoved out)
+  spawn:
+    mode: "far"
+    min_path_length: 4.0
+  grasp_ee_euler_deg: [0, 180, 0]  # tuned: top-down (fingers horizontal). The
+                                   # default [-90,90,30] is a side grasp with a
+                                   # vertical finger-line, which cannot straddle
+                                   # a beaker standing on the bench.
+  max_linear_speed: 0.04
+  max_angular_speed: 1.5
+  position_threshold: 0.08
+  angle_threshold: 0.1
+
+cameras:
+  - prim_path: "/World/Ridgebase/base_link/Camera"
+    name: "front_camera"
+    resolution: [256, 256]
+    image_type: "rgb"
+
+  - prim_path: "/World/Ridgebase/panda_hand/Camera"
+    name: "wrist_camera"
+    resolution: [256, 256]
+    clipping_range: [0, 10.0]
+    image_type: "rgb"
+
+  - prim_path: "/World/Ridgebase/base_link/Camera_01"
+    name: "top_camera"
+    resolution: [256, 256]
+    image_type: "rgb"
+
+robot:
+  type: "ridgebase"
+  position: [0.0, 0.0, 0.0]
+
+collector:
+  type: "mobile"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}

@@ -1,23 +1,20 @@
-name: level5_mobile_manipulation
+name: level5_close_pick
 
 task_type: "mobile_pick"
 controller_type: "mobile_pick"
 
 mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/navigation_lab/navigation_lab_01/lab.usd"
-max_episodes: 50
+max_episodes: 100
+collect_position_only: true
 
-# ── Replay mode ─────────────────────────────────────────────────────────────
-# Set mode: "replay" above to activate.
-# dataset_path: root dataset directory that contains episode_XXXX sub-folders.
-# episode_indices (optional): list of episode indices to replay; omit to replay all.
 replay:
   dataset_path: ""
   # episode_indices: [0, 1, 2]
 
 infer:
   type: "local"
-  obs_names: {"image": 'camera_1_rgb', "image_2": 'camera_2_rgb'}
+  obs_names: {"image": 'front_camera_rgb', "image_2": 'top_camera_rgb', "wrist_image": 'wrist_camera_rgb'}
   policy_model_path: ""
   policy_config_path: ""
   normalizer_path: ""
@@ -28,9 +25,22 @@ infer:
   max_retries: 3
 
 task:
-  max_steps: 4000
-  pick_object_path: "/World/beaker"
+  max_steps: 2000
   navigation_config_path: "config/navigation/navigation_assets.yaml"
+  pick_object_path: "/World/beaker"
+  object_position_range:
+    x: [-3.5, -1.8]
+    y: [0.55, 0.72]
+    z: [0.80, 0.80]
+  dock_standoff: 0.75            # tuned: 0.85 left the arm at its reach limit
+                                 # (~0.018 m grasp undershoot → beaker shoved out)
+  spawn:
+    mode: "near"
+    distance_range: [1.0, 2.0]
+  grasp_ee_euler_deg: [0, 180, 0]  # tuned: top-down (fingers horizontal). The
+                                   # default [-90,90,30] is a side grasp with a
+                                   # vertical finger-line, which cannot straddle
+                                   # a beaker standing on the bench.
   max_linear_speed: 0.04
   max_angular_speed: 1.5
   position_threshold: 0.08
@@ -58,7 +68,7 @@ robot:
   position: [0.0, 0.0, 0.0]
 
 collector:
-  type: "default"
+  type: "mobile"
   compression: gzip
 
 hydra:

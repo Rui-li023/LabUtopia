@@ -9,8 +9,10 @@ A mobile manipulator combining a Ridgeback mobile base with a Franka Panda arm.
 from typing import List, Optional, Tuple
 
 import numpy as np
+from isaacsim.core.prims import SingleRigidPrim
 from isaacsim.core.utils.prims import get_prim_at_path
-from isaacsim.core.utils.stage import add_reference_to_stage
+from isaacsim.core.utils.stage import add_reference_to_stage, get_stage_units
+from isaacsim.robot.manipulators.grippers.parallel_gripper import ParallelGripper
 from isaacsim.sensors.physics import ContactSensor
 
 from robots.base_robot import BaseRobot
@@ -89,6 +91,26 @@ class Ridgebase(BaseRobot):
             orientation=orientation,
         )
 
+        # ── Gripper setup ────────────────────────────────────────────────────
+        # The Ridgebase reuses the Franka Panda hand, but (unlike robots/franka)
+        # never instantiated a ParallelGripper, so self._gripper stayed None and
+        # every gripper command (open/close/close_to_distance) silently no-op'd
+        # at the `if self._gripper is None` guard — the arm reached the object
+        # but the fingers never closed, so Level-5 pick could never lift it.
+        # Mirror the Franka's gripper construction so grasps actually actuate.
+        self._end_effector_prim_path = prim_path + "/panda_rightfinger"
+        self._default_joint_positions = self.DEFAULT_JOINT_POSITIONS.copy()
+        self._gripper_open_position = np.array([0.04, 0.04])
+        self._gripper_closed_position = np.array([0.0, 0.0])
+        self._gripper = ParallelGripper(
+            end_effector_prim_path=self._end_effector_prim_path,
+            joint_prim_names=self._GRIPPER_JOINT_NAMES,
+            joint_opened_positions=self._gripper_open_position,
+            joint_closed_positions=self._gripper_closed_position,
+            action_deltas=np.array([0.04, 0.04]) / get_stage_units(),
+        )
+        self._gripper_control_mode = "position"
+
     # ── Implement abstract properties from BaseRobot ─────────────────────────
 
     @property
@@ -151,7 +173,28 @@ class Ridgebase(BaseRobot):
             physics_sim_view: The physics simulation view
         """
         super().initialize(physics_sim_view)
+        # Bring the Franka hand's gripper online (see __init__ note). Without
+        # this, ParallelGripper.forward() has no articulation hooks and the
+        # gripper channel stays inert.
+        self._end_effector = SingleRigidPrim(
+            prim_path=self._end_effector_prim_path,
+            name=self.name + "_end_effector",
+        )
+        self._end_effector.initialize(physics_sim_view)
+        dof_names = self.dof_names if self.dof_names is not None else self.get_all_joint_names()
+        gripper_default_state = np.array(
+            self._default_joint_positions[-self.num_gripper_joints:], dtype=np.float64)
+        self._gripper.set_default_state(gripper_default_state)
+        self._gripper.initialize(
+            physics_sim_view=physics_sim_view,
+            articulation_apply_action_func=self.apply_action,
+            get_joint_positions_func=self.get_joint_positions,
+            set_joint_positions_func=self.set_joint_positions,
+            dof_names=dof_names,
+        )
 
     def post_reset(self) -> None:
         """Post-reset operations."""
         super().post_reset()
+        if self._gripper is not None:
+            self._gripper.post_reset()
