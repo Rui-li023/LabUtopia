@@ -25,7 +25,6 @@ class MobilePickController(MobileManipControllerBase):
     def __init__(self, cfg: Any, robot: Any) -> None:
         super().__init__(cfg, robot)
         self.navigation_done = False
-        self.initial_object_z: Optional[float] = None
         grasp_euler = getattr(cfg.task, "grasp_ee_euler_deg", [-90, 90, 30])
         self._grasp_orientation = R.from_euler(
             "xyz", np.radians([float(v) for v in grasp_euler])).as_quat()
@@ -41,7 +40,6 @@ class MobilePickController(MobileManipControllerBase):
     def reset(self) -> None:
         super().reset()
         self.navigation_done = False
-        self.initial_object_z = None
         if self.mode == "collect":
             self.pick_controller.reset()
 
@@ -59,9 +57,6 @@ class MobilePickController(MobileManipControllerBase):
     # ── Collect ──────────────────────────────────────────────────────────
 
     def _step_collect(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
-        if self.initial_object_z is None and state.get("object_position") is not None:
-            self.initial_object_z = float(state["object_position"][2])
-
         if not self.navigation_done:
             return self._navigation_phase(state)
         return self._pick_phase(state)
@@ -70,11 +65,12 @@ class MobilePickController(MobileManipControllerBase):
         if not self.waypoints_set:
             self._ensure_waypoints(state)
             if self.waypoints_set:
+                spawn = getattr(self.cfg.task, "spawn", None)
                 self.data_collector.set_task_properties({
                     "start_position": [float(v) for v in state["current_pose"]],
                     "dock_point": [float(v) for v in state["dock_point"]],
                     "object_name": state.get("object_name", "unknown"),
-                    "spawn_mode": str(getattr(self.cfg.task.spawn, "mode", "far")),
+                    "spawn_mode": str(getattr(spawn, "mode", "far")) if spawn is not None else "far",
                 })
         action, nav_done, action11 = self._nav_step(state)
         self._record_step(state, action11, PHASE_NAVIGATE)
@@ -104,8 +100,7 @@ class MobilePickController(MobileManipControllerBase):
             return self._remap_arm_action(action), False, False
 
         # Atomic pick finished: evaluate the lift.
-        lifted = (self.initial_object_z is not None
-                  and float(state["object_position"][2]) - self.initial_object_z > self.LIFT_THRESHOLD)
+        lifted = self._check_success()
         if lifted:
             self._last_failure_reason = ""
             self.data_collector.write_cached_data()
@@ -122,9 +117,6 @@ class MobilePickController(MobileManipControllerBase):
 
     def _step_infer(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
         """Scripted navigation (stand-in for an external nav model) + VLA arm."""
-        if self.initial_object_z is None and state.get("object_position") is not None:
-            self.initial_object_z = float(state["object_position"][2])
-
         if not self.navigation_done:
             self._ensure_waypoints(state)
             action, nav_done, _ = self._nav_step(state)
