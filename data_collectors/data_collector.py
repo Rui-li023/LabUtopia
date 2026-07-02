@@ -74,6 +74,7 @@ def _write_episode_data(
     task_indices: Optional[np.ndarray] = None,
     compression=None,
     init_state: Optional[dict] = None,
+    extra_datasets: Optional[dict] = None,
 ):
     """Write one episode's data to an HDF5 file and camera videos."""
     os.makedirs(episode_dir, exist_ok=True)
@@ -116,6 +117,10 @@ def _write_episode_data(
                         grp.create_dataset(key, data=np.array(value, dtype="float32"))
                     except Exception as exc:
                         logger.error(f"Failed to serialize init_state key '{key}': {exc}")
+
+        if extra_datasets:
+            for key, value in extra_datasets.items():
+                h5_file.create_dataset(key, data=np.asarray(value))
 
     for camera_name, image_data in camera_data.items():
         if image_data.ndim != 4:
@@ -263,6 +268,10 @@ class DataCollector:
                 self.task_instructions.append(language_instruction)
         self.temp_task_indices.append(-1 if task_index is None else int(task_index))
 
+    def _extra_datasets(self) -> Optional[dict]:
+        """Hook for subclasses to append per-episode datasets to the h5 file."""
+        return None
+
     def write_cached_data(self, final_joint_positions=None):
         """Write cached data asynchronously using process pool."""
         if self.episode_count >= self.max_episodes:
@@ -302,6 +311,7 @@ class DataCollector:
             task_index_data,
             self.compression,
             self.temp_init_state,
+            self._extra_datasets(),
         )
         self.pending_futures.append(future)
 
