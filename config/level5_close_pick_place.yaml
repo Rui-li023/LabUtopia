@@ -1,7 +1,7 @@
-name: level5_far_transport_pour
+name: level5_close_pick_place
 
-task_type: "mobile_transport_pour"
-controller_type: "mobile_transport_pour"
+task_type: "mobile_transport_place"
+controller_type: "mobile_transport_place"
 
 mode: "collect"  # "collect", "infer", or "replay"
 usd_path: "assets/navigation_lab/navigation_lab_01/lab.usd"
@@ -25,47 +25,41 @@ infer:
   max_retries: 3
 
 task:
-  max_steps: 6000
+  max_steps: 3000
   navigation_config_path: "config/navigation/navigation_assets.yaml"
   pick_object_path: "/World/beaker"
   object_position_range:
-    # tuned: mirrors level5_close_pick_pour (the far variant docks in front of
-    # the pour target for the pour, so only the pick shares this range).
-    x: [-2.90, -2.70]
-    y: [0.62, 0.68]
+    x: [-3.3, -2.9]
+    y: [0.55, 0.68]
     z: [0.80, 0.80]
   dock_standoff: 0.75            # tuned: 0.85 left the arm at its reach limit
                                  # (~0.018 m grasp undershoot → beaker shoved out)
   spawn:
-    mode: "far"
-    min_path_length: 4.0
-  # tuned: mirrors level5_close_pick_pour — a top-down grasp [0,180,0] puts
-  # the beaker axis on wrist joint 7, so the pour ramp can only yaw-spin it
-  # (no real tilt, gate's return never satisfied). The [0,90,30] side grasp
-  # (horizontal finger line) matches the proven L2 pick_pour pour family.
-  grasp_ee_euler_deg: [0, 90, 30]
-  pour_ee_euler_deg: [0, 90, 15]
-  # tuned grip strategy: mirrors level5_close_pick_pour — pick at the table
-  # default 0.022; tighter grips and the pour-entry re-squeeze all regressed
-  # (see the close yaml for the measured comparison). pour_regrip_distance
-  # stays available in the controller but is intentionally NOT set.
-  pour_target:
-    prim_path: "/World/target_beaker"
+    mode: "near"
+    distance_range: [1.0, 2.0]
+  grasp_ee_euler_deg: [0, 180, 0]  # tuned: top-down (fingers horizontal). The
+                                   # default [-90,90,30] is a side grasp with a
+                                   # vertical finger-line, which cannot straddle
+                                   # a beaker standing on the bench.
+  place_target:
+    prim_path: "/World/target_plat"
     usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
-    source_prim_path: "/World/beaker1"
+    source_prim_path: "/World/target_plat"
     position_range:
-      x: [4.3, 5.3]
-      y: [0.60, 0.72]
-      z: [0.79, 0.79]
-    carry_navigation: true
+      # Same-bench: the plat sits 0.3-1.1 m from the source beaker; the close
+      # variant docks at the source/plat midpoint so both are Franka-reachable.
+      x: [-2.6, -2.2]
+      y: [0.55, 0.68]
+      z: [0.776, 0.776]         # tuned so the plat rests ON the 0.76 bench top
+    carry_navigation: false
   max_linear_speed: 0.04
   max_angular_speed: 1.5
   position_threshold: 0.08
-  angle_threshold: 0.1
+  angle_threshold: 0.05          # tuned: 0.1 parked the base ~5.7 deg off square
 
 cameras:
   - prim_path: "/World/Ridgebase/base_link/Camera"
-    name: "front_camera"
+    name: "top_camera"          # 3 m overhead view (prim was misnamed front_camera)
     resolution: [256, 256]
     image_type: "rgb"
 
@@ -76,7 +70,7 @@ cameras:
     image_type: "rgb"
 
   - prim_path: "/World/Ridgebase/base_link/Camera_01"
-    name: "top_camera"
+    name: "front_camera"        # over-shoulder forward view (prim was misnamed top_camera)
     resolution: [256, 256]
     image_type: "rgb"
 

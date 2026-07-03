@@ -44,11 +44,11 @@ task:
   max_linear_speed: 0.04
   max_angular_speed: 1.5
   position_threshold: 0.08
-  angle_threshold: 0.1
+  angle_threshold: 0.05          # tuned: 0.1 parked the base ~5.7 deg off square
 
 cameras:
   - prim_path: "/World/Ridgebase/base_link/Camera"
-    name: "front_camera"
+    name: "top_camera"          # 3 m overhead view (prim was misnamed front_camera)
     resolution: [256, 256]
     image_type: "rgb"
 
@@ -59,7 +59,7 @@ cameras:
     image_type: "rgb"
 
   - prim_path: "/World/Ridgebase/base_link/Camera_01"
-    name: "top_camera"
+    name: "front_camera"        # over-shoulder forward view (prim was misnamed top_camera)
     resolution: [256, 256]
     image_type: "rgb"
 

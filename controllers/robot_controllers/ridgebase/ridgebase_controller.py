@@ -77,9 +77,13 @@ class RidgebaseController:
                 return self.compute_control(current_pose)
 
         speed = min(distance * 0.2, self.max_linear_speed)
+        # Face-forward driving: shrink translation while the heading is off the
+        # travel direction (rotate first, then drive). cos-scaling, floored at
+        # 0 beyond 90 deg error, so the base never crabs sideways/backward.
+        speed *= max(0.0, np.cos(angle_diff))
         x_vel = speed * np.cos(target_angle)
         y_vel = speed * np.sin(target_angle)
-        
+
         theta_vel = self.k_p_angular * angle_diff
         
         return x_vel, y_vel, theta_vel, angle_diff

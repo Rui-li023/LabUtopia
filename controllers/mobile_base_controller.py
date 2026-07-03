@@ -14,7 +14,7 @@ from .robot_controllers.ridgebase.ridgebase_controller import RidgebaseControlle
 PHASE_NAVIGATE = 0
 PHASE_PICK = 1
 PHASE_CARRY_NAVIGATE = 2
-PHASE_POUR = 3
+PHASE_PLACE = 3
 
 # Physical per-finger travel limit (m). The gripper channel is normalized
 # against GRIPPER_MAX_OPEN (0.05) everywhere in this repo — the exact inverse
