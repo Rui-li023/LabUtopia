@@ -29,7 +29,7 @@ task:
   navigation_config_path: "config/navigation/navigation_assets.yaml"
   pick_object_path: "/World/beaker"
   object_position_range:
-    x: [-3.3, -2.9]
+    x: [-3.2, -3.0]                # tightened (Task 9B): narrows lateral reach
     y: [0.55, 0.68]
     z: [0.80, 0.80]
   dock_standoff: 0.75            # tuned: 0.85 left the arm at its reach limit
@@ -48,7 +48,7 @@ task:
     position_range:
       # Same-bench: the plat sits 0.3-1.1 m from the source beaker; the close
       # variant docks at the source/plat midpoint so both are Franka-reachable.
-      x: [-2.6, -2.2]
+      x: [-2.7, -2.5]           # tightened (Task 9B): keeps plat in Franka reach
       y: [0.55, 0.68]
       z: [0.776, 0.776]         # tuned so the plat rests ON the 0.76 bench top
     carry_navigation: false

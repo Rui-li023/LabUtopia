@@ -5,6 +5,12 @@ from isaacsim.core.prims.impl import Articulation
 from isaacsim.core.utils.types import ArticulationAction
 
 class RidgebaseController:
+    # Heading error (rad) below which the base is allowed to translate. Beyond
+    # this the base turns in place: plain cos-scaling still let it creep at
+    # ~cos(85 deg)=0.09 of full speed while slowly rotating, and on short paths
+    # that creep dominated the recorded nav motion (mean heading err ~45 deg).
+    ALIGN_DEADBAND = np.radians(35.0)
+
     def __init__(
         self,
         robot_articulation: Articulation,
@@ -36,7 +42,18 @@ class RidgebaseController:
     def set_waypoints(self, waypoints: List[Tuple[float, float, float]], final_angle: Optional[float] = None) -> None:
         self.waypoints = np.array(waypoints)
         self.current_waypoint_idx = 0
-        self.final_angle = final_angle  
+        self.final_angle = final_angle
+
+    @staticmethod
+    def _wrap_to_pi(angle: float) -> float:
+        """Wrap an angle to (-pi, pi] so any rotation is pursued the SHORT way.
+
+        The base heading fed in here is ``spawn_euler + revolute_joint``; the
+        revolute joint is an unwrapped accumulator that reaches several turns
+        over a long A* path. Wrapping it before taking angle differences keeps
+        every rotation target (travel bearing AND final dock angle) shortest-path.
+        """
+        return (angle + np.pi) % (2 * np.pi) - np.pi
 
     def compute_control(self, current_pose: np.ndarray) -> Tuple[float, float, float]:
         if self.waypoints is None or self.current_waypoint_idx >= len(self.waypoints):
@@ -46,46 +63,56 @@ class RidgebaseController:
         current_pose[0] += joint_positions[0]
         current_pose[1] += joint_positions[1]
         current_pose[2] += joint_positions[2]
-        
+        heading = self._wrap_to_pi(current_pose[2])
+
         dx = target[0] - current_pose[0]
         dy = target[1] - current_pose[1]
         distance = np.sqrt(dx**2 + dy**2)
-        
-        target_angle = np.arctan2(dy, dx)
-        angle_diff = (target_angle - current_pose[2]) % (2 * np.pi)
-        if angle_diff > np.pi:
-            angle_diff -= 2 * np.pi
-        elif angle_diff < -np.pi:
-            angle_diff += 2 * np.pi
 
         if distance < self.position_threshold:
             if self.current_waypoint_idx == len(self.waypoints) - 1:
-                if self.final_angle is not None:
-                    final_angle_diff = (self.final_angle - current_pose[2]) % (2 * np.pi)
-                    if final_angle_diff > np.pi:
-                        final_angle_diff -= 2 * np.pi
-                else:
-                    final_angle_diff = (target[2] - current_pose[2]) % (2 * np.pi)
-                    if final_angle_diff > np.pi:
-                        final_angle_diff -= 2 * np.pi
-                
+                final_target = self.final_angle if self.final_angle is not None else target[2]
+                final_angle_diff = self._wrap_to_pi(final_target - heading)
                 if abs(final_angle_diff) < self.angle_threshold:
                     return 0.0, 0.0, 0.0, final_angle_diff
-                return 0.0, 0.0, self.k_p_angular * final_angle_diff, final_angle_diff
+                # Clip here too (not only in get_action) so all branches return a
+                # consistently bounded theta_vel.
+                theta_vel = np.clip(self.k_p_angular * final_angle_diff,
+                                    -self.max_angular_speed, self.max_angular_speed)
+                return 0.0, 0.0, theta_vel, final_angle_diff
             else:
                 self.current_waypoint_idx += 1
                 return self.compute_control(current_pose)
 
-        speed = min(distance * 0.2, self.max_linear_speed)
-        # Face-forward driving: shrink translation while the heading is off the
-        # travel direction (rotate first, then drive). cos-scaling, floored at
-        # 0 beyond 90 deg error, so the base never crabs sideways/backward.
-        speed *= max(0.0, np.cos(angle_diff))
-        x_vel = speed * np.cos(target_angle)
-        y_vel = speed * np.sin(target_angle)
+        # Steering heading. The live bearing to the current waypoint swings wildly
+        # as the base passes close beside it (tight A* spacing on short paths),
+        # so the heading chases a spinning target and the base crabs. Within
+        # ~1.5x the position threshold, steer by the waypoint's stored segment
+        # bearing (points toward the NEXT waypoint) so the heading stays stable
+        # through the corner and can actually align with the travel direction.
+        live_bearing = np.arctan2(dy, dx)
+        heading_target = float(target[2]) if distance < 1.5 * self.position_threshold else live_bearing
+        angle_diff = self._wrap_to_pi(heading_target - heading)
 
-        theta_vel = self.k_p_angular * angle_diff
-        
+        speed = min(distance * 0.2, self.max_linear_speed)
+        # Face-forward driving: turn (nearly) in place until the heading is within
+        # ALIGN_DEADBAND of the travel direction, then cos-scale. The hard gate
+        # kills the sideways creep that plain cos-scaling left during the slow
+        # in-place turn; cos-scaling then still floors translation at 0 beyond
+        # 90 deg so the base never crabs sideways/backward.
+        if abs(angle_diff) > self.ALIGN_DEADBAND:
+            speed = 0.0
+        else:
+            speed *= max(0.0, np.cos(angle_diff))
+        # Translation still homes on the actual waypoint (live bearing) so
+        # position tracking/convergence is unchanged; only the heading target is
+        # stabilized. Near the waypoint distance (hence speed) is tiny, so the
+        # residual live/segment mismatch moves the base negligibly.
+        x_vel = speed * np.cos(live_bearing)
+        y_vel = speed * np.sin(live_bearing)
+        theta_vel = np.clip(self.k_p_angular * angle_diff,
+                            -self.max_angular_speed, self.max_angular_speed)
+
         return x_vel, y_vel, theta_vel, angle_diff
 
     def get_action(self, current_pose: np.ndarray) -> Tuple[Optional[ArticulationAction], bool]:
