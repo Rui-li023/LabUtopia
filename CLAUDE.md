@@ -75,6 +75,10 @@ def _check_success(self) -> bool: ...
 ```
 
 - `_step_replay` is fully implemented in `BaseController` — subclasses do NOT override it.
+  **Exception:** Level-5 mobile controllers (`MobileManipControllerBase` subclasses) override it,
+  because recorded actions are 11-dim (base x/y/θ + 7 arm + gripper) and are applied directly
+  as per-frame position commands on all 12 Ridgebase DOFs instead of via the Franka
+  trajectory controller.
 - `self.state` is set by `BaseController.step()` before dispatching — subclasses can use it freely.
 - Success is tracked via `check_success_counter >= REQUIRED_SUCCESS_STEPS` (default 60).
 - `_last_failure_reason` is always `str` (use `""` for no failure, never `None`).
@@ -136,7 +140,7 @@ robot:
   type: "franka"                # franka | ridgebase
 
 collector:
-  type: "default"               # default | mock | action_state
+  type: "default"               # default | mock | action_state | mobile
   compression: gzip
 
 infer:
@@ -156,7 +160,7 @@ replay:
 | L2 | Multi-step composed | HeatLiquid, PourLiquid, ShakeBeaker |
 | L3 | Generalization (OOD materials/objects) | Same as L1/L2 with `test_materials` |
 | L4 | Long-horizon sequences | CleanBeaker, DeviceOperation, LiquidMixing |
-| L5 | Mobile manipulation | Navigation, MobilePickPlace |
+| L5 | Mobile manipulation | close_pick, close_pick_place, far_pick, far_transport_place |
 
 ## Running Tasks
 

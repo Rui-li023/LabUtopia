@@ -39,12 +39,17 @@ class MobileTransportPlaceController(MobileManipControllerBase):
     DROP_MARGIN = 0.04          # carry-phase drop guard above the initial height
     PLACE_XY_THRESHOLD = 0.05   # planar tolerance to the platform center
     SETTLE_Z = 0.06             # beaker z back near its resting height
+    RELEASE_CLOSEDNESS = 0.45   # measured closedness below this = gripper released
+                                # (beaker-grip ~0.56, fully open ~0.30)
+    PLACE_SETTLE_BUDGET = 120   # frames the beaker may settle after the place
+                                # motion completes before the episode fails
 
     def __init__(self, cfg: Any, robot: Any) -> None:
         super().__init__(cfg, robot)
         self.current_phase = Phase.NAV_A
         self.initial_object_z: Optional[float] = None
         self.carry_waypoints_set = False
+        self._place_settle_frames = 0
         self._plat_logged = False
         grasp_euler = getattr(cfg.task, "grasp_ee_euler_deg", [-90, 90, 30])
         self._grasp_orientation = R.from_euler(
@@ -72,6 +77,7 @@ class MobileTransportPlaceController(MobileManipControllerBase):
         self.current_phase = Phase.NAV_A
         self.initial_object_z = None
         self.carry_waypoints_set = False
+        self._place_settle_frames = 0
         if self.mode == "collect":
             self.pick_controller.reset()
             self.place_controller.reset()
@@ -84,11 +90,19 @@ class MobileTransportPlaceController(MobileManipControllerBase):
         return self._place_gate_satisfied()
 
     def _place_gate_satisfied(self) -> bool:
-        """Position-based place gate, evaluated statefully across steps."""
+        """Position-based place gate, evaluated statefully across steps.
+
+        Requires the gripper to have RELEASED the beaker: without this the
+        gate fires while the beaker is still held mid-descent, ending collect
+        episodes before the release/retreat motion is recorded (and making
+        replay flaky on the borderline hover height).
+        """
         obj = self.state.get("object_position")
         init = self.state.get("initial_object_position")
         target = self.state.get("place_target_position")
         if obj is None or init is None or target is None:
+            return False
+        if self._gripper_closedness() > self.RELEASE_CLOSEDNESS:
             return False
         xy_dist = float(np.linalg.norm(np.asarray(obj[:2]) - np.asarray(target[:2])))
         if xy_dist > self.PLACE_XY_THRESHOLD:
@@ -197,15 +211,6 @@ class MobileTransportPlaceController(MobileManipControllerBase):
                         f"beaker rest z = {self.initial_object_z}")
             self._plat_logged = True
 
-        if self._place_gate_satisfied():
-            self._last_failure_reason = ""
-            logger.success("Place gate satisfied — episode success")
-            self.data_collector.write_cached_data()
-            self._last_success = True
-            self.current_phase = Phase.FINISHED
-            self.reset_needed = True
-            return None, True, True
-
         if not self.place_controller.is_done():
             action, record8 = self.place_controller.forward(
                 place_position=np.asarray(state["place_target_position"], dtype=float).copy(),
@@ -217,6 +222,20 @@ class MobileTransportPlaceController(MobileManipControllerBase):
             self._record_step(state, self._arm_record_to_11(record8), PHASE_PLACE)
             return self._remap_arm_action(action), False, False
 
+        # The full place motion (lower -> release -> retreat) is recorded; only
+        # now may the episode succeed, once the freed beaker settles on the plat.
+        if self._place_gate_satisfied():
+            self._last_failure_reason = ""
+            logger.success("Place gate satisfied — episode success")
+            self.data_collector.write_cached_data()
+            self._last_success = True
+            self.current_phase = Phase.FINISHED
+            self.reset_needed = True
+            return None, True, True
+
+        self._place_settle_frames += 1
+        if self._place_settle_frames <= self.PLACE_SETTLE_BUDGET:
+            return None, False, False
         return self._fail("TransportPlace place failed: place controller finished without meeting the gate")
 
     # ── Infer ────────────────────────────────────────────────────────────

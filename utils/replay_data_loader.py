@@ -9,10 +9,12 @@ from loguru import logger
 class EpisodeData:
     """Container for a single replayed episode's data."""
 
-    def __init__(self, episode_idx: int, actions: np.ndarray, init_state: Dict[str, np.ndarray]):
+    def __init__(self, episode_idx: int, actions: np.ndarray, init_state: Dict[str, np.ndarray],
+                 agent_pose: Optional[np.ndarray] = None):
         self.episode_idx = episode_idx
         self.actions = actions          # [T, n_joints]
         self.init_state = init_state    # keys: object_init_position, robot_init_joint_positions, robot_world_position
+        self.agent_pose = agent_pose    # [T, n_joints] measured state at collect time (replay-divergence diagnostics)
 
 
 class ReplayDataLoader:
@@ -93,6 +95,7 @@ class ReplayDataLoader:
                     return None
 
                 actions = f["actions"][:]
+                agent_pose = f["agent_pose"][:] if "agent_pose" in f else None
 
                 init_state: Dict[str, np.ndarray] = {}
                 if "init_state" in f:
@@ -107,7 +110,7 @@ class ReplayDataLoader:
                     logger.warning(f"{h5_path} has no 'init_state' group. "
                                    "Scene will be reset randomly for this episode.")
 
-            return EpisodeData(ep_idx, actions, init_state)
+            return EpisodeData(ep_idx, actions, init_state, agent_pose)
 
         except Exception as e:
             logger.error(f"Error loading {h5_path}: {e}")

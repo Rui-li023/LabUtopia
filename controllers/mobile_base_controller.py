@@ -179,11 +179,31 @@ class MobileManipControllerBase(BaseController):
         return self.all_subset.make_articulation_action(
             joint_positions=positions, joint_velocities=None)
 
+    def _log_replay_divergence(self, k: int) -> None:
+        """Diagnostic: compare the live 11-dim state against the collect-time
+        measured state (``agent_pose[k]``) so replay failures can be localized
+        to a frame/channel instead of only observing the end result."""
+        ep = self._replay_loader.get_episode(self._current_replay_idx)
+        if ep.agent_pose is None or k >= len(ep.agent_pose):
+            return
+        diff = np.abs(self._state11() - np.asarray(ep.agent_pose[k], dtype=np.float32))
+        base_err, arm_err = float(diff[:3].max()), float(diff[3:10].max())
+        first_exceed = (not getattr(self, "_replay_div_warned", False)
+                        and (base_err > 0.03 or arm_err > 0.10))
+        if first_exceed:
+            self._replay_div_warned = True
+        if first_exceed or k % 240 == 0:
+            log = logger.warning if first_exceed else logger.info
+            log(f"[Replay-DIV] frame {k}: base_err={np.round(diff[:3], 4).tolist()} "
+                f"arm_err_max={arm_err:.4f} grip_meas={self._state11()[10]:.4f} "
+                f"grip_rec={float(ep.agent_pose[k][10]):.4f}")
+
     def _step_replay(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
         """Play back recorded 11-dim actions one per frame on all 12 DOFs."""
         action = None
         if (self._current_actions is not None
                 and self._current_action_step < len(self._current_actions)):
+            self._log_replay_divergence(self._current_action_step)
             action = self._apply_action11(self._current_actions[self._current_action_step])
             self._current_action_step += 1
 
@@ -218,3 +238,4 @@ class MobileManipControllerBase(BaseController):
     def reset(self) -> None:
         super().reset()
         self.waypoints_set = False
+        self._replay_div_warned = False
