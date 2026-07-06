@@ -30,9 +30,9 @@ task:
   pick_object_path: "/World/beaker"
   object_position_range:
     x: [-3.5, -1.8]
-    y: [0.55, 0.72]
+    y: [0.55, 0.65]  # y>0.66 puts the dock inside the inflated A* grid (plan fails)
     z: [0.80, 0.80]
-  dock_standoff: 0.75            # tuned: 0.85 left the arm at its reach limit
+  dock_standoff: 0.75            # 0.70 pushed the dock into the inflated obstacle grid (A* end invalid); slip fixed via GRIP_SQUEEZE instead
                                  # (~0.018 m grasp undershoot → beaker shoved out)
   spawn:
     mode: "far"

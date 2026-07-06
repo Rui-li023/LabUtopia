@@ -22,6 +22,14 @@ PHASE_PLACE = 3
 # recorded fully-open value (s ~= 0.2) replays back to exactly 0.04.
 _FINGER_LIMIT = 0.04
 
+# Per-finger inward squeeze (m) applied to the atomic grip-distance table on
+# the MOBILE robot. TESTED AT 0.004 AND IT HURT (close_pick 2/3 -> 1/5): the
+# position drive pressing 4 mm under contact EJECTS the rigid beaker — the
+# same failure the static replay margin test found (trajectory_controller
+# _GRIP_MARGIN: "4 mm ... HURT (flask 81%->52%)"). Contact-width grips are
+# correct; kept as a tuning knob at 0.
+GRIP_SQUEEZE = 0.0
+
 
 class _NullTrajectory:
     """Placeholder so BaseController.reset()'s replay branch stays a no-op."""
@@ -148,6 +156,17 @@ class MobileManipControllerBase(BaseController):
         done = bool(done) or self.ridgebase_controller.is_path_complete()
         return action, done, action11
 
+    def _grip_distance(self, pick_controller: Any, object_name: str) -> float:
+        """Atomic grip-distance table value with the mobile squeeze margin."""
+        return max(0.0, float(pick_controller.get_gripper_distance(object_name)) - GRIP_SQUEEZE)
+
+    def _track_pick_ee(self) -> None:
+        """Track the lowest EE height reached during the pick phase — the
+        discriminator between 'closed in the air above the object' (min_ee_z
+        high) and 'reached grasp depth but the object escaped' (min_ee_z low)."""
+        ee_z = float(self.robot.get_gripper_position()[2])
+        self._pick_min_ee_z = min(getattr(self, "_pick_min_ee_z", 1e9), ee_z)
+
     def _log_pick_fail_diag(self, state: Dict[str, Any]) -> None:
         """On a lift failure, log EE-vs-object geometry to discriminate the
         failure mode: EE far from the object = reach/IK undershoot; EE at the
@@ -159,7 +178,8 @@ class MobileManipControllerBase(BaseController):
                        f"obj={np.round(obj, 3).tolist()} "
                        f"ee_obj_xy={float(np.linalg.norm(ee[:2] - obj[:2])):.3f} "
                        f"obj_drift={np.round(obj - init, 3).tolist()} "
-                       f"closedness={self._gripper_closedness():.2f}")
+                       f"closedness={self._gripper_closedness():.2f} "
+                       f"min_ee_z={getattr(self, '_pick_min_ee_z', float('nan')):.3f}")
 
     def _log_dock_diag(self, state: Dict[str, Any], dock: Any, label: str = "DOCK-DIAG") -> None:
         """Log the parked base pose vs its dock target at a nav-phase end.
@@ -271,3 +291,4 @@ class MobileManipControllerBase(BaseController):
         super().reset()
         self.waypoints_set = False
         self._replay_div_warned = False
+        self._pick_min_ee_z = 1e9

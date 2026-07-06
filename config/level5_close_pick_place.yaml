@@ -32,7 +32,7 @@ task:
     x: [-3.15, -3.0]               # tuned (Task 11): midpoint dock puts the arm
     y: [0.58, 0.65]                # sep/2 laterally off the beaker; keep worst-case
     z: [0.80, 0.80]                # reach sqrt((sep/2)^2 + fwd^2) under ~0.50 m
-  dock_standoff: 0.75            # matches the proven far-variant front docking
+  dock_standoff: 0.75            # 0.70 pushed the dock into the inflated obstacle grid (A* end invalid); slip fixed via GRIP_SQUEEZE instead
   spawn:
     mode: "near"
     distance_range: [1.0, 2.0]

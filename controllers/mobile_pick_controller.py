@@ -83,6 +83,7 @@ class MobilePickController(MobileManipControllerBase):
     def _pick_phase(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
         base_pos = self._sync_arm_base_pose()
         self.pick_controller.set_robot_position(base_pos)
+        self._track_pick_ee()
 
         if not self.pick_controller.is_done():
             object_size = (state["object_size"] if state.get("object_size") is not None
@@ -95,7 +96,7 @@ class MobilePickController(MobileManipControllerBase):
                 gripper_control=self.gripper_control,
                 gripper_position=self.robot.get_gripper_position(),
                 end_effector_orientation=self._grasp_orientation.copy(),
-                gripper_distances=self.pick_controller.get_gripper_distance(state["object_name"]),
+                gripper_distances=self._grip_distance(self.pick_controller, state["object_name"]),
             )
             self._record_step(state, self._arm_record_to_11(record8), PHASE_PICK)
             return self._remap_arm_action(action), False, False
@@ -103,6 +104,7 @@ class MobilePickController(MobileManipControllerBase):
         # Atomic pick finished: evaluate the lift.
         lifted = self._check_success()
         if lifted:
+            logger.info(f"[PICK-OK] min_ee_z={getattr(self, '_pick_min_ee_z', float('nan')):.3f}")
             self._last_failure_reason = ""
             self.data_collector.write_cached_data()
             self._last_success = True

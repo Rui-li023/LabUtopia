@@ -157,6 +157,7 @@ class MobileTransportPlaceController(MobileManipControllerBase):
     def _pick_phase(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
         base_pos = self._sync_arm_base_pose()
         self.pick_controller.set_robot_position(base_pos)
+        self._track_pick_ee()
 
         if not self.pick_controller.is_done():
             object_size = (state["object_size"] if state.get("object_size") is not None
@@ -169,7 +170,7 @@ class MobileTransportPlaceController(MobileManipControllerBase):
                 gripper_control=self.gripper_control,
                 gripper_position=self.robot.get_gripper_position(),
                 end_effector_orientation=self._grasp_orientation.copy(),
-                gripper_distances=self.pick_controller.get_gripper_distance(state["object_name"]),
+                gripper_distances=self._grip_distance(self.pick_controller, state["object_name"]),
             )
             self._record_step(state, self._arm_record_to_11(record8), PHASE_PICK)
             return self._remap_arm_action(action), False, False
@@ -179,6 +180,7 @@ class MobileTransportPlaceController(MobileManipControllerBase):
         if not lifted:
             self._log_pick_fail_diag(state)
             return self._fail("TransportPlace pick failed: object not lifted")
+        logger.info(f"[PICK-OK] min_ee_z={getattr(self, '_pick_min_ee_z', float('nan')):.3f}")
         if state.get("carry_navigation", False):
             logger.info("Pick complete — carry-navigating to bench B")
             self.current_phase = Phase.CARRY_NAV
