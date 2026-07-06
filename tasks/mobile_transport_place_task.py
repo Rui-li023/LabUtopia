@@ -77,8 +77,8 @@ class MobileTransportPlaceTask(MobilePickTask):
     # ── Spawn / path generation ──────────────────────────────────────────
 
     def _generate_navigation_task(self) -> bool:
-        # The plat must be placed before dock computation: the same-bench
-        # variant docks at the midpoint of source and plat.
+        # Place the plat before dock computation so its dock point can be
+        # derived from the plat's randomized position in the same reset.
         self.randomize_object_position(self.place_target_path, self.place_target_position_range)
         return super()._generate_navigation_task()
 
@@ -93,6 +93,9 @@ class MobileTransportPlaceTask(MobilePickTask):
             return dock
         if self.carry_navigation:
             return dock
+        # Fallback for a hypothetical same-bench (non-carry) variant: dock at
+        # the source/plat midpoint. Both shipped place configs carry-navigate,
+        # so this is not currently exercised.
         plat = self.object_utils.get_object_xform_position(object_path=self.place_target_path)
         return [(dock[0] + float(plat[0])) / 2.0, dock[1]]
 
