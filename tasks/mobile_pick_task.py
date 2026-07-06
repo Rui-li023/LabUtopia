@@ -20,7 +20,13 @@ class MobilePickTask(NavigationBaseTask):
     ``[obj_x, obj_y - dock_standoff]``, facing the bench (+y, theta = pi/2).
     """
 
-    FINAL_NAV_ANGLE = np.pi / 2  # benches face -y; dock faces +y
+    # Benches face -y; the dock faces +y. Biased 2.5 deg BELOW square: across
+    # all docking samples (close/far pick + transport-place, n=14) grasps at
+    # 87.x deg succeeded 5/5 while 92.x deg failed 6/7 — at the 0.75 m reach
+    # limit the arm-base offset makes the undershoot side reachable and the
+    # overshoot side not. Paired with angle_threshold 0.02 the base parks at
+    # 86.4-88.6 deg, inside the proven band.
+    FINAL_NAV_ANGLE = np.pi / 2 - 0.044
 
     def __init__(self, cfg: Any, world: Any, stage: Any, robot: Any) -> None:
         self.target_object_path: Optional[str] = None
@@ -66,9 +72,18 @@ class MobilePickTask(NavigationBaseTask):
 
     # ── Spawn / path generation ──────────────────────────────────────────
 
+    # Dock x-offset relative to the target object. Empirical (n=15 docking
+    # samples across close/far pick and transport-place): grasps succeed 5/6
+    # when the base parks 3-10 cm to the object's -x side (object on the arm's
+    # RIGHT) and fail 7/7 when parked on the +x side — at the ~0.75 m reach
+    # limit the RMP arm configuration is not left/right symmetric. Biasing the
+    # dock by -0.08 keeps the whole position_threshold circle inside the
+    # validated band.
+    DOCK_X_OFFSET = -0.08
+
     def _compute_dock_point(self, object_path: str) -> list:
         obj = self.object_utils.get_object_xform_position(object_path=object_path)
-        return [float(obj[0]), float(obj[1]) - self.dock_standoff]
+        return [float(obj[0]) + self.DOCK_X_OFFSET, float(obj[1]) - self.dock_standoff]
 
     def _sample_spawn(self, nav_scene: dict) -> Optional[list]:
         if self.spawn_mode == "near":

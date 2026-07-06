@@ -32,8 +32,7 @@ task:
     x: [-3.15, -3.0]               # tuned (Task 11): midpoint dock puts the arm
     y: [0.58, 0.65]                # sep/2 laterally off the beaker; keep worst-case
     z: [0.80, 0.80]                # reach sqrt((sep/2)^2 + fwd^2) under ~0.50 m
-  dock_standoff: 0.70            # tuned (Task 11): 0.75 + midpoint lateral offset
-                                 # exceeded the top-down grasp envelope (pick 1/9)
+  dock_standoff: 0.75            # matches the proven far-variant front docking
   spawn:
     mode: "near"
     distance_range: [1.0, 2.0]
@@ -46,16 +45,20 @@ task:
     usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
     source_prim_path: "/World/target_plat"
     position_range:
-      # Same-bench: the plat sits 0.3-1.1 m from the source beaker; the close
-      # variant docks at the source/plat midpoint so both are Franka-reachable.
-      x: [-2.7, -2.6]           # tuned (Task 11): source-plat separation 0.30-0.55 m
+      # Same-bench: the plat sits 0.3-0.55 m from the source beaker.
+      x: [-2.7, -2.6]
       y: [0.58, 0.65]           # matches source y so the plat stays in reach too
       z: [0.776, 0.776]         # tuned so the plat rests ON the 0.76 bench top
-    carry_navigation: false
+    # Short base shuffle between pick and place. A single midpoint dock put
+    # BOTH the source (grasp) and the plat (place) at the edge of the Franka
+    # reach envelope (pick ~1/9, place misses); docking in front of each and
+    # shuffling sideways keeps every manipulation well inside reach — the
+    # same proven flow as the far variant, just with a ~0.4 m carry hop.
+    carry_navigation: true
   max_linear_speed: 0.04
   max_angular_speed: 1.5
   position_threshold: 0.05        # tightened: exact dock endpoint appended to the A* path
-  angle_threshold: 0.05          # tuned: 0.1 parked the base ~5.7 deg off square
+  angle_threshold: 0.02          # tight final alignment (see FINAL_NAV_ANGLE bias)
 
 cameras:
   - prim_path: "/World/Ridgebase/base_link/Camera"

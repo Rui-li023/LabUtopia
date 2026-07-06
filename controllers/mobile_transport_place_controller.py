@@ -149,6 +149,7 @@ class MobileTransportPlaceController(MobileManipControllerBase):
         action, nav_done, action11 = self._nav_step(state)
         self._record_step(state, action11, PHASE_NAVIGATE)
         if nav_done:
+            self._log_dock_diag(state, state["dock_point"], label="DOCK-A")
             logger.info("Navigation to bench A complete — starting pick")
             self.current_phase = Phase.PICKING
         return action, False, False
@@ -176,6 +177,7 @@ class MobileTransportPlaceController(MobileManipControllerBase):
         lifted = (self.initial_object_z is not None
                   and float(state["object_position"][2]) - self.initial_object_z > self.LIFT_THRESHOLD)
         if not lifted:
+            self._log_pick_fail_diag(state)
             return self._fail("TransportPlace pick failed: object not lifted")
         if state.get("carry_navigation", False):
             logger.info("Pick complete — carry-navigating to bench B")
@@ -199,6 +201,7 @@ class MobileTransportPlaceController(MobileManipControllerBase):
         action, nav_done, action11 = self._nav_step(state)
         self._record_step(state, action11, PHASE_CARRY_NAVIGATE)
         if nav_done:
+            self._log_dock_diag(state, state["place_dock"], label="DOCK-B")
             logger.info("Carry navigation complete — starting place")
             self.current_phase = Phase.PLACING
         return action, False, False

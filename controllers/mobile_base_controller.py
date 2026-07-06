@@ -148,6 +148,38 @@ class MobileManipControllerBase(BaseController):
         done = bool(done) or self.ridgebase_controller.is_path_complete()
         return action, done, action11
 
+    def _log_pick_fail_diag(self, state: Dict[str, Any]) -> None:
+        """On a lift failure, log EE-vs-object geometry to discriminate the
+        failure mode: EE far from the object = reach/IK undershoot; EE at the
+        object with drift = knocked it over; EE at a still object = grip slip."""
+        ee = np.asarray(self.robot.get_gripper_position(), dtype=float)
+        obj = np.asarray(state["object_position"], dtype=float)
+        init = np.asarray(state.get("initial_object_position", obj), dtype=float)
+        logger.warning(f"[PICK-FAIL-DIAG] ee={np.round(ee, 3).tolist()} "
+                       f"obj={np.round(obj, 3).tolist()} "
+                       f"ee_obj_xy={float(np.linalg.norm(ee[:2] - obj[:2])):.3f} "
+                       f"obj_drift={np.round(obj - init, 3).tolist()} "
+                       f"closedness={self._gripper_closedness():.2f}")
+
+    def _log_dock_diag(self, state: Dict[str, Any], dock: Any, label: str = "DOCK-DIAG") -> None:
+        """Log the parked base pose vs its dock target at a nav-phase end.
+
+        Docking error correlates directly with grasp/place success (the arm
+        works at the edge of its reach envelope), so every nav completion
+        reports it.
+        """
+        base = self._state11()
+        pose = np.asarray(state["current_pose"], dtype=float)
+        world_xy = pose[:2] + base[:2]
+        heading = float((pose[2] + base[2] + np.pi) % (2 * np.pi) - np.pi)
+        dock = np.asarray(dock, dtype=float)
+        obj = np.asarray(state["object_position"], dtype=float)
+        logger.info(f"[{label}] parked at {np.round(world_xy, 3).tolist()} "
+                    f"heading={np.degrees(heading):.1f}deg "
+                    f"dock_err={np.round(world_xy - dock[:2], 3).tolist()} "
+                    f"obj={np.round(obj, 3).tolist()} "
+                    f"reach_xy={float(np.linalg.norm(obj[:2] - world_xy)):.3f}")
+
     # ── Arm-phase helpers ────────────────────────────────────────────────
 
     def _sync_arm_base_pose(self) -> np.ndarray:

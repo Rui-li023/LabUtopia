@@ -44,7 +44,7 @@ task:
   max_linear_speed: 0.04
   max_angular_speed: 1.5
   position_threshold: 0.05        # tightened: exact dock endpoint appended to the A* path
-  angle_threshold: 0.05          # tuned: 0.1 parked the base ~5.7 deg off square
+  angle_threshold: 0.02          # tight final alignment (see FINAL_NAV_ANGLE bias)
 
 cameras:
   - prim_path: "/World/Ridgebase/base_link/Camera"
