@@ -55,6 +55,10 @@ task:
     # shuffling sideways keeps every manipulation well inside reach — the
     # same proven flow as the far variant, just with a ~0.4 m carry hop.
     carry_navigation: true
+  place_ee_euler_deg: [-110, 90, 0]  # static place [0,90,20] rotated to the -y
+                                     # dock frame, matching the side grasp (the
+                                     # +x-frame default yawed the held beaker 90
+                                     # deg mid-place and missed the plat)
   max_linear_speed: 0.04
   max_angular_speed: 1.5
   position_threshold: 0.05        # tightened: exact dock endpoint appended to the A* path
