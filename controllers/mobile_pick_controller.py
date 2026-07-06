@@ -75,6 +75,17 @@ class MobilePickController(MobileManipControllerBase):
         action, nav_done, action11 = self._nav_step(state)
         self._record_step(state, action11, PHASE_NAVIGATE)
         if nav_done:
+            base = self._state11()
+            pose = np.asarray(state["current_pose"], dtype=float)
+            world_xy = pose[:2] + base[:2]
+            heading = float((pose[2] + base[2] + np.pi) % (2 * np.pi) - np.pi)
+            dock = np.asarray(state["dock_point"], dtype=float)
+            obj = np.asarray(state["object_position"], dtype=float)
+            logger.info(f"[DOCK-DIAG] parked at {np.round(world_xy, 3).tolist()} "
+                        f"heading={np.degrees(heading):.1f}deg "
+                        f"dock_err={np.round(world_xy - dock, 3).tolist()} "
+                        f"obj={np.round(obj, 3).tolist()} "
+                        f"reach_xy={float(np.linalg.norm(obj[:2] - world_xy)):.3f}")
             logger.info("Navigation complete — starting pick phase")
             self.navigation_done = True
         return action, False, False

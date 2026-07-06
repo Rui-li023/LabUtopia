@@ -117,7 +117,18 @@ class NavigationBaseTask(BaseTask):
         if path_result is None:
             return None
         merged_path_real, _ = path_result
-        return self._build_waypoints(merged_path_real)
+        waypoints = self._build_waypoints(merged_path_real)
+        # A* quantizes the endpoint to a grid cell (up to ~a cell away from the
+        # requested dock point). Append the EXACT endpoint so the base parks on
+        # the dock itself; the docking error then reduces to position_threshold.
+        if waypoints:
+            dx = float(end[0]) - waypoints[-1][0]
+            dy = float(end[1]) - waypoints[-1][1]
+            if dx * dx + dy * dy > 1e-6:
+                theta = float(np.arctan2(dy, dx))
+                waypoints[-1][2] = theta
+                waypoints.append([float(end[0]), float(end[1]), theta])
+        return waypoints
 
     # -------------------------------------------------------------------------
     # Common step state

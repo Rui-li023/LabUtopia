@@ -4,12 +4,30 @@ from isaacsim.core.api.articulations import ArticulationSubset
 from isaacsim.core.prims.impl import Articulation
 from isaacsim.core.utils.types import ArticulationAction
 
+
 class RidgebaseController:
-    # Heading error (rad) below which the base is allowed to translate. Beyond
-    # this the base turns in place: plain cos-scaling still let it creep at
-    # ~cos(85 deg)=0.09 of full speed while slowly rotating, and on short paths
-    # that creep dominated the recorded nav motion (mean heading err ~45 deg).
-    ALIGN_DEADBAND = np.radians(35.0)
+    """Holonomic-base waypoint follower with pure-pursuit smoothing.
+
+    The raw A* path has one waypoint per grid cell (8-connected, so segment
+    bearings zigzag in 45-degree steps). Chasing each waypoint individually
+    made the base alternate between rotating and translating at every cell.
+    Instead the controller steers at a LOOKAHEAD-distance carrot point along
+    the path, blends rotation and translation continuously (cos^2 of the
+    heading error), and decelerates against the remaining path length rather
+    than each intermediate waypoint — one smooth turn-while-driving motion.
+    """
+
+    # Pure-pursuit lookahead distance (m) along the remaining path. Large
+    # enough to average out the 45-degree grid zigzag, small enough to track
+    # the path through door-sized gaps (obstacles are inflated by the robot
+    # radius, so a small corner cut is safe).
+    LOOKAHEAD = 0.5
+
+    # Heading error (rad) beyond which the base turns fully in place (initial
+    # alignment / U-turns). Below it, translation blends in as cos^2(err), so
+    # path-following corrections never stall the base the way the previous
+    # hard 35-degree gate did.
+    HARD_ALIGN = np.radians(60.0)
 
     def __init__(
         self,
@@ -19,30 +37,45 @@ class RidgebaseController:
         position_threshold: float = 0.1,
         angle_threshold: float = 0.1,
         dt: float = 0.01,
-        final_angle: float = None  
+        final_angle: float = None
     ):
         self.max_linear_speed = max_linear_speed
         self.max_angular_speed = max_angular_speed
         self.position_threshold = position_threshold
         self.angle_threshold = angle_threshold
         self.dt = 0.02
-        self.final_angle = final_angle  
+        self.final_angle = final_angle
 
         self.k_p_linear = 1
         self.k_p_angular = 4
-        
+
         self.waypoints = None
         self.current_waypoint_idx = 0
-        
+        self._remaining_from = None
+        # True only while the base is inside position_threshold of the final
+        # waypoint (the rotate-to-final-angle stage). The done-check must gate
+        # on this: with lookahead advancing, current_waypoint_idx reaches the
+        # last index while the base is still ~LOOKAHEAD away.
+        self._docked = False
+
         self._joints_subset = ArticulationSubset(
             robot_articulation,
             ["dummy_base_prismatic_x_joint", "dummy_base_prismatic_y_joint", "dummy_base_revolute_z_joint"]
         )
 
     def set_waypoints(self, waypoints: List[Tuple[float, float, float]], final_angle: Optional[float] = None) -> None:
-        self.waypoints = np.array(waypoints)
+        self.waypoints = np.array(waypoints, dtype=float)
         self.current_waypoint_idx = 0
         self.final_angle = final_angle
+        self._docked = False
+        # remaining_from[i] = path length from waypoint i to the last waypoint,
+        # used to decelerate against the DOCK instead of each grid cell.
+        pts = self.waypoints[:, :2]
+        if len(pts) > 1:
+            seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+            self._remaining_from = np.concatenate([np.cumsum(seg[::-1])[::-1], [0.0]])
+        else:
+            self._remaining_from = np.zeros(1)
 
     @staticmethod
     def _wrap_to_pi(angle: float) -> float:
@@ -55,61 +88,84 @@ class RidgebaseController:
         """
         return (angle + np.pi) % (2 * np.pi) - np.pi
 
-    def compute_control(self, current_pose: np.ndarray) -> Tuple[float, float, float]:
+    def _lookahead_point(self, base_xy: np.ndarray) -> np.ndarray:
+        """Carrot point LOOKAHEAD meters ahead of the base along the path."""
+        remaining = self.LOOKAHEAD
+        prev = base_xy
+        for i in range(self.current_waypoint_idx, len(self.waypoints)):
+            wp = self.waypoints[i][:2]
+            seg = wp - prev
+            length = float(np.linalg.norm(seg))
+            if length > 1e-9:
+                if length >= remaining:
+                    return prev + seg * (remaining / length)
+                remaining -= length
+            prev = wp
+        return self.waypoints[-1][:2].copy()
+
+    def compute_control(self, current_pose: np.ndarray) -> Tuple[float, float, float, float]:
         if self.waypoints is None or self.current_waypoint_idx >= len(self.waypoints):
             return 0.0, 0.0, 0.0, 0.0
         joint_positions = self._joints_subset.get_joint_positions()
-        target = self.waypoints[self.current_waypoint_idx]
-        current_pose[0] += joint_positions[0]
-        current_pose[1] += joint_positions[1]
-        current_pose[2] += joint_positions[2]
-        heading = self._wrap_to_pi(current_pose[2])
+        # Work on a copy: the caller's pose must not accumulate joint offsets.
+        pose = np.asarray(current_pose, dtype=float).copy()
+        pose[0] += joint_positions[0]
+        pose[1] += joint_positions[1]
+        pose[2] += joint_positions[2]
+        heading = self._wrap_to_pi(pose[2])
+        base_xy = pose[:2]
 
-        dx = target[0] - current_pose[0]
-        dy = target[1] - current_pose[1]
-        distance = np.sqrt(dx**2 + dy**2)
+        # Consume every waypoint already inside the lookahead circle (raw A*
+        # paths have one waypoint per grid cell; hopping them one position
+        # threshold at a time caused per-cell stop-and-go).
+        last = len(self.waypoints) - 1
+        while (self.current_waypoint_idx < last
+               and np.linalg.norm(self.waypoints[self.current_waypoint_idx][:2] - base_xy) < self.LOOKAHEAD):
+            self.current_waypoint_idx += 1
+        idx = self.current_waypoint_idx
+        target = self.waypoints[idx]
 
-        if distance < self.position_threshold:
-            if self.current_waypoint_idx == len(self.waypoints) - 1:
-                final_target = self.final_angle if self.final_angle is not None else target[2]
-                final_angle_diff = self._wrap_to_pi(final_target - heading)
-                if abs(final_angle_diff) < self.angle_threshold:
-                    return 0.0, 0.0, 0.0, final_angle_diff
-                # Clip here too (not only in get_action) so all branches return a
-                # consistently bounded theta_vel.
-                theta_vel = np.clip(self.k_p_angular * final_angle_diff,
-                                    -self.max_angular_speed, self.max_angular_speed)
-                return 0.0, 0.0, theta_vel, final_angle_diff
-            else:
-                self.current_waypoint_idx += 1
-                return self.compute_control(current_pose)
+        dx = target[0] - base_xy[0]
+        dy = target[1] - base_xy[1]
+        distance = float(np.hypot(dx, dy))
 
-        # Steering heading. The live bearing to the current waypoint swings wildly
-        # as the base passes close beside it (tight A* spacing on short paths),
-        # so the heading chases a spinning target and the base crabs. Within
-        # ~1.5x the position threshold, steer by the waypoint's stored segment
-        # bearing (points toward the NEXT waypoint) so the heading stays stable
-        # through the corner and can actually align with the travel direction.
-        live_bearing = np.arctan2(dy, dx)
-        heading_target = float(target[2]) if distance < 1.5 * self.position_threshold else live_bearing
+        # Docked: rotate in place to the final angle.
+        self._docked = idx == last and distance < self.position_threshold
+        if self._docked:
+            final_target = self.final_angle if self.final_angle is not None else target[2]
+            final_angle_diff = self._wrap_to_pi(final_target - heading)
+            if abs(final_angle_diff) < self.angle_threshold:
+                return 0.0, 0.0, 0.0, final_angle_diff
+            theta_vel = np.clip(self.k_p_angular * final_angle_diff,
+                                -self.max_angular_speed, self.max_angular_speed)
+            return 0.0, 0.0, theta_vel, final_angle_diff
+
+        # Steer toward the carrot. Near the dock the live bearing to the final
+        # waypoint swings wildly as the base passes beside it, so steer by the
+        # stored segment bearing there while translation keeps homing on the
+        # dock point itself.
+        carrot = self._lookahead_point(base_xy)
+        to_carrot = carrot - base_xy
+        carrot_dist = float(np.linalg.norm(to_carrot))
+        travel_bearing = np.arctan2(to_carrot[1], to_carrot[0]) if carrot_dist > 1e-6 else heading
+        near_dock = idx == last and distance < 1.5 * self.position_threshold
+        heading_target = float(target[2]) if near_dock else travel_bearing
         angle_diff = self._wrap_to_pi(heading_target - heading)
 
-        speed = min(distance * 0.2, self.max_linear_speed)
-        # Face-forward driving: turn (nearly) in place until the heading is within
-        # ALIGN_DEADBAND of the travel direction, then cos-scale. The hard gate
-        # kills the sideways creep that plain cos-scaling left during the slow
-        # in-place turn; cos-scaling then still floors translation at 0 beyond
-        # 90 deg so the base never crabs sideways/backward.
-        if abs(angle_diff) > self.ALIGN_DEADBAND:
+        # Decelerate against the remaining path length (smooth final approach,
+        # full speed over intermediate cells).
+        dist_remaining = distance + float(self._remaining_from[idx])
+        speed = min(0.25 * dist_remaining, self.max_linear_speed)
+        # Rotation/translation blending: full in-place turn only for gross
+        # misalignment; otherwise translate while turning, damped smoothly as
+        # cos^2 of the heading error so corrections never stall the base.
+        if abs(angle_diff) > self.HARD_ALIGN:
             speed = 0.0
         else:
-            speed *= max(0.0, np.cos(angle_diff))
-        # Translation still homes on the actual waypoint (live bearing) so
-        # position tracking/convergence is unchanged; only the heading target is
-        # stabilized. Near the waypoint distance (hence speed) is tiny, so the
-        # residual live/segment mismatch moves the base negligibly.
-        x_vel = speed * np.cos(live_bearing)
-        y_vel = speed * np.sin(live_bearing)
+            speed *= max(0.0, float(np.cos(angle_diff))) ** 2
+
+        x_vel = speed * np.cos(travel_bearing)
+        y_vel = speed * np.sin(travel_bearing)
         theta_vel = np.clip(self.k_p_angular * angle_diff,
                             -self.max_angular_speed, self.max_angular_speed)
 
@@ -120,31 +176,28 @@ class RidgebaseController:
         x_vel = np.clip(abs(x_vel), 0, self.max_linear_speed) * np.sign(x_vel)
         y_vel = np.clip(abs(y_vel), 0, self.max_linear_speed) * np.sign(y_vel)
         theta_vel = np.clip(theta_vel, -self.max_angular_speed, self.max_angular_speed)
-        
+
         joint_positions = self._joints_subset.get_joint_positions()
-        
+
         next_x = joint_positions[0] + x_vel
         next_y = joint_positions[1] + y_vel
         next_theta = joint_positions[2] + theta_vel
-        
+
         position = np.array([next_x, next_y, next_theta])
         action = self._joints_subset.make_articulation_action(
             joint_positions=position,
             joint_velocities=None
         )
-        
+
         if self.final_angle is None:
-            done = (self.waypoints is not None and 
-                    self.current_waypoint_idx == len(self.waypoints) - 1 and 
-                    abs(theta_vel) < self.angle_threshold)
+            done = self._docked and abs(theta_vel) < self.angle_threshold
         else:
-            done = (self.waypoints is not None and 
-                    self.current_waypoint_idx == len(self.waypoints) - 1 and 
-                    abs(theta_vel) < self.angle_threshold and 
+            done = (self._docked and
+                    abs(theta_vel) < self.angle_threshold and
                     abs(angle_diff) < self.angle_threshold)
 
         return action, done
 
     def is_path_complete(self) -> bool:
-        return (self.waypoints is not None and 
+        return (self.waypoints is not None and
                 self.current_waypoint_idx >= len(self.waypoints))
