@@ -2,6 +2,7 @@ import os
 from typing import Any, Dict, Optional
 
 from loguru import logger
+from pxr import UsdPhysics
 
 from .mobile_pick_task import MobilePickTask
 
@@ -43,6 +44,16 @@ class MobileTransportPlaceTask(MobilePickTask):
                 os.path.abspath(str(target.usd_path)), str(target.source_prim_path))
             logger.info(f"Referenced place target {target.source_prim_path} "
                         f"from {target.usd_path} at {self.place_target_path}")
+        # The source asset's plat is VISUAL-ONLY (no collision APIs) — in the
+        # L4 scenes beakers actually rest on the bench top underneath it. On
+        # bench B nothing physical exists at the release point, so the placed
+        # beaker fell straight through (landed inside the cabinet, z~0.33).
+        # Make the plat a static convex collider so the beaker rests ON it.
+        mesh = self.stage.GetPrimAtPath(self.place_target_path + "/mesh")
+        if mesh.IsValid() and not mesh.HasAPI(UsdPhysics.CollisionAPI):
+            UsdPhysics.CollisionAPI.Apply(mesh)
+            UsdPhysics.MeshCollisionAPI.Apply(mesh).CreateApproximationAttr().Set("convexHull")
+            logger.info(f"Applied static convex collision to {self.place_target_path}/mesh")
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 
@@ -73,7 +84,14 @@ class MobileTransportPlaceTask(MobilePickTask):
 
     def _compute_dock_point(self, object_path: str) -> list:
         dock = super()._compute_dock_point(object_path)
-        if self.carry_navigation or object_path == self.place_target_path:
+        if object_path == self.place_target_path:
+            # DOCK_X_OFFSET exists for the GRASP's left/right closing
+            # asymmetry; the place is a release, so center the dock on the
+            # plat to minimize lateral reach (an offset dock undershot the
+            # plat by ~0.2 m at the far bench and dropped the beaker short).
+            dock[0] -= self.DOCK_X_OFFSET
+            return dock
+        if self.carry_navigation:
             return dock
         plat = self.object_utils.get_object_xform_position(object_path=self.place_target_path)
         return [(dock[0] + float(plat[0])) / 2.0, dock[1]]
