@@ -29,6 +29,10 @@ class RidgebaseController:
     # hard 35-degree gate did.
     HARD_ALIGN = np.radians(60.0)
 
+    # Per-step EMA weight for the heading target (0-1). Low = heavily filtered,
+    # so the base yaw tracks the mean travel direction, not the A* zig-zag.
+    HEADING_SMOOTH = 0.12
+
     def __init__(
         self,
         robot_articulation: Articulation,
@@ -47,11 +51,19 @@ class RidgebaseController:
         self.final_angle = final_angle
 
         self.k_p_linear = 1
-        self.k_p_angular = 4
+        # Gentle heading P-gain. High gains (the old 4) overshoot the base yaw
+        # against the drive delay and ring; the base is holonomic, so heading
+        # only needs to ease toward the travel direction for the cameras.
+        self.k_p_angular = 1.5
 
         self.waypoints = None
         self.current_waypoint_idx = 0
         self._remaining_from = None
+        # Low-passed heading target. The raw travel bearing follows the A* grid
+        # zig-zag (45-deg per-cell swings); commanding it directly wobbles the
+        # base yaw and shakes every camera. Filtered here so the heading eases
+        # toward the average travel direction instead of chasing each cell.
+        self._heading_cmd = None
         # True only while the base is inside position_threshold of the final
         # waypoint (the rotate-to-final-angle stage). The done-check must gate
         # on this: with lookahead advancing, current_waypoint_idx reaches the
@@ -68,6 +80,7 @@ class RidgebaseController:
         self.current_waypoint_idx = 0
         self.final_angle = final_angle
         self._docked = False
+        self._heading_cmd = None
         # remaining_from[i] = path length from waypoint i to the last waypoint,
         # used to decelerate against the DOCK instead of each grid cell.
         pts = self.waypoints[:, :2]
@@ -149,20 +162,27 @@ class RidgebaseController:
         carrot_dist = float(np.linalg.norm(to_carrot))
         travel_bearing = np.arctan2(to_carrot[1], to_carrot[0]) if carrot_dist > 1e-6 else heading
         near_dock = idx == last and distance < 1.5 * self.position_threshold
-        heading_target = float(target[2]) if near_dock else travel_bearing
-        angle_diff = self._wrap_to_pi(heading_target - heading)
+        raw_target = float(target[2]) if near_dock else travel_bearing
+        # Low-pass the heading target so the base yaw eases toward the mean
+        # travel direction instead of chasing the A* grid zig-zag frame-to-frame
+        # (that chasing was what rocked the base and shook the cameras).
+        if self._heading_cmd is None:
+            self._heading_cmd = heading
+        self._heading_cmd = self._wrap_to_pi(
+            self._heading_cmd + self.HEADING_SMOOTH * self._wrap_to_pi(raw_target - self._heading_cmd))
+        angle_diff = self._wrap_to_pi(self._heading_cmd - heading)
 
-        # Decelerate against the remaining path length (smooth final approach,
-        # full speed over intermediate cells).
+        # Translation is DECOUPLED from heading (holonomic base): drive toward
+        # the carrot at full speed, decelerating only against the remaining
+        # path length, and stop to turn in place ONLY when grossly misaligned
+        # (> HARD_ALIGN). The old cos^2(heading-error) coupling stalled forward
+        # motion whenever the yaw lagged, which — with the smooth (slow) yaw —
+        # made navigation crawl. The EMA heading below keeps the cameras facing
+        # forward without throttling translation.
         dist_remaining = distance + float(self._remaining_from[idx])
         speed = min(0.25 * dist_remaining, self.max_linear_speed)
-        # Rotation/translation blending: full in-place turn only for gross
-        # misalignment; otherwise translate while turning, damped smoothly as
-        # cos^2 of the heading error so corrections never stall the base.
         if abs(angle_diff) > self.HARD_ALIGN:
             speed = 0.0
-        else:
-            speed *= max(0.0, float(np.cos(angle_diff))) ** 2
 
         x_vel = speed * np.cos(travel_bearing)
         y_vel = speed * np.sin(travel_bearing)

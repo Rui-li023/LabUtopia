@@ -55,7 +55,7 @@ task:
                                      # +x-frame default yawed the held beaker 90
                                      # deg mid-place and missed the plat)
   max_linear_speed: 0.04
-  max_angular_speed: 1.5
+  max_angular_speed: 0.12        # per-step yaw cap: smooth face-forward, decoupled from translation
   position_threshold: 0.05        # tightened: exact dock endpoint appended to the A* path
   angle_threshold: 0.02          # tight final alignment (see FINAL_NAV_ANGLE bias)
 
