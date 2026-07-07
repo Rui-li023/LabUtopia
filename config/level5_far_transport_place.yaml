@@ -61,19 +61,21 @@ task:
 
 cameras:
   - prim_path: "/World/Ridgebase/base_link/Camera"
-    name: "top_camera"          # 3 m overhead view (prim was misnamed front_camera)
+    name: "top_camera"          # position/FOV set in the robot USD
     resolution: [256, 256]
+    clipping_range: [0.1, 20.0]
     image_type: "rgb"
 
   - prim_path: "/World/Ridgebase/panda_hand/Camera"
-    name: "wrist_camera"
+    name: "wrist_camera"        # FOV/pose set in the robot USD
     resolution: [256, 256]
     clipping_range: [0, 10.0]
     image_type: "rgb"
 
   - prim_path: "/World/Ridgebase/base_link/Camera_01"
-    name: "front_camera"        # over-shoulder forward view (prim was misnamed top_camera)
+    name: "front_camera"        # forward view — keep USD 92.7 deg FOV; far clip 10 -> 40 m (see across lab)
     resolution: [256, 256]
+    clipping_range: [0.1, 40.0]
     image_type: "rgb"
 
 robot:
