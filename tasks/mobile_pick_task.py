@@ -33,6 +33,7 @@ class MobilePickTask(NavigationBaseTask):
         self.target_object_path: Optional[str] = None
         self.initial_object_position: Optional[np.ndarray] = None
         self.dock_point: Optional[list] = None
+        self._episode_dock_jitter: Dict[str, tuple] = {}
         super().__init__(cfg, world, stage, robot)
 
     # ── Setup ────────────────────────────────────────────────────────────
@@ -50,6 +51,13 @@ class MobilePickTask(NavigationBaseTask):
             if spawn is not None and hasattr(spawn, "distance_range") else [1.0, 2.0])
         self.min_path_length = (
             float(getattr(spawn, "min_path_length", 4.0)) if spawn else 4.0)
+        # Dock-position generalization: per-episode uniform jitter (metres) on
+        # the manipulation dock, so the base stops at varied poses relative to
+        # the object and the policy is robust to imprecise (VLA) arrival.
+        # [x_halfrange, y_halfrange]; default 0 = off. Keep within the validated
+        # reach band (grasps tolerate ~+/-4 cm around the tuned dock).
+        dj = getattr(task, "dock_jitter", None)
+        self.dock_jitter = [float(dj[0]), float(dj[1])] if dj is not None else [0.0, 0.0]
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 
@@ -57,6 +65,9 @@ class MobilePickTask(NavigationBaseTask):
         super().reset()
         self.robot.initialize()
         self.initial_object_position = None
+        # Fresh dock jitter each episode (sampled lazily per object in
+        # _compute_dock_point, cached here so every call in the episode agrees).
+        self._episode_dock_jitter = {}
         if self.object_position_range is not None:
             self.randomize_object_position(self.target_object_path, self.object_position_range)
         self._record_object_pose(self.target_object_path)
@@ -67,6 +78,9 @@ class MobilePickTask(NavigationBaseTask):
     def reset_with_init_state(self, init_state: dict) -> None:
         super().reset_with_init_state(init_state)
         self.initial_object_position = None
+        # Replay drives from the recorded 11-dim actions, not the dock, so a
+        # fresh jitter here only affects the (diagnostic) dock recompute.
+        self._episode_dock_jitter = {}
         # Recompute from the restored object pose — the dock derived in
         # reset() belongs to the previous episode's randomization.
         self.dock_point = self._compute_dock_point(self.target_object_path)
@@ -84,7 +98,21 @@ class MobilePickTask(NavigationBaseTask):
 
     def _compute_dock_point(self, object_path: str) -> list:
         obj = self.object_utils.get_object_xform_position(object_path=object_path)
-        return [float(obj[0]) + self.DOCK_X_OFFSET, float(obj[1]) - self.dock_standoff]
+        jx, jy = self._dock_jitter_for(object_path)
+        return [float(obj[0]) + self.DOCK_X_OFFSET + jx,
+                float(obj[1]) - self.dock_standoff + jy]
+
+    def _dock_jitter_for(self, object_path: str) -> tuple:
+        """Per-episode dock jitter for an object, sampled once and cached so
+        every _compute_dock_point call in the episode returns the same dock."""
+        if self.dock_jitter[0] == 0.0 and self.dock_jitter[1] == 0.0:
+            return (0.0, 0.0)
+        if object_path not in self._episode_dock_jitter:
+            self._episode_dock_jitter[object_path] = (
+                float(np.random.uniform(-self.dock_jitter[0], self.dock_jitter[0])),
+                float(np.random.uniform(-self.dock_jitter[1], self.dock_jitter[1])),
+            )
+        return self._episode_dock_jitter[object_path]
 
     # Half-angle (rad) of the spawn arc around the object->dock axis. Kept small
     # so the facing-object heading stays close to the dock's final angle (pi/2):
