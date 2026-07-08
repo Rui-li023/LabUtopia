@@ -86,22 +86,28 @@ class MobilePickTask(NavigationBaseTask):
         obj = self.object_utils.get_object_xform_position(object_path=object_path)
         return [float(obj[0]) + self.DOCK_X_OFFSET, float(obj[1]) - self.dock_standoff]
 
+    # Half-angle (rad) of the spawn arc around the object->dock axis. Kept small
+    # so the facing-object heading stays close to the dock's final angle (pi/2):
+    # the base then drives essentially straight into the dock with little yaw,
+    # instead of rotating (which pans the view sideways = looks like a crab).
+    NEAR_SPAWN_ARC = 0.15
+
     def _sample_spawn(self, nav_scene: dict) -> Optional[list]:
         if self.spawn_mode == "near":
-            # Close variant: spawn on a small circle around the OBJECT (~1 m by
-            # spawn.distance_range) in the aisle in FRONT of the bench, FACING
-            # the object so the beaker is already in view at frame 0.
+            # Close variant: spawn ~1 m (spawn.distance_range) from the OBJECT,
+            # on a small arc about the object->dock direction, FACING the object
+            # so (a) the beaker is in view at frame 0 and (b) the dock is dead
+            # ahead — the approach is a short straight drive, never a crab.
             obj = self.object_utils.get_object_xform_position(object_path=self.target_object_path)
+            base_ang = np.arctan2(self.dock_point[1] - float(obj[1]),
+                                  self.dock_point[0] - float(obj[0]))
+            ang = base_ang + np.random.uniform(-self.NEAR_SPAWN_ARC, self.NEAR_SPAWN_ARC)
             d = np.random.uniform(*self.spawn_distance_range)
-            # Lower half-plane (y < object_y): the robot stands in the aisle,
-            # never inside/behind the bench. Narrowed toward straight-ahead so
-            # the frontal view of the beaker is unobstructed.
-            phi = np.random.uniform(np.pi + 0.6, 2 * np.pi - 0.6)
-            x = float(obj[0]) + d * np.cos(phi)
-            y = float(obj[1]) + d * np.sin(phi)
+            x = float(obj[0]) + d * np.cos(ang)
+            y = float(obj[1]) + d * np.sin(ang)
             if not self._is_free_point(x, y):
                 return None
-            # Heading points at the object (front camera = base-forward).
+            # Heading points back at the object (front camera = base-forward).
             yaw = float(np.arctan2(float(obj[1]) - y, float(obj[0]) - x))
             return [x, y, yaw]
         return self._sample_free_point(nav_scene["x_bounds"], nav_scene["y_bounds"])
