@@ -36,7 +36,7 @@ task:
                                  # (~0.018 m grasp undershoot → beaker shoved out)
   spawn:
     mode: "near"
-    distance_range: [1.0, 2.0]
+    distance_range: [0.9, 1.1]     # ~1 m circle around the OBJECT, facing it (beaker visible at spawn)
   grasp_ee_euler_deg: [-115, 90, 0]  # side grasp: static [0,90,25] rotated to the -y
                                      # dock approach — palm blocks escape; top-down
                                      # [0,180,0] slipped ~40% (contact-width fingers

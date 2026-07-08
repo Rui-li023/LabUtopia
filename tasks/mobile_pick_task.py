@@ -1,6 +1,7 @@
 import numpy as np
 from typing import Any, Dict, Optional
 
+from isaacsim.core.utils.rotations import euler_angles_to_quat
 from loguru import logger
 
 from .navigation_base_task import NavigationBaseTask
@@ -87,12 +88,22 @@ class MobilePickTask(NavigationBaseTask):
 
     def _sample_spawn(self, nav_scene: dict) -> Optional[list]:
         if self.spawn_mode == "near":
+            # Close variant: spawn on a small circle around the OBJECT (~1 m by
+            # spawn.distance_range) in the aisle in FRONT of the bench, FACING
+            # the object so the beaker is already in view at frame 0.
+            obj = self.object_utils.get_object_xform_position(object_path=self.target_object_path)
             d = np.random.uniform(*self.spawn_distance_range)
-            # Aisle half-plane relative to the dock (y < dock_y): phi in (pi+0.3, 2pi-0.3)
-            phi = np.random.uniform(np.pi + 0.3, 2 * np.pi - 0.3)
-            x = self.dock_point[0] + d * np.cos(phi)
-            y = self.dock_point[1] + d * np.sin(phi)
-            return [x, y] if self._is_free_point(x, y) else None
+            # Lower half-plane (y < object_y): the robot stands in the aisle,
+            # never inside/behind the bench. Narrowed toward straight-ahead so
+            # the frontal view of the beaker is unobstructed.
+            phi = np.random.uniform(np.pi + 0.6, 2 * np.pi - 0.6)
+            x = float(obj[0]) + d * np.cos(phi)
+            y = float(obj[1]) + d * np.sin(phi)
+            if not self._is_free_point(x, y):
+                return None
+            # Heading points at the object (front camera = base-forward).
+            yaw = float(np.arctan2(float(obj[1]) - y, float(obj[0]) - x))
+            return [x, y, yaw]
         return self._sample_free_point(nav_scene["x_bounds"], nav_scene["y_bounds"])
 
     def _generate_navigation_task(self) -> bool:
@@ -107,14 +118,22 @@ class MobilePickTask(NavigationBaseTask):
             start = self._sample_spawn(nav_scene)
             if start is None:
                 continue
-            waypoints = self._try_plan_path(start, self.dock_point)
+            waypoints = self._try_plan_path([start[0], start[1]], self.dock_point)
             if waypoints is None:
                 continue
             if self.spawn_mode == "far" and self._path_length(waypoints) < self.min_path_length:
                 continue
             self.current_start = start
             self.current_path = waypoints
-            self.robot.set_world_pose(position=np.array([start[0], start[1], 0.0]))
+            # Face the object at spawn when the sampler supplied a heading
+            # (near mode); far mode keeps the default orientation and lets the
+            # controller turn toward the travel direction.
+            if len(start) > 2:
+                orientation = euler_angles_to_quat(np.array([0.0, 0.0, start[2]]), extrinsic=False)
+                self.robot.set_world_pose(
+                    position=np.array([start[0], start[1], 0.0]), orientation=orientation)
+            else:
+                self.robot.set_world_pose(position=np.array([start[0], start[1], 0.0]))
             return True
         return False
 
