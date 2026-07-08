@@ -59,6 +59,7 @@ class RidgebaseController:
         self.waypoints = None
         self.current_waypoint_idx = 0
         self._remaining_from = None
+        self._hold_heading = False
         # Low-passed heading target. The raw travel bearing follows the A* grid
         # zig-zag (45-deg per-cell swings); commanding it directly wobbles the
         # base yaw and shakes every camera. Filtered here so the heading eases
@@ -75,10 +76,21 @@ class RidgebaseController:
             ["dummy_base_prismatic_x_joint", "dummy_base_prismatic_y_joint", "dummy_base_revolute_z_joint"]
         )
 
-    def set_waypoints(self, waypoints: List[Tuple[float, float, float]], final_angle: Optional[float] = None) -> None:
+    def set_waypoints(self, waypoints: List[Tuple[float, float, float]],
+                      final_angle: Optional[float] = None,
+                      hold_heading: bool = False) -> None:
         self.waypoints = np.array(waypoints, dtype=float)
         self.current_waypoint_idx = 0
         self.final_angle = final_angle
+        # hold_heading: keep the base at ``final_angle`` for the whole path and
+        # translate (crab) to the dock instead of turning to face the travel
+        # direction. For a holonomic base a short sideways move (e.g. the
+        # same-bench pick->place carry) needs no reorientation; forcing the
+        # face-travel turn there made the base rotate ~90 deg away and back
+        # (visible overshoot) and slipped the carried beaker. Long traverses
+        # (the far cross-lab carry / free navigation) leave this False so the
+        # cameras face the travel direction.
+        self._hold_heading = bool(hold_heading)
         self._docked = False
         self._heading_cmd = None
         # remaining_from[i] = path length from waypoint i to the last waypoint,
@@ -162,7 +174,14 @@ class RidgebaseController:
         carrot_dist = float(np.linalg.norm(to_carrot))
         travel_bearing = np.arctan2(to_carrot[1], to_carrot[0]) if carrot_dist > 1e-6 else heading
         near_dock = idx == last and distance < 1.5 * self.position_threshold
-        raw_target = float(target[2]) if near_dock else travel_bearing
+        if self._hold_heading and self.final_angle is not None:
+            # Crab mode: hold the bench-facing heading; translation below still
+            # homes on the carrot, so the base slides sideways to the dock.
+            raw_target = float(self.final_angle)
+        elif near_dock:
+            raw_target = float(target[2])
+        else:
+            raw_target = travel_bearing
         # Low-pass the heading target so the base yaw eases toward the mean
         # travel direction instead of chasing the A* grid zig-zag frame-to-frame
         # (that chasing was what rocked the base and shook the cameras).

@@ -41,6 +41,8 @@ class MobileTransportPlaceController(MobileManipControllerBase):
     SETTLE_Z = 0.06             # beaker z back near its resting height
     RELEASE_CLOSEDNESS = 0.45   # measured closedness below this = gripper released
                                 # (beaker-grip ~0.56, fully open ~0.30)
+    CARRY_HOLD_MAX_DIST = 2.0   # carries shorter than this crab (hold heading);
+                                # longer ones (far cross-lab) face travel dir
     PLACE_SETTLE_BUDGET = 120   # frames the beaker may settle after the place
                                 # motion completes before the episode fails
 
@@ -198,7 +200,15 @@ class MobileTransportPlaceController(MobileManipControllerBase):
             if state.get("carry_waypoints") is None:
                 return self._fail("TransportPlace carry failed: no carry path available")
             final_angle = state.get("final_nav_angle", np.pi / 2)
-            self.ridgebase_controller.set_waypoints(state["carry_waypoints"], final_angle)
+            # Short same-bench carry -> crab sideways holding the bench heading
+            # (no reorientation: kills the overshoot and the carry-time drop).
+            # Long cross-lab carry -> face the travel direction as before.
+            wp = np.asarray(state["carry_waypoints"], dtype=float)
+            carry_len = float(np.linalg.norm(np.diff(wp[:, :2], axis=0), axis=1).sum()) if len(wp) > 1 else 0.0
+            hold = carry_len < self.CARRY_HOLD_MAX_DIST
+            self.ridgebase_controller.set_waypoints(
+                state["carry_waypoints"], final_angle, hold_heading=hold)
+            logger.info(f"[carry] len={carry_len:.2f}m hold_heading={hold}")
             self.carry_waypoints_set = True
         action, nav_done, action11 = self._nav_step(state)
         self._record_step(state, action11, PHASE_CARRY_NAVIGATE)
