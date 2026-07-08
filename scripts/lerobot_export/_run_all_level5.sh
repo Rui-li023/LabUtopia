@@ -8,12 +8,12 @@ PY=~/mambaforge/envs/isaacsim5.1/bin/python
 DST_ROOT=outputs/lerobot/v21_level5
 
 TASKS=(close_pick far_pick close_pick_place far_transport_place)
-# close_* = re-collected 2026-07-08 with the ~1 m facing-object spawn + the
-# revolute-joint facing fix (no crab); far_* = the 2026-07-07 full-100 collect.
-SRC_close_pick=outputs/collect/2026.07.08/14.02.50_level5_close_pick
-SRC_far_pick=outputs/collect/2026.07.07/18.59.12_level5_far_pick
-SRC_close_pick_place=outputs/collect/2026.07.08/14.23.38_level5_close_pick_place
-SRC_far_transport_place=outputs/collect/2026.07.07/20.46.28_level5_far_transport_place
+# all four re-collected 2026-07-09 with the carry-crab fix + revolute-joint
+# facing spawn + ~3cm dock-position jitter (VLA-robustness generalization).
+SRC_close_pick=outputs/collect/2026.07.09/00.29.44_level5_close_pick
+SRC_far_pick=outputs/collect/2026.07.09/00.52.42_level5_far_pick
+SRC_close_pick_place=outputs/collect/2026.07.09/01.50.18_level5_close_pick_place
+SRC_far_transport_place=outputs/collect/2026.07.09/02.23.34_level5_far_transport_place
 
 for task in "${TASKS[@]}"; do
   eval "src=\$SRC_$task"
