@@ -1,7 +1,7 @@
 import numpy as np
 from typing import Any, Dict, Optional
 
-from isaacsim.core.utils.rotations import euler_angles_to_quat
+from isaacsim.core.api.articulations import ArticulationSubset
 from loguru import logger
 
 from .navigation_base_task import NavigationBaseTask
@@ -131,17 +131,27 @@ class MobilePickTask(NavigationBaseTask):
                 continue
             self.current_start = start
             self.current_path = waypoints
-            # Face the object at spawn when the sampler supplied a heading
-            # (near mode); far mode keeps the default orientation and lets the
-            # controller turn toward the travel direction.
+            # ALWAYS keep the root orientation at identity. The base's holonomic
+            # motion runs on the dummy prismatic joints, which are children of
+            # the root frame — rotating the root rotates the plane those joints
+            # translate in, but the controller commands/reads them as WORLD
+            # frame, so a rotated root makes the base drive sideways (the crab
+            # the near-facing spawn caused). Instead face the object via the
+            # base REVOLUTE joint below: it rotates base_link (and the cameras)
+            # without touching the prismatic frame, exactly as the controller's
+            # own face-forward turning does mid-nav.
+            self.robot.set_world_pose(position=np.array([start[0], start[1], 0.0]))
             if len(start) > 2:
-                orientation = euler_angles_to_quat(np.array([0.0, 0.0, start[2]]), extrinsic=False)
-                self.robot.set_world_pose(
-                    position=np.array([start[0], start[1], 0.0]), orientation=orientation)
-            else:
-                self.robot.set_world_pose(position=np.array([start[0], start[1], 0.0]))
+                self._set_base_yaw(float(start[2]))
             return True
         return False
+
+    def _set_base_yaw(self, yaw: float) -> None:
+        """Set the base heading via the revolute base joint (world-frame safe)."""
+        if getattr(self, "_base_yaw_subset", None) is None:
+            self._base_yaw_subset = ArticulationSubset(
+                self.robot, ["dummy_base_revolute_z_joint"])
+        self._base_yaw_subset.set_joint_positions(np.array([yaw], dtype=np.float32))
 
     # ── Step ─────────────────────────────────────────────────────────────
 
