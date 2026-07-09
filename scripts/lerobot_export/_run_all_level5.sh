@@ -19,7 +19,7 @@ for task in "${TASKS[@]}"; do
   eval "src=\$SRC_$task"
   dst="$DST_ROOT/$task"
   echo "############### ▶ $task : $src → $dst  $(date '+%T') ###############"
-  $PY -m scripts.lerobot_export.cli --src "$src" --dst "$dst" --version v2.1 --robot ridgebase
+  $PY -m scripts.lerobot_export.cli --src "$src" --dst "$dst" --version v2.1 --robot ridgebase --base-action body_delta
 done
 
 echo "############### L5 LeRobot EXPORT DONE  $(date '+%T') ###############"

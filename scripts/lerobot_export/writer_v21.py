@@ -29,7 +29,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from .reader import Episode, discover_run, iter_episodes
+from .reader import Episode, base_action_to_body_delta, discover_run, iter_episodes
 from .stats import Accum
 
 CODEBASE_VERSION = "v2.1"
@@ -133,7 +133,8 @@ def _scan_pixel_stats(video_paths: list[Path], frame_stride: int = 10) -> dict |
             "count": out["count"]}
 
 
-def write_v21(src: Path, dst: Path, fps: int | None = None, robot_type: str = "franka") -> dict:
+def write_v21(src: Path, dst: Path, fps: int | None = None, robot_type: str = "franka",
+              base_action: str = "abs") -> dict:
     info_disc = discover_run(src)
     state_dim = info_disc["state_dim"]
     action_dim = info_disc["action_dim"]
@@ -209,6 +210,8 @@ def write_v21(src: Path, dst: Path, fps: int | None = None, robot_type: str = "f
                 "count": out["count"]}
 
     for ep in iter_episodes(src):
+        if base_action == "body_delta":
+            ep.action = base_action_to_body_delta(ep)
         if ep.task not in tasks:
             tasks.append(ep.task)
         task_index = tasks.index(ep.task)
@@ -293,6 +296,10 @@ def write_v21(src: Path, dst: Path, fps: int | None = None, robot_type: str = "f
     info = {
         "codebase_version": CODEBASE_VERSION,
         "robot_type": robot_type,
+        # abs: raw position targets. body_delta: action[0:3] are per-step
+        # BODY-frame base deltas [forward, lateral, dtheta]; the executor must
+        # integrate them onto the current base pose. Arm/gripper unchanged.
+        "base_action": base_action,
         "total_episodes": total_episodes,
         "total_frames": total_frames,
         "total_tasks": len(tasks),

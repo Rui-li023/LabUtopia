@@ -23,11 +23,17 @@ def main():
     ap.add_argument("--fps", type=int, default=None,
                     help="Override fps; default: probe from source mp4 (LabUtopia=30)")
     ap.add_argument("--robot", default="franka")
+    ap.add_argument("--base-action", default="abs", choices=["abs", "body_delta"],
+                    help="Mobile-base action dims (0:3): 'abs' = raw spawn-frame position "
+                         "targets; 'body_delta' = per-step body-frame [forward, lateral, dtheta]")
     args = ap.parse_args()
 
     if args.version == "v2.1":
-        result = write_v21(args.src, args.dst, fps=args.fps, robot_type=args.robot)
+        result = write_v21(args.src, args.dst, fps=args.fps, robot_type=args.robot,
+                           base_action=args.base_action)
     else:
+        if args.base_action != "abs":
+            raise SystemExit("--base-action body_delta is only implemented for v2.1")
         result = write_v30(args.src, args.dst, fps=args.fps, robot_type=args.robot)
     print(f"OK [{args.version}]: {result}  →  {args.dst}")
 

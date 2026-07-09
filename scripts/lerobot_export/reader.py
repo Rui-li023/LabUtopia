@@ -24,6 +24,7 @@ class Episode:
     task_index: int                         # index into tasks table
     video_paths: dict[str, Path]            # camera_key → existing .mp4 path
     length: int
+    spawn_yaw: float = 0.0                  # base world yaw at spawn (mobile tasks)
 
 
 def discover_run(data_dir: Path) -> dict:
@@ -91,6 +92,18 @@ def iter_episodes(data_dir: Path):
             else:
                 task = ""
                 ti_val = 0
+            # Mobile (Ridgebase) episodes: the base joints are spawn-frame; the
+            # spawn world yaw lives in task_properties.start_position[2] and is
+            # needed to rotate world deltas into the body frame.
+            spawn_yaw = 0.0
+            if "task_properties" in f:
+                try:
+                    tp = json.loads(np.asarray(f["task_properties"][()]).item().decode("utf-8"))
+                    sp = tp.get("start_position")
+                    if sp is not None and len(sp) >= 3:
+                        spawn_yaw = float(sp[2])
+                except Exception:
+                    pass
         videos = {cam: ep_dir / f"{cam}.mp4" for cam in info["cameras"]}
         yield Episode(
             index=new_idx,
@@ -100,7 +113,30 @@ def iter_episodes(data_dir: Path):
             task_index=ti_val,
             video_paths=videos,
             length=int(state.shape[0]),
+            spawn_yaw=spawn_yaw,
         )
+
+
+def base_action_to_body_delta(ep: Episode) -> np.ndarray:
+    """Return a copy of ep.action with the base dims (0:3) converted from
+    spawn-frame absolute position targets to per-step BODY-frame deltas:
+    [forward, lateral, dtheta].
+
+    The collect control law is ``action = current + v`` (position targets one
+    velocity step ahead), so ``action - state`` recovers the commanded per-step
+    velocity exactly. Rotating it by the base's world heading (spawn yaw +
+    theta joint) yields an observation-consistent action the policy can learn
+    without depending on the episode's world/spawn origin. Arm joints (3:10)
+    stay absolute (body-frame already); gripper (10) unchanged.
+    """
+    act = ep.action.copy()
+    d = ep.action[:, :3].astype(np.float64) - ep.state[:, :3].astype(np.float64)
+    heading = ep.spawn_yaw + ep.state[:, 2].astype(np.float64)
+    c, s = np.cos(heading), np.sin(heading)
+    act[:, 0] = (c * d[:, 0] + s * d[:, 1]).astype(np.float32)      # forward
+    act[:, 1] = (-s * d[:, 0] + c * d[:, 1]).astype(np.float32)     # lateral
+    act[:, 2] = ((d[:, 2] + np.pi) % (2 * np.pi) - np.pi).astype(np.float32)  # dtheta
+    return act
 
 
 def collect_tasks(data_dir: Path) -> list[str]:
