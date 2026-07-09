@@ -84,6 +84,14 @@ class MobileManipControllerBase(BaseController):
     def _init_replay_mode(self, cfg: Any, robot: Any = None) -> None:
         """Replay without a Franka trajectory controller (wrong DOFs here)."""
         self.trajectory_controller = _NullTrajectory()
+        # base_delta_actions: the loaded actions carry per-step BODY-frame base
+        # deltas [forward, lateral, dtheta] in dims 0:3 (the LeRobot body_delta
+        # export) instead of absolute position targets. They are applied
+        # CLOSED-LOOP: each frame target = measured base pose + rotated delta —
+        # exactly the collect control law and what a VLA executor must do
+        # (open-loop chaining of deltas overshoots: commands saturate the
+        # 0.04/0.12 caps while physics tracks only ~4-12 mm/frame).
+        self._replay_base_delta = bool(getattr(cfg.replay, "base_delta_actions", False))
         episode_indices = (list(cfg.replay.episode_indices)
                            if hasattr(cfg.replay, "episode_indices") else None)
         self._replay_loader = ReplayDataLoader(
@@ -225,6 +233,18 @@ class MobileManipControllerBase(BaseController):
     def _apply_action11(self, act: np.ndarray) -> ArticulationAction:
         """Convert a recorded 11-dim action to a 12-DOF position command."""
         act = np.asarray(act, dtype=np.float64)
+        if getattr(self, "_replay_base_delta", False):
+            # Body-frame delta -> absolute target on the MEASURED base pose.
+            # Root orientation is identity (facing lives in the revolute
+            # joint), so the measured theta joint IS the world heading.
+            b = np.asarray(self.all_subset.get_joint_positions()[:3], dtype=np.float64)
+            c, s_ = np.cos(b[2]), np.sin(b[2])
+            act = act.copy()
+            act[0], act[1], act[2] = (
+                b[0] + c * act[0] - s_ * act[1],
+                b[1] + s_ * act[0] + c * act[1],
+                b[2] + act[2],
+            )
         s = float(np.clip(act[10], 0.0, 1.0))
         finger = float(np.clip(GRIPPER_MAX_OPEN * (1.0 - s), 0.0, _FINGER_LIMIT))
         positions = np.concatenate([act[:10], [finger, finger]])
