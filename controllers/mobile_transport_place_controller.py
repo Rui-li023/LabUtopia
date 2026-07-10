@@ -2,7 +2,6 @@ from enum import Enum
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
-from isaacsim.core.utils.types import ArticulationAction
 from loguru import logger
 from scipy.spatial.transform import Rotation as R
 
@@ -80,6 +79,7 @@ class MobileTransportPlaceController(MobileManipControllerBase):
         self.initial_object_z = None
         self.carry_waypoints_set = False
         self._place_settle_frames = 0
+        self._infer_lift_logged = False
         if self.mode == "collect":
             self.pick_controller.reset()
             self.place_controller.reset()
@@ -256,51 +256,38 @@ class MobileTransportPlaceController(MobileManipControllerBase):
     # ── Infer ────────────────────────────────────────────────────────────
 
     def _step_infer(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
-        """Scripted navigation phases + VLA manipulation, with oracle
-        phase-advance so evals report per-phase progress."""
+        """Full-body VLA: the policy drives the base AND arm end-to-end.
+
+        The predicted 11-dim action (base body-delta + arm + gripper) is applied
+        via ``_apply_action11`` — no scripted navigation. ``current_phase`` is
+        left at NAV_A so the language instruction stays the episode-level prompt
+        the LeRobot export recorded (one task per episode = first frame's).
+        A lift diagnostic reports pick progress; success is the place gate.
+        """
         if self.initial_object_z is None and state.get("object_position") is not None:
             self.initial_object_z = float(state["object_position"][2])
 
-        if self.current_phase == Phase.NAV_A:
-            self._ensure_waypoints(state)
-            action, nav_done, _ = self._nav_step(state)
-            if nav_done:
-                self.current_phase = Phase.PICKING
-            return action, False, False
-
-        if self.current_phase == Phase.CARRY_NAV:
-            if not self.carry_waypoints_set and state.get("carry_waypoints") is not None:
-                self.ridgebase_controller.set_waypoints(
-                    state["carry_waypoints"], state.get("final_nav_angle", np.pi / 2))
-                self.carry_waypoints_set = True
-            action, nav_done, _ = self._nav_step(state)
-            if nav_done:
-                self.current_phase = Phase.PLACING
-            return action, False, False
-
-        # Manipulation phases: policy-driven.
-        self._sync_arm_base_pose()
+        state["agent_pose"] = self._state11()
         state["language_instruction"] = self.get_language_instruction()
-        action = self.inference_engine.step_inference(state)
-        if isinstance(action, ArticulationAction):
-            action = self._remap_arm_action(action)
+        self._update_nav_progress(state)
+        self._log_infer_diag(state)
+        action11 = self.inference_engine.step_inference(state)
+        applied = self._apply_action11(action11) if action11 is not None else None
 
-        # Oracle phase-advance: report per-phase progress.
-        if self.current_phase == Phase.PICKING:
+        # Progress diagnostic (not a phase switch): report the first lift.
+        if not getattr(self, "_infer_lift_logged", False):
             lifted = (self.initial_object_z is not None
                       and state.get("object_position") is not None
                       and float(state["object_position"][2]) - self.initial_object_z > self.LIFT_THRESHOLD)
             if lifted:
-                logger.info("[infer] pick phase passed")
-                self.current_phase = (Phase.CARRY_NAV if state.get("carry_navigation", False)
-                                      else Phase.PLACING)
-            return action, False, False
+                logger.info("[infer] object lifted (pick progress)")
+                self._infer_lift_logged = True
 
         if self._place_gate_satisfied():
             self._last_success = True
             self.reset_needed = True
             return None, True, True
-        return action, False, False
+        return applied, False, False
 
     # ── Language ─────────────────────────────────────────────────────────
 
