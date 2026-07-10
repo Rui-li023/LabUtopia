@@ -26,7 +26,7 @@ podip() {
 start_one() {
   local m="$1" lp rp ip; lp=$(lport "$m"); rp=$(rport "$m"); ip=$(podip "$m")
   [ -z "$ip" ] && { echo "[$m] FAIL: no POD_IP (serve running?)"; return 1; }
-  pkill -f "ssh -N -L $lp:" 2>/dev/null; sleep 1
+  pkill -f -- "-L $lp:" 2>/dev/null; sleep 1
   setsid ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
       -o ExitOnForwardFailure=yes -N -L "$lp:$ip:$rp" "$WS" \
       >"$PIDDIR/$m.log" 2>&1 < /dev/null &
@@ -40,8 +40,8 @@ case "${1:-status}" in
   start) start_one "${2:?model}";;
   stop)
     m="${2:-all}"
-    if [ "$m" = all ]; then for x in openpi lingbot smolvla gr00t; do pkill -f "ssh -N -L $(lport "$x"):" 2>/dev/null; done
-    else pkill -f "ssh -N -L $(lport "$m"):" 2>/dev/null; fi; echo stopped;;
+    if [ "$m" = all ]; then for x in openpi lingbot smolvla gr00t; do pkill -f -- "-L $(lport "$x"):" 2>/dev/null; done
+    else pkill -f -- "-L $(lport "$m"):" 2>/dev/null; fi; echo stopped;;
   status)
     for m in openpi lingbot smolvla gr00t; do
       lp=$(lport "$m")
