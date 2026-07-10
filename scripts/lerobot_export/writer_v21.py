@@ -87,22 +87,21 @@ def _probe_codec(path: Path) -> str:
     return "h264" if fourcc.lower() in ("avc1", "h264") else "mpeg4"
 
 
-def _copy_video(src: Path, dst: Path, fps: int):
+def _copy_video(src: Path, dst: Path, fps: int, n_frames: int | None = None):
     """Copy source mp4 into the LeRobot layout, transcoding to H264/yuv420p
     when the source uses a different codec (LabUtopia historically wrote
     mpeg4 via OpenCV mp4v). LeRobot loaders expect H264 for reliable random
-    seeking."""
+    seeking. n_frames: keep only the first N frames (frame-accurate re-encode;
+    used by --nav-only episode trimming)."""
     dst.parent.mkdir(parents=True, exist_ok=True)
-    if _probe_codec(src) == "h264":
+    if n_frames is None and _probe_codec(src) == "h264":
         shutil.copy2(src, dst)
         return
-    subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error",
-         "-i", str(src),
-         "-c:v", "libx264", "-pix_fmt", "yuv420p",
-         "-r", str(fps), "-an", str(dst)],
-        check=True,
-    )
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src)]
+    if n_frames is not None:
+        cmd += ["-frames:v", str(n_frames)]
+    cmd += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", str(fps), "-an", str(dst)]
+    subprocess.run(cmd, check=True)
 
 
 def _scan_pixel_stats(video_paths: list[Path], frame_stride: int = 10) -> dict | None:
@@ -134,7 +133,7 @@ def _scan_pixel_stats(video_paths: list[Path], frame_stride: int = 10) -> dict |
 
 
 def write_v21(src: Path, dst: Path, fps: int | None = None, robot_type: str = "franka",
-              base_action: str = "abs") -> dict:
+              base_action: str = "abs", nav_only: bool = False) -> dict:
     info_disc = discover_run(src)
     state_dim = info_disc["state_dim"]
     action_dim = info_disc["action_dim"]
@@ -209,7 +208,7 @@ def write_v21(src: Path, dst: Path, fps: int | None = None, robot_type: str = "f
                 "min": _r(out["min"]), "max": _r(out["max"]),
                 "count": out["count"]}
 
-    for ep in iter_episodes(src):
+    for ep in iter_episodes(src, nav_only=nav_only):
         if base_action == "body_delta":
             ep.action = base_action_to_body_delta(ep)
         if ep.task not in tasks:
@@ -250,7 +249,7 @@ def write_v21(src: Path, dst: Path, fps: int | None = None, robot_type: str = "f
             cam_dir = dst / "videos" / f"chunk-{chunk_idx:03d}" / f"observation.images.{cam}"
             cam_dir.mkdir(parents=True, exist_ok=True)
             out_vid = cam_dir / f"episode_{ep.index:06d}.mp4"
-            _copy_video(src_vid, out_vid, fps=fps)
+            _copy_video(src_vid, out_vid, fps=fps, n_frames=ep.video_trim)
             cam_video_paths[cam].append(out_vid)
             # Per-episode pixel stats
             ep_stats[f"observation.images.{cam}"] = _video_pixel_stats(out_vid)
