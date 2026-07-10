@@ -249,6 +249,17 @@ become per-step BODY-frame deltas `[forward, lateral, dtheta]` (arm dims stay ab
 base pose (replay path: `replay.base_delta_actions: true`, closed-loop). Delivered per-task (no
 merge) to cluster `v21/level5/<task>/`.
 
+**Full-body VLA inference** (2026-07-10): `infer.type: remote_mobile` →
+`MobileRemoteInferenceEngine` (11-dim state, no Franka trajectory controller); the mobile
+controllers' `_step_infer` applies the predicted 11-dim chunk via `_apply_action11`
+(`infer.base_delta_actions: true` integrates base deltas closed-loop — same law as replay).
+Gotcha: the mobile collector records state gripper (dim 10) as finger1×2 — the engine mirrors
+this (`pose[10] *= 2`); sending raw finger1 halves the gripper state and kills grasping.
+close_pick eval (20 ep, two metrics — nav progress = spawn→dock fraction closed, grasp success):
+lingbot 0.71/15%, smolvla 0.84/10%, openpi 0.59/10%, gr00t 0.23/5%. Nav is learned; the grasp
+(descend+close) is the universal bottleneck at 20k steps / 100 demos. Harness:
+`scripts/level5_eval/` (serve.sh / tunnel.sh / metrics.sh); report `docs/level5_inference_report.md`.
+
 ## Scripts & Local Knowledge Base
 
 - `scripts/lerobot_export/` — LeRobot v2.1/v3.0 export (`cli.py`, `merge_v21.py`,
@@ -259,7 +270,9 @@ merge) to cluster `v21/level5/<task>/`.
 - `scripts/level23_eval/`, `scripts/level1_eval/` — remote VLA inference eval harnesses
   (OpenPI, LingBot, SmolVLA, GR00T) incl. cluster serve/submit and tunnel scripts.
 - `docs/` — local (non-shipped) reports on collect/replay/inference campaigns; check here
-  first for prior findings before re-debugging a task.
+  first for prior findings before re-debugging a task. Start with `docs/PROJECT_OVERVIEW.md`
+  (项目通识): consolidated project overview, level status, durable lessons, and an index of
+  which reports are current vs. superseded.
 
 ## Coding Standards
 

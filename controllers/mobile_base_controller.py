@@ -9,6 +9,7 @@ from utils.replay_data_loader import ReplayDataLoader
 
 from .atomic_actions.atomic_base_controller import GRIPPER_MAX_OPEN
 from .base_controller import BaseController
+from .inference_engines.mobile_remote_inference_engine import MobileRemoteInferenceEngine
 from .robot_controllers.ridgebase.ridgebase_controller import RidgebaseController
 
 PHASE_NAVIGATE = 0
@@ -78,6 +79,11 @@ class MobileManipControllerBase(BaseController):
         self.all_subset = ArticulationSubset(
             robot, self.BASE_JOINT_NAMES + self.ARM_JOINT_NAMES + self.FINGER_JOINT_NAMES)
         self.waypoints_set = False
+        # Navigation-progress metric (infer): per-episode fraction of the
+        # spawn->dock distance closed, 1.0 = reached the dock.
+        self._nav_progress_hist: list = []
+        self._nav_d0: Optional[float] = None
+        self._nav_dmin: float = float("inf")
 
     # ── Mode init overrides ──────────────────────────────────────────────
 
@@ -107,6 +113,20 @@ class MobileManipControllerBase(BaseController):
             logger.info(f"Episode {ep.episode_idx}: {len(self._current_actions)} actions loaded.")
         self.reset_needed = True
         self._is_initial_replay_reset = True
+
+    def _init_infer_mode(self, cfg: Any, robot: Any = None) -> None:
+        """Full-body VLA inference: the policy drives all 12 DOFs.
+
+        The predicted 11-dim action (base body-delta + arm + gripper) is applied
+        exactly like replay via ``_apply_action11`` — no Franka trajectory
+        controller (its 9-dim arm actions would land on the wrong DOFs), and no
+        RMPFlow/IK. ``base_delta_actions`` (default True — the L5 datasets are
+        exported body_delta) makes ``_apply_action11`` integrate the base deltas
+        onto the measured base pose, the same closed-loop law replay validated.
+        """
+        self.trajectory_controller = _NullTrajectory()
+        self.inference_engine = MobileRemoteInferenceEngine(cfg, self.trajectory_controller)
+        self._infer_base_delta = bool(getattr(cfg.infer, "base_delta_actions", True))
 
     # ── Unified 11-dim helpers ───────────────────────────────────────────
 
@@ -208,6 +228,59 @@ class MobileManipControllerBase(BaseController):
                     f"obj={np.round(obj, 3).tolist()} "
                     f"reach_xy={float(np.linalg.norm(obj[:2] - world_xy)):.3f}")
 
+    def _update_nav_progress(self, state: Dict[str, Any]) -> None:
+        """Track the closest the base gets to the dock this episode (infer).
+
+        Progress toward the goal = fraction of the spawn->dock distance closed,
+        finalized per-episode in ``reset``. Measures navigation quality
+        independently of whether the terminal grasp succeeds.
+        """
+        dock = state.get("dock_point")
+        if dock is None:
+            return
+        base = self._state11()
+        pose = np.asarray(state["current_pose"], dtype=float)
+        world_xy = pose[:2] + base[:2]
+        d = float(np.linalg.norm(world_xy - np.asarray(dock, dtype=float)[:2]))
+        if self._nav_d0 is None:
+            self._nav_d0 = d
+        self._nav_dmin = min(self._nav_dmin, d)
+
+    def _finalize_nav_progress(self) -> None:
+        """Record the just-finished episode's nav progress and log a summary."""
+        if self._nav_d0 is not None and self._nav_d0 > 1e-6:
+            prog = float(np.clip((self._nav_d0 - self._nav_dmin) / self._nav_d0, 0.0, 1.0))
+            self._nav_progress_hist.append(prog)
+            logger.info(
+                f"[NAV-PROGRESS] ep{len(self._nav_progress_hist)}: {prog:.2f} "
+                f"(D0={self._nav_d0:.2f}m Dmin={self._nav_dmin:.2f}m) "
+                f"mean={float(np.mean(self._nav_progress_hist)):.2f}"
+            )
+        self._nav_d0 = None
+        self._nav_dmin = float("inf")
+
+    def _log_infer_diag(self, state: Dict[str, Any], every: int = 240) -> None:
+        """Trace the VLA-driven trajectory so infer failures can be localized:
+        does the base reach the dock, does the EE reach the object, does the
+        gripper close? Logged every ``every`` frames (there is no phase split in
+        full-body infer, so this is the only visibility into the rollout)."""
+        self._infer_frame = getattr(self, "_infer_frame", 0) + 1
+        if self._infer_frame % every != 1:
+            return
+        base = self._state11()
+        pose = np.asarray(state["current_pose"], dtype=float)
+        world_xy = pose[:2] + base[:2]
+        heading = float((pose[2] + base[2] + np.pi) % (2 * np.pi) - np.pi)
+        ee = np.asarray(self.robot.get_gripper_position(), dtype=float)
+        obj = np.asarray(state.get("object_position", [0, 0, 0]), dtype=float)
+        dock = np.asarray(state.get("dock_point", world_xy), dtype=float)
+        logger.info(
+            f"[INFER f{self._infer_frame}] base={np.round(world_xy, 3).tolist()} "
+            f"head={np.degrees(heading):.1f}deg reach_xy={float(np.linalg.norm(obj[:2] - world_xy)):.3f} "
+            f"ee_z={ee[2]:.3f} ee_obj_xy={float(np.linalg.norm(ee[:2] - obj[:2])):.3f} "
+            f"grip={self._gripper_closedness():.2f} dock_err={np.round(world_xy - dock[:2], 3).tolist()}"
+        )
+
     # ── Arm-phase helpers ────────────────────────────────────────────────
 
     def _sync_arm_base_pose(self) -> np.ndarray:
@@ -233,7 +306,7 @@ class MobileManipControllerBase(BaseController):
     def _apply_action11(self, act: np.ndarray) -> ArticulationAction:
         """Convert a recorded 11-dim action to a 12-DOF position command."""
         act = np.asarray(act, dtype=np.float64)
-        if getattr(self, "_replay_base_delta", False):
+        if getattr(self, "_replay_base_delta", False) or getattr(self, "_infer_base_delta", False):
             # Body-frame delta -> absolute target on the MEASURED base pose.
             # Root orientation is identity (facing lives in the revolute
             # joint), so the measured theta joint IS the world heading.
@@ -308,7 +381,9 @@ class MobileManipControllerBase(BaseController):
         return action, False, False
 
     def reset(self) -> None:
+        self._finalize_nav_progress()
         super().reset()
         self.waypoints_set = False
         self._replay_div_warned = False
         self._pick_min_ee_z = 1e9
+        self._infer_frame = 0

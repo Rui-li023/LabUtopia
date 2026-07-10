@@ -13,14 +13,20 @@ replay:
   # episode_indices: [0, 1, 2]
 
 infer:
-  type: "local"
-  obs_names: {"image": 'front_camera_rgb', "image_2": 'top_camera_rgb', "wrist_image": 'wrist_camera_rgb'}
-  policy_model_path: ""
-  policy_config_path: ""
-  normalizer_path: ""
+  # Full-body VLA (move+pick): the policy drives all 12 DOFs. Base action dims
+  # 0:3 are BODY-frame deltas — integrated onto the measured base pose by the
+  # mobile controller (base_delta_actions). remote_mobile bypasses the Franka
+  # trajectory controller. obs_names map camera_data keys (= camera NAME for a
+  # plain-rgb camera) -> server obs keys; defaults are openpi's, the eval
+  # harness patches per-model (smolvla/gr00t/lingbot).
+  type: "remote_mobile"
+  obs_names: {"front_camera": "observation/image", "top_camera": "observation/wrist_image", "wrist_camera": "observation/wrist_image_2"}
+  base_delta_actions: true
+  image_color: "rgb"          # LeRobot loaders decode RGB (no BGR swap)
   host: "127.0.0.1"
   port: 8000
   n_obs_steps: 1
+  action_chunk_len: 10        # openpi action_horizon; smolvla/lingbot patch to 50, gr00t 40
   timeout: 30
   max_retries: 3
 

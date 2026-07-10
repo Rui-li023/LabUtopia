@@ -1,7 +1,6 @@
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
-from isaacsim.core.utils.types import ArticulationAction
 from loguru import logger
 from scipy.spatial.transform import Rotation as R
 
@@ -120,20 +119,18 @@ class MobilePickController(MobileManipControllerBase):
     # ── Infer ────────────────────────────────────────────────────────────
 
     def _step_infer(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
-        """Scripted navigation (stand-in for an external nav model) + VLA arm."""
-        if not self.navigation_done:
-            self._ensure_waypoints(state)
-            action, nav_done, _ = self._nav_step(state)
-            if nav_done:
-                logger.info("[infer] Navigation complete — handing over to policy")
-                self.navigation_done = True
-            return action, False, False
+        """Full-body VLA: the policy drives the base (move) AND arm (pick).
 
-        self._sync_arm_base_pose()
+        The predicted 11-dim action (base body-delta + arm + gripper) is applied
+        via ``_apply_action11`` — the same closed-loop delta executor replay
+        uses — so navigation is learned, not scripted.
+        """
+        state["agent_pose"] = self._state11()
         state["language_instruction"] = self.get_language_instruction()
-        action = self.inference_engine.step_inference(state)
-        if isinstance(action, ArticulationAction):
-            action = self._remap_arm_action(action)
+        self._update_nav_progress(state)
+        self._log_infer_diag(state)
+        action11 = self.inference_engine.step_inference(state)
+        applied = self._apply_action11(action11) if action11 is not None else None
 
         if self._check_success():
             self.check_success_counter += 1
@@ -143,7 +140,7 @@ class MobilePickController(MobileManipControllerBase):
             self._last_success = True
             self.reset_needed = True
             return None, True, True
-        return action, False, False
+        return applied, False, False
 
     # ── Language ─────────────────────────────────────────────────────────
 

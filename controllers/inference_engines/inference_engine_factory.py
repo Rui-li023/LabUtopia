@@ -1,4 +1,5 @@
 from .local_model_inference_engine import LocalModelInferenceEngine
+from .mobile_remote_inference_engine import MobileRemoteInferenceEngine
 from .remote_inference_engine import RemoteInferenceEngine
 from .base_inference_engine import BaseInferenceEngine
 
@@ -24,10 +25,12 @@ class InferenceEngineFactory:
             return LocalModelInferenceEngine(cfg, trajectory_controller)
         elif inference_type == 'remote':
             return RemoteInferenceEngine(cfg, trajectory_controller)
+        elif inference_type == 'remote_mobile':
+            return MobileRemoteInferenceEngine(cfg, trajectory_controller)
         else:
             raise ValueError(f"Unsupported inference engine type: {inference_type}")
-    
+
     @staticmethod
     def get_supported_types():
         """Get supported inference engine types"""
-        return ['local', 'remote'] 
+        return ['local', 'remote', 'remote_mobile']

@@ -1,0 +1,82 @@
+name: level5_close_pick_smolvla
+
+task_type: "mobile_pick"
+controller_type: "mobile_pick"
+
+mode: "infer"  # "collect", "infer", or "replay"
+usd_path: "assets/navigation_lab/navigation_lab_01/lab.usd"
+max_episodes: 20
+collect_position_only: true
+
+replay:
+  dataset_path: ""
+
+infer:
+  # SmolVLA full-body move+pick eval. remote_mobile drives all 12 DOFs; base
+  # dims 0:3 are body-deltas integrated onto the measured base pose.
+  # obs_names: camera_data key (= camera NAME) -> server obs key. SmolVLA's WS
+  # server maps observation/image->front_camera, image_2->top_camera,
+  # wrist_image->wrist_camera (saved rename -> camera1/2/3).
+  type: "remote_mobile"
+  obs_names: {"front_camera": "observation/image", "top_camera": "observation/image_2", "wrist_camera": "observation/wrist_image"}
+  base_delta_actions: true
+  image_color: "rgb"
+  host: "127.0.0.1"
+  port: 18085          # local end of the SSH -L tunnel to the serve pod's 9085
+  n_obs_steps: 1
+  action_chunk_len: 50
+  timeout: 30
+  max_retries: 3
+
+task:
+  max_steps: 2000
+  navigation_config_path: "config/navigation/navigation_assets.yaml"
+  pick_object_path: "/World/beaker"
+  object_position_range:
+    x: [-3.5, -1.8]
+    y: [0.55, 0.65]
+    z: [0.80, 0.80]
+  dock_standoff: 0.75
+  dock_jitter: [0.03, 0.03]
+  spawn:
+    mode: "near"
+    distance_range: [0.9, 1.1]
+  grasp_ee_euler_deg: [-115, 90, 0]
+  max_linear_speed: 0.04
+  max_angular_speed: 0.12
+  position_threshold: 0.05
+  angle_threshold: 0.02
+
+cameras:
+  - prim_path: "/World/Ridgebase/base_link/Camera"
+    name: "top_camera"
+    resolution: [256, 256]
+    clipping_range: [0.1, 20.0]
+    image_type: "rgb"
+
+  - prim_path: "/World/Ridgebase/panda_hand/Camera"
+    name: "wrist_camera"
+    resolution: [256, 256]
+    clipping_range: [0, 10.0]
+    image_type: "rgb"
+
+  - prim_path: "/World/Ridgebase/base_link/Camera_01"
+    name: "front_camera"
+    resolution: [256, 256]
+    clipping_range: [0.1, 40.0]
+    image_type: "rgb"
+
+robot:
+  type: "ridgebase"
+  position: [0.0, 0.0, 0.0]
+
+collector:
+  type: "mobile"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
