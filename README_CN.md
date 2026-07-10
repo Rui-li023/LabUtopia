@@ -67,7 +67,6 @@ python -m isaacsim --generate-vscode-settings
 ```
 LabUtopia/
 ├── main.py                  # 入口：配置 → 工厂构建 → 仿真循环
-├── train.py                 # 策略训练（Diffusion UNet / ACT）
 ├── assets/                  # USD 场景文件
 │   ├── chemistry_lab/       # 化学实验室场景资源
 │   ├── navigation/          # 导航任务相关资源
@@ -85,7 +84,7 @@ LabUtopia/
 ├── data_collectors/         # HDF5 数据收集器
 ├── factories/               # 注册式工厂（task、controller、robot、collector）
 ├── packages/                # 内置 openpi-client 包
-├── policy/                  # ML 模型：Diffusion UNet、ACT、视觉编码器
+├── policy/                  # 策略训练（git 子模块：Isaac-GR00T、lerobot、lingbot-vla、openpi）
 ├── robots/                  # 机器人定义（Franka、Ridgebase）
 ├── scripts/                 # 数据转换与数据集工具
 ├── tasks/                   # 任务环境（场景、相机、观测）
@@ -207,84 +206,20 @@ python main.py --config-name level1_pick
 
 ### 训练
 
-训练过程使用收集到的数据来训练机器人策略模型。
+策略训练在 `policy/` 目录下的四个 VLA 子模块（git submodule）内部进行：
 
-#### 1. 选择训练配置
+- `policy/Isaac-GR00T` — NVIDIA GR00T
+- `policy/lerobot` — LeRobot（SmolVLA 等）
+- `policy/lingbot-vla` — LingBot-VLA
+- `policy/openpi` — OpenPI
 
-在`policy/config/`文件夹中有多种训练配置：
-
-- `train_diffusion_unet_image_workspace.yaml` - 扩散模型训练（推荐）
-- `train_act_image_workspace.yaml` - ACT模型训练
-- `train_nav_diffusion.yaml` - 导航任务扩散模型训练
-- `train_nav_act.yaml` - 导航任务ACT模型训练
-
-#### 2. 修改训练参数
-
-主要需要调整的参数：
-
-```yaml
-# 模型配置
-policy:
-  _target_: policy.policy.diffusion_unet_image_policy.DiffusionUnetImagePolicy
-  shape_meta: ${shape_meta}        # 数据形状元信息
-  
-  # 噪声调度器配置
-  noise_scheduler:
-    num_train_timesteps: 100       # 训练时间步数
-    beta_start: 0.0001             # β起始值
-    beta_end: 0.02                 # β结束值
-    beta_schedule: squaredcos_cap_v2  # β调度策略
-
-  # 观察编码器配置
-  obs_encoder:
-    _target_: policy.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
-    rgb_model:
-      _target_: policy.model.vision.model_getter.get_resnet
-      name: resnet18               # 骨干网络
-    resize_shape: [256, 256]      # 调整大小
-    random_crop: False              # 随机裁剪
-
-# 训练参数
-training:
-  device: "cuda:0"                # 训练设备
-  seed: 42                        # 随机种子
-  num_epochs: 8000                # 训练轮数
-  lr: 1.0e-4                      # 学习率
-  batch_size: 64                  # 批次大小
-  gradient_accumulate_every: 1     # 梯度累积步数
-  
-  # 检查点保存
-  checkpoint_every: 30             # 每30轮保存一次
-  val_every: 10                   # 每10轮验证一次
-
-# 数据加载器配置
-dataloader:
-  batch_size: 64                  # 批次大小
-  num_workers: 4                  # 工作进程数
-  shuffle: True                   # 是否打乱数据
-
-# 优化器配置
-optimizer:
-  _target_: torch.optim.AdamW
-  lr: 1.0e-4                      # 学习率
-  betas: [0.95, 0.999]           # Adam参数
-  weight_decay: 1.0e-6           # 权重衰减
-```
-
-#### 3. 指定数据集的位置
-修改`policy/config/task`文件夹下对应的配置文件，修改参数 `dataset_path` 为你的数据集所在的文件夹
-
-#### 4. 运行训练
+先将采集到的数据导出为 LeRobot 格式，再按各子模块自己的 README 进行训练：
 
 ```bash
-# 使用扩散模型训练
-python train.py --config-name=train_diffusion_unet_image_workspace
-
-# 使用ACT模型训练
-python train.py --config-name=train_act_image_workspace
+# 将一次采集导出为 LeRobot v2.1（或 v3.0）
+python -m scripts.lerobot_export.cli --src <run_dir> --dst <out_dir> --version v2.1
 ```
 
-训练日志和模型将保存在 `outputs/train/日期/时间_模型名_任务名/` 目录下。
 
 ### 推理
 

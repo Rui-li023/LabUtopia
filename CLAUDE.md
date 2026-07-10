@@ -39,9 +39,9 @@ Outputs land in `outputs/${mode}/${date}/${time}_${name}/`; collected episodes a
   instance already saturates the GPU; concurrent runs cause physics instability, OOM, and
   watchdog kills. Run regression tests sequentially — even when they look independent.
 - `policy/` contains four vendored VLA repos as git submodules (Isaac-GR00T, lerobot,
-  lingbot-vla, openpi) — training happens inside those submodules. The in-tree Diffusion
-  UNet / ACT training code that `train.py` / `train-muilt.py` expect (`policy/config/`)
-  was removed in that refactor, so those entry points are stale.
+  lingbot-vla, openpi) — training happens inside those submodules. The stale in-tree
+  training entry points (`train.py` / `train-muilt.py`, Diffusion UNet / ACT) were
+  deleted 2026-07-10; their `policy/config/` had already been removed in an earlier refactor.
 
 ## Project Structure
 

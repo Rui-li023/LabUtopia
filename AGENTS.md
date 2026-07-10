@@ -14,10 +14,12 @@
 高层入口：
 
 - `main.py`：仿真主入口，负责 `config -> factory -> task/controller -> simulation loop`
-- `train.py`：单机训练入口
-- `train-muilt.py`：Lightning 多卡训练入口，文件名里有 `muilt` 这个拼写，除非明确要修复，不要顺手重命名
 - `tests/test_single_config.py`：单个配置的烟雾测试
 - `tests/test_config_files.py`：批量配置测试
+
+训练不在本仓库树内进行：`policy/` 下是四个 VLA 子模块（Isaac-GR00T、lerobot、
+lingbot-vla、openpi），训练在各子模块内部完成。历史遗留的树内训练入口
+`train.py` / `train-muilt.py`（Diffusion UNet / ACT）已于 2026-07-10 删除。
 
 ## 2. 目录速览
 
@@ -27,7 +29,7 @@
 - `factories/`：task/controller/robot/collector 注册与构造
 - `robots/`：Franka、Ridgebase、Piper 等机器人定义
 - `data_collectors/`：HDF5 采集逻辑
-- `policy/`：策略训练、模型、数据集和 workspace
+- `policy/`：策略训练（git 子模块：Isaac-GR00T、lerobot、lingbot-vla、openpi）
 - `packages/openpi-client/`：内置的远程推理 client 子包
 - `assets/`：USD 场景和机器人资源，体积大且容易误伤
 - `utils/`：`ObjectUtils`、相机处理、回放加载、A* 等工具
@@ -114,7 +116,7 @@
 - 改任务逻辑：优先看 `tasks/`
 - 改动作流程或成功判定：优先看 `controllers/`
 - 新增任务类型：通常要同时改 `tasks/`、`controllers/`、`factories/`、`config/`
-- 改训练逻辑：优先看 `policy/` 和 `train*.py`
+- 改训练逻辑：在 `policy/` 下对应的 VLA 子模块内改（注意子模块有独立的 git 仓库）
 - 改远程推理：看 `controllers/inference_engines/` 和 `packages/openpi-client/`
 
 ### 4.2 尽量不要碰哪里
@@ -159,10 +161,11 @@ python main.py --config-name level5_navigation --no-video
 
 ### 5.2 训练策略
 
+先用 `scripts/lerobot_export/` 把采集数据导出为 LeRobot 格式，再进入 `policy/`
+下对应子模块（Isaac-GR00T / lerobot / lingbot-vla / openpi）按其 README 训练：
+
 ```bash
-python train.py --config-name=train_diffusion_unet_image_workspace
-python train.py --config-name=train_act_image_workspace
-python train-muilt.py --config-name=train_nav_diffusion
+python -m scripts.lerobot_export.cli --src <run_dir> --dst <out_dir> --version v2.1
 ```
 
 ### 5.3 轻量验证

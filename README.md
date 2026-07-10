@@ -66,7 +66,6 @@ python -m isaacsim --generate-vscode-settings
 ```
 LabUtopia/
 ├── main.py                  # Entry point: config → factory → simulation loop
-├── train.py                 # Policy training (Diffusion UNet / ACT)
 ├── assets/                  # USD scene files
 │   ├── chemistry_lab/       # Chemistry lab scene resources
 │   ├── navigation/          # Navigation task resources
@@ -84,7 +83,7 @@ LabUtopia/
 ├── data_collectors/         # HDF5 episode data collectors
 ├── factories/               # Registry-based factories (task, controller, robot, collector)
 ├── packages/                # Vendored openpi-client package
-├── policy/                  # ML models: Diffusion UNet, ACT, vision encoders
+├── policy/                  # Policy training (git submodules: Isaac-GR00T, lerobot, lingbot-vla, openpi)
 ├── robots/                  # Robot definitions (Franka, Ridgebase)
 ├── scripts/                 # Data conversion & dataset utilities
 ├── tasks/                   # Task environments (scene, cameras, observations)
@@ -206,84 +205,22 @@ Data will be saved in the `outputs/collect/date/time_taskname/` directory.
 
 ### Training
 
-The training process uses collected data to train robot policy models.
+Policy training happens inside the vendored VLA repositories under `policy/` (git submodules):
 
-#### 1. Select Training Configuration
+- `policy/Isaac-GR00T` — NVIDIA GR00T
+- `policy/lerobot` — LeRobot (SmolVLA, etc.)
+- `policy/lingbot-vla` — LingBot-VLA
+- `policy/openpi` — OpenPI
 
-There are multiple training configurations in the `policy/config/` folder:
-
-- `train_diffusion_unet_image_workspace.yaml` - Diffusion model training (recommended)
-- `train_act_image_workspace.yaml` - ACT model training
-- `train_nav_diffusion.yaml` - Navigation task diffusion model training
-- `train_nav_act.yaml` - Navigation task ACT model training
-
-#### 2. Modify Training Parameters
-
-Main parameters that need to be adjusted:
-
-```yaml
-# Model configuration
-policy:
-  _target_: policy.policy.diffusion_unet_image_policy.DiffusionUnetImagePolicy
-  shape_meta: ${shape_meta}        # Data shape metadata
-  
-  # Noise scheduler configuration
-  noise_scheduler:
-    num_train_timesteps: 100       # Training timesteps
-    beta_start: 0.0001             # Beta start value
-    beta_end: 0.02                 # Beta end value
-    beta_schedule: squaredcos_cap_v2  # Beta schedule strategy
-
-  # Observation encoder configuration
-  obs_encoder:
-    _target_: policy.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
-    rgb_model:
-      _target_: policy.model.vision.model_getter.get_resnet
-      name: resnet18               # Backbone network
-    resize_shape: [256, 256]      # Resize shape
-    random_crop: False              # Random crop
-
-# Training parameters
-training:
-  device: "cuda:0"                # Training device
-  seed: 42                        # Random seed
-  num_epochs: 8000                # Training epochs
-  lr: 1.0e-4                      # Learning rate
-  batch_size: 64                  # Batch size
-  gradient_accumulate_every: 1     # Gradient accumulation steps
-  
-  # Checkpoint saving
-  checkpoint_every: 30             # Save every 30 epochs
-  val_every: 10                   # Validate every 10 epochs
-
-# Data loader configuration
-dataloader:
-  batch_size: 64                  # Batch size
-  num_workers: 4                  # Number of workers
-  shuffle: True                   # Whether to shuffle data
-
-# Optimizer configuration
-optimizer:
-  _target_: torch.optim.AdamW
-  lr: 1.0e-4                      # Learning rate
-  betas: [0.95, 0.999]           # Adam parameters
-  weight_decay: 1.0e-6           # Weight decay
-```
-
-#### 3. Specify Dataset Location
-Modify the corresponding configuration file in the `policy/config/task` folder, change the `dataset_path` parameter to your dataset folder location.
-
-#### 4. Run Training
+Export collected episodes to LeRobot format first, then follow each submodule's own README
+for training:
 
 ```bash
-# Use diffusion model training
-python train.py --config-name=train_diffusion_unet_image_workspace
-
-# Use ACT model training
-python train.py --config-name=train_act_image_workspace
+# Export a collected run to LeRobot v2.1 (or v3.0)
+python -m scripts.lerobot_export.cli --src <run_dir> --dst <out_dir> --version v2.1
 ```
 
-Training logs and models will be saved in the `outputs/train/date/time_modelname_taskname/` directory.
+
 
 ### Inference
 
