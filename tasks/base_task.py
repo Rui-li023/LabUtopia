@@ -1,3 +1,5 @@
+import glob
+import os
 import random
 from abc import ABC, abstractmethod
 from typing import Any
@@ -7,7 +9,7 @@ from isaacsim.core.utils.prims import set_prim_visibility
 from isaacsim.core.utils.semantics import add_update_semantics
 from isaacsim.sensors.camera import Camera
 from loguru import logger
-from pxr import UsdShade
+from pxr import Sdf, UsdLux, UsdShade
 from scipy.spatial.transform import Rotation
 
 from utils.camera_utils import process_camera_image
@@ -54,6 +56,7 @@ class BaseTask(ABC):
         self.setup_objects()
         self.setup_materials()
         self.setup_lighting()
+        self.setup_environment()
         self.setup_object_placement()
         self.setup_distractors()
 
@@ -310,6 +313,34 @@ class BaseTask(ABC):
         if self._lighting_enabled:
             self._lighting_randomizer = LightingRandomizer(self.stage)
             logger.info("Lighting randomization enabled")
+
+    def setup_environment(self) -> None:
+        """Create a DomeLight from ``cfg.environment.hdr_path`` when configured.
+
+        ``hdr_path`` may point to a single ``.exr`` file or to a directory. When
+        a directory is provided, one ``.exr`` is selected at random.
+        """
+        env_cfg = getattr(self.cfg, "environment", None)
+        if env_cfg is None:
+            return
+
+        hdr_path = getattr(env_cfg, "hdr_path", None)
+        if not hdr_path:
+            return
+
+        if os.path.isdir(hdr_path):
+            candidates = glob.glob(os.path.join(hdr_path, "**", "*.exr"), recursive=True)
+            if not candidates:
+                logger.warning(f"No .exr files found under {hdr_path}, skipping DomeLight")
+                return
+            hdr_path = random.choice(candidates)
+            logger.info(f"HDR: randomly selected {hdr_path}")
+
+        intensity = float(getattr(env_cfg, "intensity", 1000.0))
+        dome_light = UsdLux.DomeLight.Define(self.stage, "/World/HDRDomeLight")
+        dome_light.CreateTextureFileAttr(Sdf.AssetPath(hdr_path))
+        dome_light.CreateIntensityAttr(intensity)
+        logger.info(f"HDR DomeLight created: {hdr_path} (intensity={intensity})")
 
     def _randomize_lighting(self) -> None:
         """Apply lighting randomization if enabled.  Called during ``reset()``.
