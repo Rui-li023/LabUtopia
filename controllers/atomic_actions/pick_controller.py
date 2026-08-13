@@ -231,6 +231,11 @@ class PickController(AtomicBaseController):
         return table.get(item_name.lower(), 0.0)
 
     def get_pickz_offset(self, item_name):
+        # Per-run override, set by the task controller from `grasp.pick_z_offset`.
+        # The table below is shared by every L1-L5 task, so a scene that wants a
+        # different grasp height must NOT edit it -- set the override instead.
+        if getattr(self, "pick_z_offset_override", None) is not None:
+            return self.pick_z_offset_override
         table = {
             "conical_bottle02": 0.065, "conical_bottle03": 0.07,
             "conical_bottle04": 0.08, "beaker": 0.0, "beaker_04": 0.0,

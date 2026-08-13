@@ -2,6 +2,7 @@ import random
 from typing import Optional
 
 import numpy as np
+from loguru import logger
 from scipy.spatial.transform import Rotation as R
 
 from .atomic_actions.pick_controller import PickController
@@ -21,7 +22,31 @@ class PickTaskController(BaseController):
         "Pick up the {object_name} from the table and lift it clear of the surface.",
     ]
 
+    # World-frame grasp orientation, scipy extrinsic "xyz" degrees. The default
+    # [0, 90, 25] is what every level1-4 config has always used; it assumes the
+    # base faces world +X. A base yawed by theta needs the whole grasp frame
+    # rotated with it: Rz(theta) * Rz(25) * Ry(90).
+    DEFAULT_EE_EULER_DEG = (0.0, 90.0, 25.0)
+
     def __init__(self, cfg, robot):
+        # Read the grasp block BEFORE super().__init__: BaseController.__init__
+        # dispatches straight into this class's _init_collect_mode, which needs
+        # these attributes to already exist.
+        grasp_cfg = getattr(cfg, "grasp", None)
+        self._ee_euler_deg = np.array(
+            getattr(grasp_cfg, "ee_euler_deg", self.DEFAULT_EE_EULER_DEG) if grasp_cfg else self.DEFAULT_EE_EULER_DEG,
+            dtype=float,
+        )
+        # Off by default: feeding the base position makes the pre-grasp approach
+        # point from the object back toward the base instead of the hard-coded
+        # world -X, which shifts the lab tasks' approach by up to 0.13 lateral.
+        self._approach_from_base = bool(getattr(grasp_cfg, "approach_from_base", False)) if grasp_cfg else False
+        # Height the gripper closes at, measured from the object origin. None keeps
+        # the atomic controller's shared per-object table (which every other level
+        # depends on); set it to grasp lower or higher on the object.
+        raw_z = getattr(grasp_cfg, "pick_z_offset", None) if grasp_cfg else None
+        self._pick_z_offset = float(raw_z) if raw_z is not None else None
+
         super().__init__(cfg, robot)
         self.initial_position = None
         self._pick_instruction: Optional[str] = None
@@ -34,6 +59,14 @@ class PickTaskController(BaseController):
             cspace_controller=self.rmp_controller,
             events_dt=[0.004, 0.002, 0.01, 0.02, 0.05, 0.004, 0.008],
         )
+        if self._approach_from_base:
+            base_position, _ = robot.get_world_pose()
+            self.pick_controller.set_robot_position(np.asarray(base_position))
+            logger.info(f"[grasp] approach direction taken from base at {np.round(base_position, 3)}")
+        if self._pick_z_offset is not None:
+            self.pick_controller.pick_z_offset_override = self._pick_z_offset
+            logger.info(f"[grasp] pick_z_offset override = {self._pick_z_offset:.3f} m above the object origin")
+        logger.info(f"[grasp] world-frame ee_euler_deg = {self._ee_euler_deg.tolist()}")
 
     def reset(self):
         super().reset()
@@ -78,6 +111,16 @@ class PickTaskController(BaseController):
             self._pick_task_index = self.data_collector.register_task_instruction(instruction)
         return self._pick_task_index
 
+    def _grasp_quat(self, state) -> np.ndarray:
+        """World-frame grasp orientation as a quaternion, per step.
+
+        A hook, not a constant: the base class returns the fixed
+        ``grasp.ee_euler_deg`` every step (unchanged behaviour for L1-L5), while
+        ``PickWideTaskController`` overrides it to rotate the grasp frame with
+        the object's bearing so a much wider spawn area stays reachable.
+        """
+        return R.from_euler("xyz", np.radians(self._ee_euler_deg)).as_quat()
+
     def _step_collect(self, state):
         if self._check_success():
             self.check_success_counter += 1
@@ -102,7 +145,7 @@ class PickTaskController(BaseController):
                 object_size=state["object_size"],
                 object_name=state["object_name"],
                 gripper_control=self.gripper_control,
-                end_effector_orientation=R.from_euler("xyz", np.radians([0, 90, 25])).as_quat(),
+                end_effector_orientation=self._grasp_quat(state),
                 gripper_position=state["gripper_position"],
                 pre_offset_x=0.05,
                 after_offset_z=0.25,

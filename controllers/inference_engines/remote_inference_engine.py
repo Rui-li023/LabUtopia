@@ -170,6 +170,14 @@ class RemoteInferenceEngine(BaseInferenceEngine):
                 else:
                     raise ValueError(f"No action found in server response. Available keys: {list(result.keys())}")
 
+            # 夹爪维单独记：闭合发生在轨迹 70-80% 处，只记前 3 次调用根本看不到。
+            _g = action[:, 7] if action.ndim > 1 else action[7:8]
+            if self._infer_call_count <= 3 or _g.max() > 0.2 or self._infer_call_count % 10 == 0:
+                logger.info(
+                    f"[grip#{self._infer_call_count}] gripper chunk: "
+                    f"min={_g.min():.3f} max={_g.max():.3f} mean={_g.mean():.3f} "
+                    f"state_g={float(obs_dict.get('gripper_state', -1)) if isinstance(obs_dict, dict) else -1:.4f}"
+                )
             if self._infer_call_count <= 3:
                 a_min = action.min(axis=0) if action.ndim > 1 else action
                 a_max = action.max(axis=0) if action.ndim > 1 else action
@@ -181,8 +189,29 @@ class RemoteInferenceEngine(BaseInferenceEngine):
             return action
             
         except Exception as e:
-            logger.error(f"OpenPI inference failed: {e}")
-            # Return zero action as fallback
+            # 断线可恢复：隧道/服务端偶发断开时重建 client 重发同一份 observation。
+            # 旧行为是直接返回全零动作继续跑，结果整轮评测"成功完成"但每步都是空动作，
+            # 成功率恒为 0 且毫无提示 —— 这种静默失败比直接报错危险得多。
+            import time as _t
+            for attempt in range(1, 4):
+                try:
+                    _t.sleep(min(2 * attempt, 5))
+                    self.client = WebsocketClientPolicy(host=self.host, port=self.port, api_key=self.api_key)
+                    result = self.client.infer(observation)
+                    action = np.array(result.get('action', result.get('actions')))
+                    logger.success(f"OpenPI 重连成功（第 {attempt} 次重试）")
+                    self._consecutive_failures = 0
+                    return action
+                except Exception as e2:
+                    logger.warning(f"  重试 {attempt}/3 失败: {e2}")
+            self._consecutive_failures = getattr(self, "_consecutive_failures", 0) + 1
+            logger.error(
+                f"OpenPI 推理连续失败 {self._consecutive_failures} 次（3 次重连均失败）: {e}"
+            )
+            if self._consecutive_failures >= 5:
+                raise RuntimeError(
+                    f"远程推理连续 {self._consecutive_failures} 次失败，中止评测以免产出无效结果"
+                ) from e
             return np.zeros((8, 8))  # Default action shape
     
     def close(self):

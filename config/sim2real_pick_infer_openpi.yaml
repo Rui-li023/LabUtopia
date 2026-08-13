@@ -1,0 +1,160 @@
+name: sim2real_pick_infer_openpi
+
+# Level-1 pick on the sim2real bench, driving the arm at x=0 only; the other
+# arm is scenery. This is the arm carrying left_wrist_orbbec335 — the wrist
+# camera the real rig actually calibrated.
+#
+# Requires (all in the working tree):
+#   - main.py: scene referenced BEFORE create_robot, and robot.prim_path plumbed
+#   - controllers/pick_controller.py: optional `grasp:` block
+#   - assets/sim2real/table_cell.usd rebuilt by scripts/sim2real/build_table_scene.py
+#     (it now carries /World/conical_bottle02 and frames the static cameras on
+#      the driven arm)
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "infer"                 # bring-up: scripted atomic actions -> HDF5
+usd_path: "assets/sim2real/table_cell.usd"
+max_episodes: 20                # 与 h10 那轮(21 集)同量级，便于直接对比
+collect_position_only: true     # same control law as replay/infer, as every L1-L5 config
+
+# ── grasp geometry, referenced to the base yaw ───────────────────────────────
+# The stock [0, 90, 25] is a WORLD-frame orientation that assumes the base faces
+# world +X. Both bench arms are yawed -90 deg (forward = world -Y), so the whole
+# grasp frame rotates with it: Rz(-90) * Rz(25) * Ry(90) == xyz [0, 90, -65]
+# (both arms carry the same -90 deg yaw, so this value is arm-independent)
+# (verified numerically, max |R diff| 2.2e-16). approach_from_base replaces the
+# hard-coded world -X pre-grasp offset with the object->base direction.
+grasp:
+  ee_euler_deg: [0, 90, -65]
+  approach_from_base: true
+  # Height the gripper closes at, above the object origin. The atomic controller's
+  # shared table has conical_bottle02 at 0.065, which grips up near the neck; this
+  # overrides it WITHOUT touching that table, which every other level depends on.
+  pick_z_offset: 0.040
+
+task:
+  max_steps: 800
+  obj_paths:
+    # Name is load-bearing: BaseTask keys the grasp-height table and the language
+    # instruction off the last path component.
+    - path: "/World/conical_bottle02"
+      # WORLD metres. Derived from the driven arm's base frame, not guessed:
+      #   base at (0.00, 0.05, 0.75), yaw -90  =>  base +X -> world -Y
+      #   world = (0.00 + lateral, 0.05 - forward, z)
+      # forward 0.41..0.55 m, lateral +-0.08 m
+      #   -> planar radius 0.42..0.56 m, i.e. 63..77 % of the ~0.855 m envelope
+      #      measured from the shoulder (deliberately less extended than the lab
+      #      band, which sits at 94-97 %, to keep reach margin during bring-up)
+      #   -> 0.40 m of clear bench in front of the object
+      #   -> never on the driven arm's plate (y 0.05..0.35) and never within
+      #      0.72 m of the other arm's base at x=-0.80: no arm-to-arm contact
+      # Widened 2026-08-09 from x +-0.08 / y [-0.55,-0.41] (0.022 m^2) to 0.094 m^2,
+      # a 4.2x larger spawn area. Bounds are set by reach and by what it must not
+      # touch, not by taste:
+      #   planar radius from the shoulder 0.41..0.69 m = 48..81 % of the ~0.855 m
+      #     envelope (the lab tasks run at 94-97 %, so this still has margin)
+      #   y max -0.36 stays clear of the driven arm's plate, which starts at +0.05
+      #   x min -0.18 is 0.62 m from the other arm's base at x=-0.80, so the two
+      #     arms can never collide
+      # 近边 2026-08-09 从 -0.36 收到 -0.42。MEASURED over 592 attempts: 成功率强烈
+      # 依赖肩部平面距离 r，而且坏的是**近端**不是远端 ——
+      #     r≈0.4 m   6/63  =  9%     <- 63 次尝试只产出 6 条，采样有偏且稀疏
+      #     r≈0.5 m 113/205 = 55%
+      #     r≈0.6 m 212/252 = 84%
+      #     r≈0.7 m  59/71  = 83%     <- 最远端反而最好
+      # 横向偏移 |x| 无影响(73/62/63%)，所以不是左右够不着，是离底座太近时手臂
+      # 回折，那个位形对侧向抓取姿态不友好。y<=-0.42 使 r>=0.47，剔掉 9% 那一档；
+      # 面积仍是最初的 3.2 倍。预期成功率 66% -> ~73%。
+      position_range:
+        x: [-0.18, 0.18]
+        y: [-0.62, -0.42]
+        z: [0.77, 0.77]         # benchtop 0.75 + 2 cm settle drop
+
+cameras:
+  # All three prims already exist and are typed Camera, so BaseTask.setup_cameras
+  # takes the attach branch and the authored pose / focalLength / aperture
+  # offsets / OmniLensDistortionOpenCvPinholeAPI all survive. Two things it DOES
+  # overwrite, hence the explicit values:
+  #   resolution     - the calibration in usd_intrinsics.py is DEFINED at 640x480;
+  #                    any other aspect makes Camera rewrite verticalAperture
+  #   clipping_range - base_task.py forces (0.1, 10.0) unless given, and the wrist
+  #                    camera is ~0.1 m from the TCP, so it would blank at grasp
+  - prim_path: "/World/Cameras/third_view_orbbec335L"
+    name: "image"
+    resolution: [640, 480]
+    clipping_range: [0.02, 100.0]
+    image_type: "rgb"
+
+  - prim_path: "/World/Cameras/second_third_realsense435i"
+    name: "image_2"
+    resolution: [640, 480]
+    clipping_range: [0.02, 100.0]
+    image_type: "rgb"
+
+  - prim_path: "/World/Franka_left/panda_hand/left_wrist_orbbec335"
+    name: "wrist_image"
+    resolution: [640, 480]
+    clipping_range: [0.02, 100.0]
+    image_type: "rgb"
+
+robot:
+  type: "franka"
+  prim_path: "/World/Franka_left"    # bind to the arm already in the scene
+  position: [0.0, 0.05, 0.75]        # MUST match the authored xformOp:translate;
+                                     # orientation is left alone so the -90 deg
+                                     # base yaw survives for RMPFlow
+
+# ── domain randomization: lighting ───────────────────────────────────────────
+# NOTE: `scenario` is deliberately NOT set. base_task takes a different branch
+# when it is present (randomize_scene_for_episode), which ignores the
+# randomize_intensity flag below and would overwrite the calibrated intensities.
+lighting:
+  enabled: false
+  # The bench lights are photometrically calibrated against the real rig and span
+  # 60 (dome) to 785000 (strip). Writing one absolute intensity range over all of
+  # them would flatten that to a single value and throw the calibration away.
+  # Exposure is a power-of-2 MULTIPLIER, so it swings the level while preserving
+  # every light's relative contribution.
+  randomize_intensity: false
+  # SYMMETRIC about 0 on purpose. exposure is log2, so median exposure 0 means
+  # the median episode is exactly the calibrated light level, i.e. the real rig's
+  # operating point sits at the CENTRE of the training distribution rather than
+  # at an edge. Range is 0.41x .. 2.46x. This was set analytically, not fitted:
+  # 5-episode pilots put the sample mean anywhere from 167 to 206 for the same
+  # settings, so tuning it by pilot was fitting noise.
+  exposure_range: [-1.3, 1.3]
+  # Centred on 6500 K, which is where the colour calibration was done, so the
+  # matched look is the MIDDLE of the distribution rather than one end of it.
+  color_temp_range: [4300, 8700]
+  randomize_position: false
+
+collector:
+  type: "default"
+  compression: gzip
+
+replay:
+  dataset_path: ""
+
+infer:
+  type: "remote"
+  obs_names: {"image": 'observation/image', "image_2": 'observation/wrist_image', "wrist_image": 'observation/wrist_image_2'}
+  host: "127.0.0.1"
+  port: 19080
+  # 权重换成 action_horizon=60 那版（pi05_labutopia_sim2real_pick_h60/29999）。
+  # 60 帧 @60Hz = 1.00 s，正好过 docs/sim2real_vla_eval.md 立的那条线：
+  # 一次推理必须覆盖 ≥1 s 的控制量，否则手臂在 ~6 s 的推理间隙里走走停停，
+  # 永远推进不到"该闭合夹爪"的位姿（h10 = 0.167 s，成功率 5%）。
+  action_chunk_len: 60
+  image_color: bgr
+  n_obs_steps: 1
+  timeout: 30
+  max_retries: 3
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}

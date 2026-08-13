@@ -131,11 +131,28 @@ def main():
         save_video = True
         show_video = True
 
+    # Scene BEFORE robot. A scene USD may already contain the arm we want to
+    # drive (the sim2real bench has both of its Frankas baked in); the robot
+    # constructor only binds to an existing prim if that prim is already on the
+    # stage, otherwise it references a fresh one and clobbers the authored base
+    # transform. No shipped scene contains a robot, so this reorder is a no-op
+    # for every pre-existing config.
+    stage = omni.usd.get_context().get_stage()
+    add_reference_to_stage(usd_path=os.path.abspath(cfg.usd_path), prim_path="/World")
+
     robot_kwargs = {"position": np.array(cfg.robot.position)}
     if hasattr(cfg.robot, "default_joint_positions"):
         robot_kwargs["default_joint_positions"] = np.array(cfg.robot.default_joint_positions)
+    if hasattr(cfg.robot, "usd_path"):
+        robot_kwargs["usd_path"] = str(cfg.robot.usd_path)
+    if hasattr(cfg.robot, "prim_path"):
+        # Bind to an arm that already exists in the scene instead of spawning one.
+        # Orientation is deliberately NOT passed: leaving it unset preserves the
+        # base yaw authored in the scene, which RMPFlowController then reads via
+        # get_world_pose() and feeds to set_robot_base_pose().
+        robot_kwargs["prim_path"] = str(cfg.robot.prim_path)
     robot = create_robot(cfg.robot.type, **robot_kwargs)
-    logger.info(f"Robot created: {cfg.robot.type}")
+    logger.info(f"Robot created: {cfg.robot.type} at {getattr(robot, 'prim_path', cfg.robot.get('prim_path', '/World/Franka'))}")
 
     # Configure gripper control mode if specified
     gripper_cfg = getattr(cfg.robot, "gripper", None)
@@ -150,9 +167,6 @@ def main():
                 closing_force=float(getattr(gripper_cfg, "closing_force", 20.0)),
                 closing_speed=float(getattr(gripper_cfg, "closing_speed", 0.2)),
             )
-    
-    stage = omni.usd.get_context().get_stage()
-    add_reference_to_stage(usd_path=os.path.abspath(cfg.usd_path), prim_path="/World")
     
     ObjectUtils.get_instance(stage)
     

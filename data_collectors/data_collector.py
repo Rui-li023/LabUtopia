@@ -51,11 +51,24 @@ def _flatten_init_state(init_state: dict) -> dict:
         flat["object_material_paths"] = list(materials.keys())
         flat["object_material_values"] = list(materials.values())
 
+    # Camera poses are {name: {translation, orientation, focal_length}}. Without
+    # this branch they fell through to the generic float32 path below, which threw
+    # "float() argument must be ... not 'dict'" and dropped them from every
+    # episode --- logged as one ERROR line and otherwise silent, so replay lost the
+    # camera state without anything failing.
+    cameras = init_state.get("camera_poses", {})
+    if cameras:
+        names = list(cameras.keys())
+        flat["camera_pose_names"] = names
+        flat["camera_pose_translations"] = np.array([cameras[n]["translation"] for n in names], dtype="float32")
+        flat["camera_pose_orientations"] = np.array([cameras[n]["orientation"] for n in names], dtype="float32")
+        flat["camera_focal_lengths"] = np.array([cameras[n]["focal_length"] for n in names], dtype="float32")
+
     extra = init_state.get("extra", {})
     if extra:
         flat["init_extra_json"] = json.dumps(extra)
 
-    legacy_skip = {"object_poses", "object_materials", "extra"}
+    legacy_skip = {"object_poses", "object_materials", "camera_poses", "extra"}
     for key, value in init_state.items():
         if key not in legacy_skip and key not in flat:
             flat[key] = value
@@ -101,9 +114,14 @@ def _write_episode_data(
         if init_state:
             flat = _flatten_init_state(init_state) if "object_poses" in init_state or "object_materials" in init_state else init_state
             grp = h5_file.create_group("init_state")
-            str_keys = {"object_pose_paths", "object_material_paths", "object_material_values"}
+            str_keys = {"object_pose_paths", "object_material_paths", "object_material_values", "camera_pose_names"}
             str_scalar_keys = {"init_extra_json"}
-            float2d_keys = {"object_pose_positions", "object_pose_orientations"}
+            float2d_keys = {
+                "object_pose_positions",
+                "object_pose_orientations",
+                "camera_pose_translations",
+                "camera_pose_orientations",
+            }
             for key, value in flat.items():
                 if key in str_keys:
                     grp.create_dataset(key, data=np.array(value, dtype=object), dtype=h5py.special_dtype(vlen=str))

@@ -1,6 +1,6 @@
 import random
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Dict
 
 import numpy as np
 from isaacsim.core.utils.prims import set_prim_visibility
@@ -199,7 +199,7 @@ class BaseTask(ABC):
             camera.initialize()
             image_types = cam_cfg.image_type.split("+") if "+" in cam_cfg.image_type else [cam_cfg.image_type]
             for image_type in image_types:
-                if image_type == "depth":
+                if image_type in ("depth", "depth_raw"):
                     camera.add_distance_to_image_plane_to_frame()
                 elif image_type == "pointcloud":
                     camera.add_distance_to_image_plane_to_frame()
@@ -229,6 +229,26 @@ class BaseTask(ABC):
             if display is not None:
                 display_data[cam_cfg.name] = display
         return camera_data, display_data
+
+    def get_camera_intrinsics(self) -> Dict[str, Any]:
+        """Return ``{camera_name: 3x3 intrinsic matrix (list)}``, cached.
+
+        Consumed by RGB-D navigation clients (NavDP) that need the pinhole
+        model to project/interpret camera-frame trajectories. Cached because the
+        intrinsics are fixed once the cameras are built.
+        """
+        if getattr(self, "_camera_intrinsics_cache", None) is not None:
+            return self._camera_intrinsics_cache
+        intrinsics: Dict[str, Any] = {}
+        for camera, cam_cfg in zip(self.cameras, self.cfg.cameras):
+            try:
+                intrinsics[cam_cfg.name] = np.asarray(
+                    camera.get_intrinsics_matrix(), dtype=float).tolist()
+            except Exception as exc:
+                logger.warning(f"[camera] intrinsics unavailable for "
+                               f"{cam_cfg.name}: {exc}")
+        self._camera_intrinsics_cache = intrinsics
+        return intrinsics
 
     # -------------------------------------------------------------------------
     # Object & material setup
@@ -347,7 +367,13 @@ class BaseTask(ABC):
                     position_range=position_range,
                 )
             else:
-                intensity_range = tuple(getattr(cfg, "intensity_range", [500.0, 5000.0]))
+                # randomize_intensity: false keeps each light's authored intensity
+                # and varies only exposure (a power-of-2 multiplier), so a scene
+                # calibrated against a real rig keeps its relative light balance.
+                if bool(getattr(cfg, "randomize_intensity", True)):
+                    intensity_range = tuple(getattr(cfg, "intensity_range", [500.0, 5000.0]))
+                else:
+                    intensity_range = None
                 exposure_range = tuple(getattr(cfg, "exposure_range", [-2.0, 4.0]))
                 color_temp_range = tuple(getattr(cfg, "color_temp_range", [2700.0, 6500.0]))
                 self._lighting_randomizer.randomize_all(

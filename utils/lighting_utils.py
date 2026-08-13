@@ -546,7 +546,7 @@ class LightingRandomizer:
 
     def randomize_all(
         self,
-        intensity_range: Tuple[float, float] = (500.0, 5000.0),
+        intensity_range: Optional[Tuple[float, float]] = (500.0, 5000.0),
         exposure_range: Tuple[float, float] = (-2.0, 4.0),
         color_temp_range: Union[Tuple[float, float], str] = (2700.0, 6500.0),
         position_range: Optional[Dict[str, Tuple[float, float]]] = None,
@@ -573,7 +573,14 @@ class LightingRandomizer:
         results: Dict[str, Dict] = {}
         for path in light_paths:
             result: Dict = {}
-            result["intensity"] = self.randomize_intensity(path, intensity_range)
+            # intensity_range=None means "leave intensity alone". Needed by any
+            # scene whose lights are photometrically calibrated against a real
+            # rig: writing one absolute range over lights that legitimately span
+            # 60 to 785000 would flatten them to the same value and destroy the
+            # calibration. Exposure below is a power-of-2 MULTIPLIER, so it varies
+            # the level while preserving every light's relative contribution.
+            if intensity_range is not None:
+                result["intensity"] = self.randomize_intensity(path, intensity_range)
             result["exposure"] = self.randomize_exposure(path, exposure_range)
             result["color_temperature"] = self.randomize_color_temperature(path, color_temp_range)
             if randomize_position_flag and position_range:
