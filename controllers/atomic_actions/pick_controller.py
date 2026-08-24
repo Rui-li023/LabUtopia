@@ -1,7 +1,7 @@
 from isaacsim.core.utils.stage import get_stage_units
 from isaacsim.core.utils.types import ArticulationAction
-from isaacsim.core.utils.rotations import euler_angles_to_quat
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 import typing
 
 from .atomic_base_controller import AtomicBaseController
@@ -103,7 +103,11 @@ class PickController(AtomicBaseController):
                                                     gripper_state=GRIPPER_OPEN)
 
         if end_effector_orientation is None:
-            end_effector_orientation = euler_angles_to_quat(np.array([0, np.pi, 0]))
+            # xyzw, to match _grasp_quat/GraspFrame -- everything from here to the
+            # RMPFlow boundary (_quat_multiply, _apply_world_yaw) is scipy-ordered.
+            # Isaac's euler_angles_to_quat returns wxyz and used to be fed straight
+            # into that xyzw math.
+            end_effector_orientation = R.from_euler("xyz", [0.0, np.pi, 0.0]).as_quat()
 
         self._ensure_randomization()
 
@@ -126,7 +130,16 @@ class PickController(AtomicBaseController):
 
     # ── Phase execution ──────────────────────────────────────────
 
-    def _calculate_approach_direction(self, picking_position):
+    def _calculate_approach_direction(self, picking_position, orientation=None):
+        if self.approach_along_tool and orientation is not None:
+            # The controlled frame's local +Z points into the grasp. Back the
+            # pre-grasp waypoint away along its horizontal projection so the open
+            # fingers enter the object gap without sweeping sideways through it.
+            tool_axis = R.from_quat(np.asarray(orientation, dtype=float)).as_matrix()[:, 2]
+            tool_axis[2] = 0.0
+            norm = np.linalg.norm(tool_axis)
+            if norm > 1e-6:
+                return -tool_axis / norm
         if self._robot_position is None:
             return np.array([-1, 0, 0])
         h = picking_position[:2] - self._robot_position[:2]
@@ -137,18 +150,51 @@ class PickController(AtomicBaseController):
         # form crashed mobile pick with a (3,)+(2,) shape mismatch).
         return np.array([-h[0] / n, -h[1] / n, 0.0])
 
+    # Opt-in per robot; world-up lift stays the default so every existing level is
+    # unaffected.
+    lift_along_tool: bool = False
+    lift_offset_xyz: np.ndarray | None = None
+    approach_along_tool: bool = False
+    require_pregrasp_xyz: bool = False
+    pregrasp_position_threshold: float | None = None
+    grasp_position_threshold: float | None = None
+
+    @staticmethod
+    def _to_isaac_quat(orient) -> np.ndarray:
+        """scipy xyzw -> Isaac wxyz, for handoff to the motion policy.
+
+        RMPFlow runs the target orientation through ``quats_to_rot_matrices``, which
+        reads (w, x, y, z); ``GraspFrame.quat`` and this class's quaternion helpers
+        produce scipy's (x, y, z, w). Passing one for the other is not a small error --
+        it is a different rotation entirely, and it silently replaced the configured
+        grasp pose on every pick.
+
+        It went unnoticed because RMPFlow weights position roughly 250x above
+        orientation (target_rmp.min_metric_scalar 2500 vs axis_target_rmp.metric_scalar
+        10), so a roomy arm still reaches the point and grasps: the Franka scores 90-100%
+        either way. An arm with a +/-1.57 wrist does not get that slack -- the ARX X5 was
+        driven into a joint-limit attractor 0.28 m off target and failed every episode.
+        ``open_controller``/``close_controller`` already convert (``[:, [3,0,1,2]]``);
+        this path did not.
+        """
+        q = np.asarray(orient, dtype=np.float64)
+        return q[[3, 0, 1, 2]]
+
     def _execute_phase(self, pos, orient, jpos, obj_name, grip_ctrl,
                        grip_pos, pre_z, after_z, pre_x, grip_dist):
-        approach = self._calculate_approach_direction(pos)
+        approach = self._calculate_approach_direction(pos, orient)
         n = jpos.shape[0]
         su = get_stage_units()
+        # `orient` stays xyzw below (event 4 hands it to the gripper attachment);
+        # only the motion-policy calls take the Isaac ordering.
+        orient_wxyz = self._to_isaac_quat(orient)
 
         if self._event == 0:
             target = pos + approach * (pre_x / su)
             target[2] += self.object_size[2] + pre_z
             action = self._cspace_controller.forward(
                 target_end_effector_position=target,
-                target_end_effector_orientation=orient)
+                target_end_effector_orientation=orient_wxyz)
             if self._xy_reached(grip_pos, target):
                 self._next_event()
             return action
@@ -158,8 +204,21 @@ class PickController(AtomicBaseController):
             target[2] += self.get_pickprez_offset(obj_name) / su
             action = self._cspace_controller.forward(
                 target_end_effector_position=target,
-                target_end_effector_orientation=orient)
-            if self._xy_reached(grip_pos, target):
+                target_end_effector_orientation=orient_wxyz)
+            reached = (
+                self._xyz_reached(
+                    grip_pos,
+                    target,
+                    threshold=self.pregrasp_position_threshold,
+                )
+                if self.require_pregrasp_xyz
+                else self._xy_reached(
+                    grip_pos,
+                    target,
+                    threshold=self.pregrasp_position_threshold,
+                )
+            )
+            if reached:
                 self._next_event()
             return action
 
@@ -167,8 +226,12 @@ class PickController(AtomicBaseController):
             pos[2] += self.get_pickz_offset(obj_name) / su
             action = self._cspace_controller.forward(
                 target_end_effector_position=pos,
-                target_end_effector_orientation=orient)
-            if self._xyz_reached(grip_pos, pos):
+                target_end_effector_orientation=orient_wxyz)
+            if self._xyz_reached(
+                grip_pos,
+                pos,
+                threshold=self.grasp_position_threshold,
+            ):
                 self._next_event()
             return action
 
@@ -188,7 +251,20 @@ class PickController(AtomicBaseController):
             else:
                 self._close_gripper()
             self._lift_target = pos.copy()
-            self._lift_target[2] += after_z / su
+            if self.lift_offset_xyz is not None:
+                self._lift_target = self._lift_target + self.lift_offset_xyz / su
+            elif self.lift_along_tool:
+                # Retract along the tool's own approach axis instead of straight up.
+                # A short arm grasping near its own base height has very little vertical
+                # room there: RMPFlow is a local policy and simply stalls a few cm up
+                # (Piper: +3.8 cm against the +10 cm the task needs) because reaching
+                # higher would require reconfiguring the elbow. Retracting moves back
+                # toward the base, where there is room, and still lifts the object.
+                # orient is xyzw (scipy convention, as produced by _grasp_quat).
+                approach_axis = R.from_quat(np.asarray(orient)).as_matrix()[:, 2]
+                self._lift_target = self._lift_target - approach_axis * (after_z / su)
+            else:
+                self._lift_target[2] += after_z / su
             if "glass" in obj_name:
                 # Attach the PARENT prim, not the Cylinder mesh: the world-space
                 # follow in grapper_manager writes the prim's translate op, which
@@ -204,7 +280,7 @@ class PickController(AtomicBaseController):
         elif self._event == 5:
             action = self._cspace_controller.forward(
                 target_end_effector_position=self._lift_target,
-                target_end_effector_orientation=orient)
+                target_end_effector_orientation=orient_wxyz)
             if self._xyz_reached(grip_pos, self._lift_target):
                 self._next_event()
             return action

@@ -20,6 +20,10 @@ replay:
   # episode_indices: [0, 1, 2]
 
 task:
+  max_steps: 4000
+  # Position-controlled pour: 69 deg leaves the beaker lip below horizontal.
+  position_pour: true
+  pour_angle_rad: 1.91
   # Raise gripper<->beaker contact friction so the near-zero-squeeze grasp
   # (grip 0.024) holds through the shake/pour instead of slipping out, and
   # reproduces in open-loop replay. Realistic glass-on-gripper µ — a

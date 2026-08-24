@@ -1,11 +1,11 @@
 from typing import Optional
 import numpy as np
 
-from scipy.spatial.transform import Rotation as R
 from isaacsim.core.utils.types import ArticulationAction
 
 from .base_controller import BaseController
 from .atomic_actions.press_controller import PressController
+from .grasp_frame import GraspFrame
 
 class PressTaskController(BaseController):
     # Button must be driven in by at least this much for a press to count.
@@ -50,6 +50,18 @@ class PressTaskController(BaseController):
             initial_offset=0.05,
             robot=robot,
         )
+        # The wrist pose used to be a fixed [0, 90, 10]. With
+        # `grasp.bearing_gain: 1.0` it follows the button's bearing instead, so
+        # the instrument can be spawned off-axis; jitter varies the pose per
+        # episode. Defaults reproduce the historical fixed pose exactly.
+        grasp_cfg = getattr(cfg, "grasp", None)
+        self._press_frame = GraspFrame(grasp_cfg, robot, (0.0, 90.0, 10.0), label="grasp/press")
+        # Contact height relative to the button origin. Kept at 0 by default:
+        # the button face is small, and pressing off-centre misses it entirely.
+        self._press_z_offset = float(getattr(grasp_cfg, "press_z_offset", 0.0)) if grasp_cfg else 0.0
+        # How far past the button face to drive. 0.018 clears the 0.012 depth
+        # threshold with margin.
+        self._press_distance = float(getattr(grasp_cfg, "press_distance", 0.018)) if grasp_cfg else 0.018
 
     def reset(self):
         super().reset()
@@ -63,6 +75,7 @@ class PressTaskController(BaseController):
         self._logged_action = False
         if self.mode == "collect":
             self.press_controller.reset()
+            self._press_frame.new_episode()
         elif self.mode == "infer":
             self.inference_engine.reset()
     
@@ -163,12 +176,16 @@ class PressTaskController(BaseController):
                     f"gripper={gripper_pos} joints[:7]={None if joints is None else joints[:7]}"
                 )
                 self._last_logged_event = ev
+            # Copy: the atomic controller shifts the target in place along the
+            # press axis, and the caller's state dict should not carry that.
+            button_position = np.asarray(state['object_position'], dtype=float).copy()
+            button_position[2] += self._press_z_offset
             action, record_array = self.press_controller.forward(
-                target_position=state['object_position'],
+                target_position=button_position,
                 current_joint_positions=state['joint_positions'],
                 gripper_control=self.gripper_control,
-                end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat(),
-                press_distance=0.018,
+                end_effector_orientation=self._press_frame.quat(state['object_position']),
+                press_distance=self._press_distance,
                 gripper_position=state.get('gripper_position'),
             )
             # Debug: print what we are asking the robot to do

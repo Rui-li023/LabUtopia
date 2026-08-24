@@ -1,0 +1,141 @@
+name: level1_press_v2
+
+# level1/press 的泛化增强采集（500 集）。同一套配方，见
+# config/level1_pick_v2.yaml 的头注释；这里只记与本任务有关的差别。
+#
+# press 没有「抓取」，所以那条 +0.5 cm 的抓取高度**不适用**：按钮面很小，
+# 接触点抬高 0.5 cm 有很大概率直接按空。`grasp.press_z_offset` 这个旋钮已经
+# 加好（controllers/press_controller.py），默认 0，需要时再调。
+#
+# 本任务原本的位置泛化几乎为零：仪器位置在 tasks/press_task.py 里写死成
+# (0.73, -0.10, 0.64)，整轮唯一变化的只有三个按钮在仪器内部的 y 排序。
+# 现在加了 task.instrument_position_range，逐集重新摆仪器（在 world.reset()
+# 之前改，否则 PhysX 不会重新烘焙按钮的 prismatic 关节）。
+
+task_type: "press"
+controller_type: "press"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_003/lab_003.usd"
+instrument_path: "/World/instrument"
+target_button_path: "/World/instrument/target_button"
+distractor_button1_path: "/World/instrument/distractor_button_1"
+distractor_button2_path: "/World/instrument/distractor_button_2"
+# 约束三个按钮的 prismatic 关节。顺序必须与上面三个按钮路径一致。
+button_joint_paths:
+  - "/World/instrument/PrismaticJoint_00"
+  - "/World/instrument/PrismaticJoint_01"
+  - "/World/instrument/PrismaticJoint_02"
+# instrument 的 xform 缩放是 0.001（按 mm 建模），世界系 Y 偏移写进 localPos
+# 之前要先除掉这个缩放。
+button_joint_localpos_scale: 0.001
+
+max_episodes: 500
+collect_position_only: true
+
+grasp:
+  ee_euler_deg: [0, 90, 10]   # 历史值，当 nominal
+  # 姿态跟随按钮方位角 + 逐集抖动。仪器能挪，姿态就必须跟着挪。
+  bearing_gain: 1.0
+  yaw_jitter_deg: 6.0
+  tilt_jitter_deg: 3.0
+  # press_z_offset: 0.0       # 见头注释，默认不抬高
+  # press_distance: 0.018     # 越过 0.012 的判定深度，留 6 mm 余量
+
+task:
+  max_steps: 1500
+
+  # ★ 位置泛化：逐集重摆仪器，6 x 16 cm，主要放在横向 y。
+  #
+  # 26 集 pilot 实测（`[press debug] event=0 target(button)=...`）：
+  #   按钮在仪器原点**前方 0.326 m**，世界坐标 x 0.377~0.451 / y -0.194~-0.049 /
+  #   z 1.017，离底座平面半径 **r 0.782~0.868 m** —— 贴着 Franka 约 0.855 m 的
+  #   肩部包络。所以这个范围**不能再往 +x 放**。
+  # 但远端并不是瓶颈：按仪器 x 分两档，近半 9/13 = 69 %、远半 11/13 = 85 %，
+  # 6 个失败里 5 个落在**近端** x 0.706~0.715。样本太小（每档 13 集、差 2 个）
+  # 说明不了方向性，只能说范围内没有可检出的距离效应、远端没有被系统性截断。
+  # 整体 19/25 = 76 %。
+  instrument_position_range:
+    x: [0.70, 0.76]
+    y: [-0.18, -0.02]
+    z: [0.64, 0.64]
+
+  # 按钮颜色泛化（原配置就有，保留）
+  material_paths:
+    - path: /World/instrument/target_button/button
+      materials:
+        - /World/Looks/OmniPBR_Button_Red
+      test_materials:
+        - /World/Looks/OmniPBR_Button_Blue
+        - /World/Looks/OmniPBR_Button_DeepGray
+        - /World/Looks/OmniPBR_Button_Yellow
+        - /World/Looks/OmniPBR_Button_Gray
+        - /World/Looks/OmniPBR_Button_Green
+      random: true
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "image"
+    translation: [-0.28673, -3.51678, 1.46281]
+    resolution: [256, 256]
+    focal_length: 6
+    orientation: [0.72889, 0.68336, -0.02857, -0.03028]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "image_2"
+    translation: [0.1, -0.08, 3.01252]
+    resolution: [256, 256]
+    focal_length: 5
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+  - prim_path: "/World/Franka/panda_hand/arm_camera"
+    name: "wrist_image"
+    resolution: [256, 256]
+    image_type: "rgb"
+
+robot:
+  type: "franka"
+  position: [-0.4, -0, 0.71]
+
+lighting:
+  enabled: true
+  # 场景里只有 **1 盏灯**（运行日志 "Randomized 1 scene lights"）。强度、曝光、
+  # 色温三个量全压在它一个身上，没有别的灯兜底，所以这里不随机**绝对强度** ——
+  # 只用 exposure 这个 2 的幂次**乘数**摆动，中位数曝光 = 0 = 场景原始光照，
+  # 也就是现有 L1-L4 数据集一直在用的那个工作点。
+  randomize_intensity: false
+  exposure_range: [-0.7, 0.7]      # 0.62x ~ 1.62x
+  # 色温收窄到 4500-7500K（中心 6000K）。第一版给到 3500-9000K，实测暗端画面
+  # 亮度 YAVG=41（瓶子看不出轮廓）、亮端整场景发蓝 —— 一部分是随机器把色偏叠加
+  # 了两次（已修，见 utils/lighting_utils.py），另一部分就是区间本身太宽。
+  color_temp_range: [4500, 7500]
+  # 灯**位置**不随机化：挪灯会改变桌面明暗梯度和阴影方向，那是「换了个场景」，
+  # 不是「同一场景的光照变化」。要放开应该单独做一版对照。
+  randomize_position: false
+collector:
+  type: "default"
+  compression: gzip
+
+replay:
+  dataset_path: ""
+
+infer:
+  type: "remote"
+  obs_names: {"image": 'observation/image', "image_2": 'observation/wrist_image', "wrist_image": 'observation/wrist_image_2'}
+  prompt: "Press the button."
+  host: "127.0.0.1"
+  port: 18084
+  action_chunk_len: 40
+  image_color: bgr
+  n_obs_steps: 1
+  timeout: 30
+  max_retries: 3
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}

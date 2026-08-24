@@ -16,7 +16,7 @@ controller_type: "pick_wide"     # 不是 "pick"：见上
 
 mode: "infer"
 usd_path: "assets/sim2real/table_cell.usd"
-max_episodes: 20                 # 评测集数
+max_episodes: 50                 # 评测集数（20 集时 r>=0.65 只落到 6 个样本，估不准）
 collect_position_only: true      # 与 replay/infer 同一套控制律
 
 grasp:

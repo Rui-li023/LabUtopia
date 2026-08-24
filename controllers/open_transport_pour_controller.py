@@ -1,7 +1,7 @@
 import numpy as np
 import random
 from enum import Enum
-from typing import Dict, Any, Tuple, Optional, List
+from typing import Dict, Any, Tuple, Optional
 from scipy.spatial.transform import Rotation as R
 from controllers.atomic_actions.pour_controller import PourController
 from controllers.base_controller import BaseController
@@ -27,9 +27,31 @@ class OpenTransportPourController(BaseController):
         self.every_controller_index = 0
         # Init success-gate peak trackers here too (not only in reset()) so a
         # step() before the first reset() (collect frame 0) can't AttributeError.
+        # current_phase likewise: get_language_instruction() reads it on the very
+        # first _step_infer (infer mode never runs _init_collect_mode/reset first).
+        self.current_phase = TaskPhase.OPENING
         self._z_init_beaker2 = None; self._zmax_beaker2 = None
         self._z_init_conical = None; self._zmax_conical = None
         self._quat_init_conical = None; self._tilt_peak_conical = 0.0
+        # --- infer-mode oracle phase advancement (mirror DeviceOperateController) ---
+        # Defined here (not only in _init_collect_mode, which runs in COLLECT mode
+        # only) so the infer-mode oracle has a phase sequence to follow and never
+        # AttributeErrors on a _step_infer before the first reset(). The hasattr
+        # guards leave the collect-time shuffle from _init_collect_mode untouched
+        # (in collect those attrs already exist; in infer they do not).
+        self.success_steps = set()
+        self.N_PHASES = 6  # OPENING, PICKING1, TRANSPORTING, PICKING2, POURING, TRANSPORTING2
+        if not hasattr(self, "task_group_a"):
+            self.task_group_a = [TaskPhase.OPENING]
+            self.task_group_b = [TaskPhase.PICKING1, TaskPhase.TRANSPORTING]
+            self.task_group_c = [TaskPhase.PICKING2, TaskPhase.POURING, TaskPhase.TRANSPORTING2]
+        if not hasattr(self, "randomized_sequence"):
+            self.randomized_sequence = list(self.task_group_a + self.task_group_b + self.task_group_c)
+        # Frame-0 baseline of the muffle-furnace door handle for the OPENING gate.
+        # CURRENT-displacement (not a peak): the door is closed until OPENING and
+        # stays open once pulled, so a live displacement can't latch on a transient
+        # bump in an earlier phase (OPENING may be scheduled last).
+        self._handle_init = None
 
     def _generate_random_sequence(self):
         task_groups = [self.task_group_a, self.task_group_b, self.task_group_c]
@@ -79,10 +101,18 @@ class OpenTransportPourController(BaseController):
             events_dt=[0.002, 0.002, 0.005, 0.02, 0.05, 0.01, 0.02]
         )
         
+        # Position-controlled pour (see pick_pour_controller for the full
+        # rationale): the velocity pour recorded the integrated commanded
+        # velocity as the wrist action, which sat 13-24 deg BELOW the measured
+        # state across the whole return leg, so a closed-loop policy is never
+        # shown a "raise the wrist" command. Position pour records the command
+        # it actually sends and parks upright at the end.
         self.pour_controller = PourController(
             name="pour_controller",
             cspace_controller=rmp_controller,
-            events_dt=[0.006, 0.005, 0.009, 0.005, 0.009, 0.02]
+            events_dt=[0.006, 0.005, 0.009, 0.005, 0.009, 0.02],
+            position_pour=bool(getattr(getattr(cfg, "task", None), "position_pour", True)),
+            pour_angle_rad=float(getattr(getattr(cfg, "task", None), "pour_angle_rad", 1.2)),
         )
         
         self.place_controller2 = PlaceController(
@@ -134,6 +164,8 @@ class OpenTransportPourController(BaseController):
         self._z_init_beaker2 = None; self._zmax_beaker2 = None
         self._z_init_conical = None; self._zmax_conical = None
         self._quat_init_conical = None; self._tilt_peak_conical = 0.0
+        self.success_steps.clear()
+        self._handle_init = None
         if self.mode == "collect":
             self._generate_random_sequence()
             self.current_phase = self.randomized_sequence[0]
@@ -147,6 +179,8 @@ class OpenTransportPourController(BaseController):
             self._set_initial_active_controller()
         elif self.mode == "infer":
             self.inference_engine.reset()
+            self._generate_random_sequence()
+            self.current_phase = self.randomized_sequence[0]
 
     def _track_success_signals(self) -> None:
         """Accumulate peak lift (beaker2 + conical) and peak pour-tilt (conical)
@@ -172,6 +206,12 @@ class OpenTransportPourController(BaseController):
                 self._quat_init_conical = q
             self._tilt_peak_conical = max(self._tilt_peak_conical,
                                           tu.rotation_angle_deg(self._quat_init_conical, q))
+        # Frame-0 baseline of the muffle-furnace door handle for the OPENING
+        # gate (current-displacement check in _check_phase_success). Captured
+        # once, every mode, post-warmup; the handle is static until pulled.
+        h = self.object_utils.get_geometry_center(object_path="/World/MuffleFurnace/handle")
+        if h is not None and self._handle_init is None:
+            self._handle_init = np.asarray(h, dtype=float)
 
     def _check_success(self) -> bool:
         """Terminal success criterion for the whole task (used by replay).
@@ -222,38 +262,67 @@ class OpenTransportPourController(BaseController):
         return ok
 
     def _check_phase_success(self, state: Dict[str, Any]) -> bool:
+        """Per-phase world-state predicate for the infer-mode oracle.
+
+        Reads object geometry DIRECTLY from the stage via object_utils: the otp
+        task state dict only carries beaker2 ('object_position') and target_plat
+        ('target_position'); the door handle, conical bottle and second platform
+        are NOT in the state dict (the old code's state.get('door_position') /
+        'beaker_position' / 'stir_tool_position' silently defaulted to [0,0,0] and
+        branched on PICKING / STIRRING phases that don't exist in this enum). All
+        baselines come from trackers updated every frame in _track_success_signals()
+        (called before the mode dispatch), so they are live under the policy. Only
+        the CURRENT phase is ever evaluated, so an earlier phase cannot pre-trip a
+        later phase's predicate.
+        """
+        tu = TaskUtils.get_instance()
         if self.current_phase == TaskPhase.OPENING:
-            end_effector_pos = state.get('gripper_position', np.array([0, 0, 0]))
-            door_pos = state.get('door_position', np.array([0, 0, 0]))
-            distance_to_door = np.linalg.norm(end_effector_pos[:2] - door_pos[:2])
-            return distance_to_door < self.DOOR_OPEN_THRESHOLD
-            
-        elif self.current_phase == TaskPhase.PICKING:
-            beaker_pos = state.get('beaker_position', np.array([0, 0, 0]))
-            if self.initial_beaker_position is not None:
-                height_diff = beaker_pos[2] - self.initial_beaker_position[2]
-                return height_diff > self.LIFT_HEIGHT_THRESHOLD
-            return False
-            
+            # Door pulled open: handle swung away from its frame-0 (closed)
+            # position. CURRENT displacement, not a peak: the door is closed
+            # until OPENING and stays open once pulled, so a transient bump in
+            # an earlier phase can't latch this gate. ~0.04 m matches the
+            # scripted 30 deg open (device_operate uses 0.13 m for ~100 deg).
+            h = self.object_utils.get_geometry_center(object_path="/World/MuffleFurnace/handle")
+            if h is None or self._handle_init is None:
+                return False
+            return float(np.linalg.norm(np.asarray(h, dtype=float) - self._handle_init)) > 0.04
+        elif self.current_phase == TaskPhase.PICKING1:
+            b2 = self.object_utils.get_geometry_center(object_path="/World/beaker2")
+            if b2 is None or self._z_init_beaker2 is None:
+                return False
+            return float(b2[2]) - self._z_init_beaker2 > 0.05
         elif self.current_phase == TaskPhase.TRANSPORTING:
-            beaker_pos = state.get('beaker_position', np.array([0, 0, 0]))
-            target_pos = state.get('target_position', np.array([0, 0, 0]))
-            distance_to_target = np.linalg.norm(beaker_pos[:2] - target_pos[:2])
-            height_close = abs(beaker_pos[2] - target_pos[2]) < 0.1
-            return distance_to_target < self.TRANSPORT_SUCCESS_THRESHOLD and height_close
-            
-        elif self.current_phase == TaskPhase.STIRRING:
-            self.stir_step_count += 1
-            beaker_pos = state.get('beaker_position', np.array([0, 0, 0]))
-            stir_tool_pos = state.get('stir_tool_position', np.array([0, 0, 0]))
-            
-            distance_to_beaker = np.linalg.norm(stir_tool_pos[:2] - beaker_pos[:2])
-            in_beaker = distance_to_beaker < 0.05 and stir_tool_pos[2] < beaker_pos[2] + 0.1
-            
-            return self.stir_step_count > self.STIR_SUCCESS_STEPS and in_beaker
-            
+            b2 = self.object_utils.get_geometry_center(object_path="/World/beaker2")
+            plat = self.object_utils.get_geometry_center(object_path="/World/target_plat")
+            if b2 is None or plat is None:
+                return False
+            b2 = np.asarray(b2, dtype=float)
+            plat = np.asarray(plat, dtype=float)
+            return (np.linalg.norm(b2[:2] - plat[:2]) < 0.06
+                    and abs(b2[2] - plat[2]) < 0.12)
+        elif self.current_phase == TaskPhase.PICKING2:
+            c = self.object_utils.get_geometry_center(object_path="/World/conical_bottle02")
+            if c is None or self._z_init_conical is None:
+                return False
+            return float(c[2]) - self._z_init_conical > 0.05
+        elif self.current_phase == TaskPhase.POURING:
+            # CURRENT tilt (not the persistent peak) so a PICKING2 grasp wobble
+            # can't pre-satisfy the pour; scripted pour ~50 deg, grasp << 30 deg.
+            q = self.object_utils.get_transform_quat(object_path="/World/conical_bottle02/mesh")
+            if q is None or self._quat_init_conical is None:
+                return False
+            return tu.rotation_angle_deg(self._quat_init_conical, q) > 30.0
+        elif self.current_phase == TaskPhase.TRANSPORTING2:
+            c = self.object_utils.get_geometry_center(object_path="/World/conical_bottle02")
+            plat2 = self.object_utils.get_geometry_center(object_path="/World/target_plat2")
+            if c is None or plat2 is None:
+                return False
+            c = np.asarray(c, dtype=float)
+            plat2 = np.asarray(plat2, dtype=float)
+            return (np.linalg.norm(c[:2] - plat2[:2]) < 0.06
+                    and abs(c[2] - plat2[2]) < 0.12)
         return False
-        
+
     def get_language_instruction(self) -> Optional[str]:
         phase_instructions = {
             TaskPhase.OPENING: 'Open the door of the device',
@@ -317,13 +386,35 @@ class OpenTransportPourController(BaseController):
                 return None, True, True
             
     def _step_infer(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
-        """Step in inference mode"""
+        """Infer-mode oracle phase advancement (mirror DeviceOperateController).
+
+        The POLICY drives the robot; this only OBSERVES world state to decide
+        when the current sub-goal is reached, records it in success_steps, and
+        then issues the NEXT phase's language instruction. Phase order follows
+        the group-randomised self.randomized_sequence via _get_next_phase(), so
+        it is NOT hard-coded. Success = all N_PHASES detected in order.
+
+        Does NOT call _advance_to_next_phase()/_switch_active_controller(): those
+        reset the atomic sub-controllers (open_controller, ...) which are created
+        only in _init_collect_mode and DO NOT EXIST in infer mode.
+        """
+        if self.current_phase != TaskPhase.FINISHED and self._check_phase_success(state):
+            print(f"Inference: {self.current_phase.value} success!")
+            self.success_steps.add(self.current_phase)
+            next_phase = self._get_next_phase()
+            self.current_phase = next_phase if next_phase is not None else TaskPhase.FINISHED
+
+        if self.current_phase == TaskPhase.FINISHED:
+            self.reset_needed = True
+            self._last_success = len(self.success_steps) == self.N_PHASES
+            if self._last_success:
+                self._last_failure_reason = ""
+            return None, True, self._last_success
+
         state['language_instruction'] = self.get_language_instruction()
-        # Use inference engine to get action
         action = self.inference_engine.step_inference(state)
-        
-        return action, False, self.is_success()
-        
+        return action, False, len(self.success_steps) == self.N_PHASES
+
     def _get_phase_action(self, state: Dict[str, Any]):
         """Get corresponding action based on current phase"""
         if self.current_phase == TaskPhase.OPENING:
@@ -384,6 +475,7 @@ class OpenTransportPourController(BaseController):
         elif self.current_phase == TaskPhase.POURING:
             action, record_array = self.pour_controller.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
+                current_joint_positions=self.robot.get_joint_positions(),
                 source_size=self.object_utils.get_object_size(object_path="/World/conical_bottle02"),
                 target_position=self.object_utils.get_geometry_center(object_path="/World/beaker1"),
                 current_joint_velocities=self.robot.get_joint_velocities(),
@@ -433,4 +525,4 @@ class OpenTransportPourController(BaseController):
             self.active_controller.reset()
             
     def is_success(self) -> bool:
-        return False
+        return len(self.success_steps) == self.N_PHASES

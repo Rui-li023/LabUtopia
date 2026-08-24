@@ -34,9 +34,17 @@ class LiquidMixingController(BaseController):
         self.initial_beaker_position3 = None
         # Init success-gate peak trackers here too (not only in reset()) so a
         # step() before the first reset() (collect frame 0) can't AttributeError.
+        # current_phase likewise: get_language_instruction() reads it on the very
+        # first _step_infer (infer mode never runs _init_collect_mode/reset first).
+        self.current_phase = TaskPhase.PICKING1
         self._zmax5 = None; self._zmax4 = None; self._zmax3 = None
         self._quat_init_5 = None; self._quat_init_4 = None; self._quat_init_3 = None
         self._tilt_peak_5 = 0.0; self._tilt_peak_4 = 0.0; self._tilt_peak_3 = 0.0
+        # Infer-mode ORACLE phase advancement (mirrors device_operate's contract).
+        self.NUM_PHASES = 10                 # PICK/POUR/PLACE x3 + PRESS
+        self.success_steps = set()           # phases whose _check_phase_success passed
+        self.initial_button_position = None  # heat-device button baseline (terminal PRESS gate)
+        self._max_button_press = 0.0         # peak button displacement this episode
 
     def _init_collect_mode(self, cfg, robot):
         """Initialize data collection mode"""
@@ -180,6 +188,11 @@ class LiquidMixingController(BaseController):
         self._tilt_peak_5 = 0.0; self._tilt_peak_4 = 0.0; self._tilt_peak_3 = 0.0
         self.every_controller_index = 0
         self.current_phase = TaskPhase.PICKING1
+        # Infer-mode oracle trackers (reset every episode, ALL modes -- placed before
+        # the `if self.mode == 'collect'` branch so infer/replay also clear them).
+        self.success_steps = set()
+        self.initial_button_position = None
+        self._max_button_press = 0.0
         if self.mode == "collect":
             self.phase_start_frame = 0
             self.pick_controller1.reset()
@@ -243,50 +256,88 @@ class LiquidMixingController(BaseController):
         return all_ok
 
     def _check_phase_success(self, state: Dict[str, Any]) -> bool:
-        """Check if the current phase is successfully completed
-        
-        Args:
-            state: Current state dictionary
-            
-        Returns:
-            bool: Whether the current phase is successful
+        """Per-phase oracle predicate for INFER-mode phase advancement.
+
+        The phase-conditioned POLICY drives the arm; this method only READS world
+        geometry to decide when the current sub-goal is reached, so the NEXT phase's
+        language instruction can be issued. No object binding / teleport / set_world_pose.
+
+        The task state dict only carries the central mix beaker (/World/beaker_4) and
+        the heat plat, so the three poured beakers + the button are read directly via
+        object_utils (same as step()/_check_success). Phase -> manipulated prim:
+            PICKING1/POURING1/PLACEING1 -> /World/beaker_05
+            PICKING2/POURING2/PLACEING2 -> /World/beaker_04
+            PICKING3/POURING3/PLACEING3 -> /World/beaker_03
+            PRESS                       -> /World/heat_device/button
+        (PICKING2/PLACEING2 instruction text says 'conical bottle' but the prim actually
+         manipulated is beaker_04 -- the label is policy-facing flavour, left unchanged so
+         it matches the strings the VLA was trained on in collect.)
         """
-        if self.current_phase == TaskPhase.OPENING:
-            end_effector_pos = state.get('gripper_position', np.array([0, 0, 0]))
-            door_pos = state.get('door_position', np.array([0, 0, 0]))
-            distance_to_door = np.linalg.norm(end_effector_pos[:2] - door_pos[:2])
-            return distance_to_door < self.DOOR_OPEN_THRESHOLD
-            
-        elif self.current_phase == TaskPhase.PICKING:
-            # Check if the beaker is picked up
-            beaker_pos = state.get('beaker_position', np.array([0, 0, 0]))
-            if self.initial_beaker_position is not None:
-                height_diff = beaker_pos[2] - self.initial_beaker_position[2]
-                return height_diff > self.LIFT_HEIGHT_THRESHOLD
-            return False
-            
-        elif self.current_phase == TaskPhase.TRANSPORTING:
-            # Check if the beaker is successfully placed on the target platform
-            beaker_pos = state.get('beaker_position', np.array([0, 0, 0]))
-            target_pos = state.get('target_position', np.array([0, 0, 0]))
-            distance_to_target = np.linalg.norm(beaker_pos[:2] - target_pos[:2])
-            height_close = abs(beaker_pos[2] - target_pos[2]) < 0.1
-            return distance_to_target < self.TRANSPORT_SUCCESS_THRESHOLD and height_close
-            
-        elif self.current_phase == TaskPhase.STIRRING:
-            # Check if the stirring is completed (based on the number of stirring steps and the position of the glass rod)
-            self.stir_step_count += 1
-            beaker_pos = state.get('beaker_position', np.array([0, 0, 0]))
-            stir_tool_pos = state.get('stir_tool_position', np.array([0, 0, 0]))
-            
-            # Check if the glass rod is near the beaker
-            distance_to_beaker = np.linalg.norm(stir_tool_pos[:2] - beaker_pos[:2])
-            in_beaker = distance_to_beaker < 0.05 and stir_tool_pos[2] < beaker_pos[2] + 0.1
-            
-            return self.stir_step_count > self.STIR_SUCCESS_STEPS and in_beaker
-            
+        tu = TaskUtils.get_instance()
+        phase = self.current_phase
+
+        # phase -> (beaker prim, recorded initial geometry center, init-quat attr name)
+        beaker_map = {
+            TaskPhase.PICKING1:  ("/World/beaker_05", self.initial_beaker_position1, "_quat_init_5"),
+            TaskPhase.POURING1:  ("/World/beaker_05", self.initial_beaker_position1, "_quat_init_5"),
+            TaskPhase.PLACEING1: ("/World/beaker_05", self.initial_beaker_position1, "_quat_init_5"),
+            TaskPhase.PICKING2:  ("/World/beaker_04", self.initial_beaker_position2, "_quat_init_4"),
+            TaskPhase.POURING2:  ("/World/beaker_04", self.initial_beaker_position2, "_quat_init_4"),
+            TaskPhase.PLACEING2: ("/World/beaker_04", self.initial_beaker_position2, "_quat_init_4"),
+            TaskPhase.PICKING3:  ("/World/beaker_03", self.initial_beaker_position3, "_quat_init_3"),
+            TaskPhase.POURING3:  ("/World/beaker_03", self.initial_beaker_position3, "_quat_init_3"),
+            TaskPhase.PLACEING3: ("/World/beaker_03", self.initial_beaker_position3, "_quat_init_3"),
+        }
+
+        if phase in beaker_map:
+            path, init, qi_attr = beaker_map[phase]
+            center = self.object_utils.get_geometry_center(object_path=path)
+            if init is None or center is None:
+                return False
+            z = float(np.asarray(center, dtype=float)[2])
+            init_z = float(np.asarray(init, dtype=float)[2])
+
+            if phase in (TaskPhase.PICKING1, TaskPhase.PICKING2, TaskPhase.PICKING3):
+                # Lifted clear of its start height (matches the pick lift gate).
+                return (z - init_z) > 0.05
+
+            # Live current tilt of the beaker body vs its initial upright pose.
+            q = self.object_utils.get_transform_quat(object_path=path + "/mesh")
+            qi = getattr(self, qi_attr, None)
+            cur_tilt = tu.rotation_angle_deg(qi, q) if (q is not None and qi is not None) else 0.0
+
+            if phase in (TaskPhase.POURING1, TaskPhase.POURING2, TaskPhase.POURING3):
+                # Actually tilted to pour NOW. LIVE (not cumulative peak) tilt so a
+                # pick/lift wobble earlier in the episode cannot pre-trip this on phase
+                # entry: right after the pick the beaker is upright -> cur_tilt ~0 deg.
+                # 30 deg matches the validated _check_success 'poured' gate; the scripted
+                # pour reaches ~50-180 deg so it is comfortably reachable.
+                return cur_tilt > 30.0
+
+            # PLACEING*: set back down -- geometry center returned near its start height
+            # AND ended roughly upright (not dropped/tipped). Robust tolerances because the
+            # policy will not match the scripted height exactly. At PLACE entry the beaker
+            # is still aloft (z high from the pour) so this is False until the policy
+            # lowers and releases it. Height-only (no XY) by design: the oracle only needs
+            # to know the set-down happened to issue the next instruction.
+            return abs(z - init_z) < 0.06 and cur_tilt < 45.0
+
+        if phase == TaskPhase.PRESS:
+            # TERMINAL. The policy presses the heat-device button. Two robust OR signals
+            # with generous thresholds so PRESS stays reachable (avoid stuck-forever) while
+            # only the button-adjacent press satisfies them:
+            #   (a) EE descended onto the button region (live gripper<->button distance), or
+            #   (b) the button xform was displaced beyond noise (tracked peak in step()).
+            button = self.object_utils.get_object_xform_position(object_path="/World/heat_device/button")
+            grip = state.get('gripper_position')
+            near = (button is not None and grip is not None and
+                    float(np.linalg.norm(np.asarray(grip, dtype=float)
+                                         - np.asarray(button, dtype=float))) < 0.12)
+            pressed = self._max_button_press > 0.004
+            return bool(near or pressed)
+
         return False
-        
+
     def get_language_instruction(self) -> Optional[str]:
         phase_instructions = {
             TaskPhase.PICKING1: 'Pick up the beaker from the table',
@@ -352,6 +403,18 @@ class LiquidMixingController(BaseController):
                 setattr(self, tattr, max(getattr(self, tattr, 0.0),
                                          tu.rotation_angle_deg(getattr(self, qiattr), q)))
 
+        # Track the heat-device button's peak displacement for the terminal PRESS
+        # oracle. Updated every mode BEFORE the dispatch so it is live in infer
+        # (the button only moves during the press, so the peak is mode-invariant).
+        _bp = self.object_utils.get_object_xform_position(object_path="/World/heat_device/button")
+        if _bp is not None:
+            _bp = np.asarray(_bp, dtype=float)
+            if self.initial_button_position is None:
+                self.initial_button_position = _bp
+            self._max_button_press = max(
+                self._max_button_press,
+                float(np.linalg.norm(_bp - self.initial_button_position)),
+            )
         self.every_controller_index += 1
         if self.mode == "collect":
             return self._step_collect(state)
@@ -402,14 +465,48 @@ class LiquidMixingController(BaseController):
                 return None, True, True
             
     def _step_infer(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
-        """Step in inference mode"""
+        """INFER-mode ORACLE phase advancement.
+
+        The phase-conditioned VLA policy drives the robot; this controller only
+        OBSERVES world state to detect when each sub-goal is reached, records the
+        passed phase, and issues the NEXT phase's language instruction. Task success ==
+        every one of the 10 phases passed in order (mirrors device_operate.success_steps).
+        """
+        if self.current_phase != TaskPhase.FINISHED and self._check_phase_success(state):
+            print(f"Inference: {self.current_phase.value} success!")
+            self.success_steps.add(self.current_phase)
+            self._advance_to_next_phase()
+
+        if self.current_phase == TaskPhase.FINISHED:
+            self.reset_needed = True
+            self._last_success = len(self.success_steps) == self.NUM_PHASES
+            if self._last_success:
+                self._last_failure_reason = ""
+            return None, True, self._last_success
+
         state['language_instruction'] = self.get_language_instruction()
-        # Use the inference engine to get the action
         action = self.inference_engine.step_inference(state)
-        
-        # Check if the task is successful (simplified version, actually may need more complex logic)
         return action, False, self.is_success()
-        
+
+    def _advance_to_next_phase(self) -> None:
+        """Advance current_phase along the interleaved sequence (PICK,POUR,PLACE per
+        beaker x3, then PRESS), terminating at FINISHED. Infer-only: collect uses
+        _get_next_phase/_switch_active_controller and is untouched. Same order as the
+        collect phase_sequence."""
+        phase_sequence = {
+            TaskPhase.PICKING1:  TaskPhase.POURING1,
+            TaskPhase.POURING1:  TaskPhase.PLACEING1,
+            TaskPhase.PLACEING1: TaskPhase.PICKING2,
+            TaskPhase.PICKING2:  TaskPhase.POURING2,
+            TaskPhase.POURING2:  TaskPhase.PLACEING2,
+            TaskPhase.PLACEING2: TaskPhase.PICKING3,
+            TaskPhase.PICKING3:  TaskPhase.POURING3,
+            TaskPhase.POURING3:  TaskPhase.PLACEING3,
+            TaskPhase.PLACEING3: TaskPhase.PRESS,
+            TaskPhase.PRESS:     TaskPhase.FINISHED,
+        }
+        self.current_phase = phase_sequence.get(self.current_phase, TaskPhase.FINISHED)
+
     def _beaker_grip(self, pick_ctrl, name: str) -> float:
         """Grasp width for a poured beaker. Prefers cfg.task.beaker_grip (a single
         override for all three beakers — used to sweep the grip vs the ~60mm beaker
@@ -611,4 +708,5 @@ class LiquidMixingController(BaseController):
             self.active_controller.reset()
             
     def is_success(self) -> bool:
-        return False
+        # All 10 oracle sub-goals certified -> task success (mirrors device_operate).
+        return len(self.success_steps) == self.NUM_PHASES

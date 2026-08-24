@@ -1,0 +1,125 @@
+name: level1_pick_v2
+
+# level1/pick 的泛化增强采集（500 集）。相对 config/level1_pick.yaml 改四处，
+# 配方照搬 sim2real/pick v2 那一轮验证过的（docs/sim2real_vla_eval.md §8）：
+#
+#   1. 抓取高度 +0.5 cm    —— conical_bottle02 的共享默认是 0.065
+#   2. x/y 范围放大 2.7 倍 —— 15 x 16 cm -> 18 x 36 cm，几乎全放在横向
+#   3. 光照/色温泛化       —— 原配置整轮 50 集光照一动不动
+#   4. 抓取姿态逐集抖动    —— 原配置每集同一个精确姿态
+#
+# 2 和 4 靠 `pick_wide`：`pick` 用**固定世界系**抓取姿态，物体一旦横向偏开，
+# 姿态就和接近方向打架（机理见 controllers/grasp_frame.py 模块注释）。
+
+task_type: "pick"
+controller_type: "pick_wide"     # 不是 "pick"：见上
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 500                # collect 统计的是**成功**集数
+collect_position_only: true      # 与 replay/infer 同一套控制律
+
+grasp:
+  # [0, 90, 25] 就是 PickTaskController.DEFAULT_EE_EULER_DEG，也就是 L1-L4 一直
+  # 在用的那个值。pick_wide 把它当 nominal，再按物体方位角绕世界 +Z 旋转，
+  # 所以值本身不用改。
+  ee_euler_deg: [0, 90, 25]
+  # 姿态跟着方位角转了，**接近方向**也必须一起转，否则两者又打架 —— 这个开关让
+  # 预抓取偏置从「写死的世界 -X」变成「由物体指回底座」。
+  approach_from_base: true
+  # ★ 改动 1：抓取高度 0.065 -> 0.070（+0.5 cm）。
+  # 这是 grasp.pick_z_offset 覆盖值，不是去改 atomic_actions/pick_controller.py
+  # 里那张 L1-L5 共用的表 —— 改表会连带动到其他所有关卡。
+  pick_z_offset: 0.070
+  # ★ 改动 4：每集抽一次抓取姿态抖动。整轮都用同一个精确姿态，会把
+  # 「只有这一个姿态能抓」教成规律。
+  yaw_jitter_deg: 8.0
+  tilt_jitter_deg: 4.0
+  bearing_gain: 1.0              # 1.0 = 完全跟随方位角（纯径向接近）
+
+task:
+  max_steps: 800
+  obj_paths:
+    - path: "/World/conical_bottle02"
+      # ★ 改动 2：范围放大。
+      # 旧: x [0.21, 0.36]  y [-0.08, 0.08] = 15 x 16 cm = 240 cm²
+      # 新: x [0.15, 0.33]  y [-0.18, 0.18] = 18 x 36 cm = 648 cm²（2.7 倍）
+      #
+      # 边界依据（底座在 (-0.40, 0.00, 0.71)，yaw 0，即正对世界 +X）：
+      #   放大**主要放在横向 y**。sim2real 那 69 集实测：|x|（横向）分档成功率
+      #   82.6 / 88.0 / 80.0 % 无差异，而离底座的平面半径 r 有硬悬崖
+      #   —— r<0.65 是 97.9 %，r 0.70~0.75 掉到 12.5 %。所以横向可以放心放，
+      #   径向必须守住。
+      #   新范围的 r：最近 0.55（x=0.15,y=0），最远 0.752（x=0.33,y=±0.18），
+      #   旧范围是 0.61~0.765 —— 最远端**没有比原来更远**，只是把中间填厚了。
+      position_range:
+        x: [0.15, 0.33]
+        y: [-0.18, 0.18]
+        z: [0.80, 0.80]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "image"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "image_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+  - prim_path: "/World/Franka/panda_hand/arm_camera"
+    name: "wrist_image"
+    resolution: [256, 256]
+    image_type: "rgb"
+
+robot:
+  type: "franka"
+  position: [-0.4, -0, 0.71]
+
+lighting:
+  enabled: true
+  # 场景里只有 **1 盏灯**（运行日志 "Randomized 1 scene lights"）。强度、曝光、
+  # 色温三个量全压在它一个身上，没有别的灯兜底，所以这里不随机**绝对强度** ——
+  # 只用 exposure 这个 2 的幂次**乘数**摆动，中位数曝光 = 0 = 场景原始光照，
+  # 也就是现有 L1-L4 数据集一直在用的那个工作点。
+  randomize_intensity: false
+  exposure_range: [-0.7, 0.7]      # 0.62x ~ 1.62x
+  # 色温收窄到 4500-7500K（中心 6000K）。第一版给到 3500-9000K，实测暗端画面
+  # 亮度 YAVG=41（瓶子看不出轮廓）、亮端整场景发蓝 —— 一部分是随机器把色偏叠加
+  # 了两次（已修，见 utils/lighting_utils.py），另一部分就是区间本身太宽。
+  color_temp_range: [4500, 7500]
+  # 灯**位置**不随机化：挪灯会改变桌面明暗梯度和阴影方向，那是「换了个场景」，
+  # 不是「同一场景的光照变化」。要放开应该单独做一版对照。
+  randomize_position: false
+collector:
+  type: "default"
+  compression: gzip
+
+replay:
+  dataset_path: ""
+
+infer:
+  type: "remote"
+  obs_names: {"image": 'observation/image', "image_2": 'observation/wrist_image', "wrist_image": 'observation/wrist_image_2'}
+  prompt: "Pick up the conical bottle."
+  host: "127.0.0.1"
+  port: 18084
+  action_chunk_len: 40
+  image_color: bgr
+  n_obs_steps: 1
+  timeout: 30
+  max_retries: 3
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}

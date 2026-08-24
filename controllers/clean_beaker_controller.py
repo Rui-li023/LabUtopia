@@ -36,6 +36,13 @@ class CleanBeakerTaskController(BaseController):
         self._z_init_b2 = None; self._zmax_b2 = None
         self._quat_init_b1 = None; self._quat_init_b2 = None
         self._tilt_peak_b1 = 0.0; self._tilt_peak_b2 = 0.0
+        # Oracle phase-advance state for INFER mode (device_operate pattern).
+        # success_steps records which step sub-goals have been detected; the
+        # shake accumulator tracks beaker1 XY path during step 5. Init here (not
+        # only in reset) so a step() before the first reset() can't AttributeError.
+        self.success_steps = set()
+        self._shake_path = 0.0
+        self._b1_prev_xy = None
     
     def _init_collect_mode(self, cfg, robot):
         """
@@ -56,10 +63,20 @@ class CleanBeakerTaskController(BaseController):
         )
 
         # 2. Pour beaker2 to beaker1
+        # Position-controlled pour (see pick_pour_controller for the full
+        # rationale): the velocity pour recorded the integrated commanded
+        # velocity as the wrist action, which sat 13-24 deg BELOW the measured
+        # state across the whole return leg, so a closed-loop policy is never
+        # shown a "raise the wrist" command. Position pour records the command
+        # it actually sends and parks upright at the end.
         self.pour_beaker2 = PourController(
             name="pour_beaker2",
             cspace_controller=self.rmp_controller,
-            events_dt=[0.006, 0.005, 0.009, 0.05, 0.009, 1]
+            # events_dt[5] was 1 (a single frame): with a position pour that is the
+            # hold-upright segment, so give it ~100 frames of a static upright pose.
+            events_dt=[0.006, 0.005, 0.009, 0.05, 0.009, 0.01],
+            position_pour=bool(getattr(getattr(cfg, "task", None), "position_pour", True)),
+            pour_angle_rad=float(getattr(getattr(cfg, "task", None), "pour_angle_rad", 1.2)),
         )
 
         # 3. Place beaker2 to plat2
@@ -85,10 +102,20 @@ class CleanBeakerTaskController(BaseController):
         )
 
         # 6. Pour beaker1 to target_beaker
+        # Position-controlled pour (see pick_pour_controller for the full
+        # rationale): the velocity pour recorded the integrated commanded
+        # velocity as the wrist action, which sat 13-24 deg BELOW the measured
+        # state across the whole return leg, so a closed-loop policy is never
+        # shown a "raise the wrist" command. Position pour records the command
+        # it actually sends and parks upright at the end.
         self.pour_beaker1 = PourController(
             name="pour_beaker1",
             cspace_controller=self.rmp_controller,
-            events_dt=[0.006, 0.005, 0.009, 0.05, 0.009, 1]
+            # events_dt[5] was 1 (a single frame): with a position pour that is the
+            # hold-upright segment, so give it ~100 frames of a static upright pose.
+            events_dt=[0.006, 0.005, 0.009, 0.05, 0.009, 0.01],
+            position_pour=bool(getattr(getattr(cfg, "task", None), "position_pour", True)),
+            pour_angle_rad=float(getattr(getattr(cfg, "task", None), "pour_angle_rad", 1.2)),
         )
 
         # 7. Place beaker1 to plat1
@@ -125,6 +152,11 @@ class CleanBeakerTaskController(BaseController):
         self._z_init_b2 = None; self._zmax_b2 = None
         self._quat_init_b1 = None; self._quat_init_b2 = None
         self._tilt_peak_b1 = 0.0; self._tilt_peak_b2 = 0.0
+        # Reset oracle phase-advance state every episode (infer). _current_step
+        # is already reset to 1 above; success_steps / shake accumulator too.
+        self.success_steps = set()
+        self._shake_path = 0.0
+        self._b1_prev_xy = None
 
     def _track_success_signals(self, state) -> None:
         """Accumulate peak lift + peak tilt for both beakers every frame (all
@@ -158,6 +190,21 @@ class CleanBeakerTaskController(BaseController):
             if self._quat_init_b2 is None:
                 self._quat_init_b2 = q2
             self._tilt_peak_b2 = max(self._tilt_peak_b2, tu.rotation_angle_deg(self._quat_init_b2, q2))
+        # Oracle step-5 shake detector: accumulate beaker1's XY path length only
+        # while step 5 is the active sub-goal. _track_success_signals is called
+        # from step() BEFORE the mode dispatch, so this updates every frame in all
+        # modes. A real 3-cycle lateral shake (amplitude 0.06-0.14 m) travels
+        # ~0.3-0.6 m; a static hold ~0. Resetting _b1_prev_xy to None outside
+        # step 5 keeps transport/place motion from inflating the accumulator.
+        # p1 was bound above as state.get('beaker_1_position').
+        if p1 is not None:
+            xy = np.array([float(p1[0]), float(p1[1])])
+            if self._current_step == 5:
+                if self._b1_prev_xy is not None:
+                    self._shake_path += float(np.linalg.norm(xy - self._b1_prev_xy))
+                self._b1_prev_xy = xy
+            else:
+                self._b1_prev_xy = None
 
     def step(self, state):
         # _step_replay (base) reads self.state in its diagnostics and
@@ -211,13 +258,14 @@ class CleanBeakerTaskController(BaseController):
                 gripper_distances=0.024
             )
             if self.pick_beaker2.is_done():
-                print(f"[cleanbeaker] step 1 (pick beaker2) done")
+                print("[cleanbeaker] step 1 (pick beaker2) done")
                 self._current_step = 2
 
         elif self._current_step == 2:
             # 2. Pour beaker2 to beaker1
             action, record_array = self.pour_beaker2.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
+                current_joint_positions=self.robot.get_joint_positions(),
                 source_size=state['object_size'],
                 target_position=state['beaker_1_position'],
                 gripper_position=state['gripper_position'],
@@ -275,13 +323,14 @@ class CleanBeakerTaskController(BaseController):
                 end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 10])).as_quat(),
             )
             if self.shake_beaker1.is_done():
-                print(f"[cleanbeaker] step 5 (shake beaker1) done")
+                print("[cleanbeaker] step 5 (shake beaker1) done")
                 self._current_step = 6
 
         elif self._current_step == 6:
             # 6. Pour beaker1 to target_beaker
             action, record_array = self.pour_beaker1.forward(
                 articulation_controller=self.robot.get_articulation_controller(),
+                current_joint_positions=self.robot.get_joint_positions(),
                 source_size=state['object_size'],
                 source_name="beaker",
                 target_position=state['target_position'],
@@ -329,27 +378,111 @@ class CleanBeakerTaskController(BaseController):
 
         return action, done, success
     
+    def _check_step_success(self, state) -> bool:
+        """Oracle sub-goal predicate for the CURRENT step (infer mode).
+
+        Reads ONLY live world state: object geometry centres (state[...]), the
+        beaker's live /mesh quaternion, and the all-mode peak trackers updated
+        every frame in _track_success_signals() BEFORE the mode dispatch. No
+        object binding / teleport / atomic-controller internals, so it is valid
+        while the POLICY drives the robot. Returns True iff the current step's
+        sub-goal is reached.
+        """
+        if not isinstance(state, dict):
+            return False
+        tu = TaskUtils.get_instance()
+        b1 = state.get('beaker_1_position')
+        b2 = state.get('beaker_2_position')
+        p1 = state.get('plat_1_position')
+        p2 = state.get('plat_2_position')
+
+        def cur_tilt(beaker_path, quat_init):
+            if quat_init is None:
+                return 0.0
+            q = self.object_utils.get_transform_quat(object_path=beaker_path + "/mesh")
+            if q is None:
+                return 0.0
+            return tu.rotation_angle_deg(quat_init, q)
+
+        def on_plat(b, p):
+            # Relaxed vs the strict terminal _check_success gate so a POLICY
+            # place still registers, but still far inside the >0.14 m initial
+            # beaker<->plat separation (no premature trip) and requiring the
+            # beaker to be SET DOWN (0 < dz < 0.10), not hovering above it.
+            if b is None or p is None:
+                return False
+            dxy = float(np.linalg.norm(np.asarray(b[:2], dtype=float)
+                                       - np.asarray(p[:2], dtype=float)))
+            dz = float(b[2]) - float(p[2])
+            return dxy < 0.08 and 0.0 < dz < 0.10
+
+        step = self._current_step
+        if step == 1:                    # pick beaker2: lifted clear of table
+            if b2 is None or self._z_init_b2 is None:
+                return False
+            return float(b2[2]) - self._z_init_b2 > 0.05
+        if step == 2:                    # pour beaker2 -> beaker1 (tilt then upright)
+            return (self._tilt_peak_b2 > 30.0
+                    and cur_tilt(self.cfg.beaker_2, self._quat_init_b2) < 25.0)
+        if step == 3:                    # place beaker2 on plat2
+            return on_plat(b2, p2)
+        if step == 4:                    # pick beaker1: lifted clear of table
+            if b1 is None or self._z_init_b1 is None:
+                return False
+            return float(b1[2]) - self._z_init_b1 > 0.05
+        if step == 5:                    # shake beaker1 (lateral oscillation)
+            if b1 is None or self._z_init_b1 is None:
+                return False
+            aloft = float(b1[2]) - self._z_init_b1 > 0.05
+            return aloft and self._shake_path > 0.15
+        if step == 6:                    # pour beaker1 -> target (tilt then upright)
+            return (self._tilt_peak_b1 > 30.0
+                    and cur_tilt(self.cfg.beaker_1, self._quat_init_b1) < 25.0)
+        if step == 7:                    # place beaker1 on plat1 (terminal)
+            return on_plat(b1, p1)
+        return False
+
     def _step_infer(self, state):
-        """
-        Executes one step in inference mode.
-        Uses policy to process observations and generate actions.
+        """Infer mode with ORACLE phase advancement (device_operate pattern).
 
-        Args:
-            state (dict): Current environment state
-
-        Returns:
-            tuple: (action, done, success) indicating control output and episode status
+        The POLICY drives the robot; this controller only OBSERVES live world
+        state to decide when the current sub-goal (step) is reached, records it
+        in success_steps, then feeds the NEXT step's language instruction to the
+        policy. Success: every step's predicate passed IN ORDER, i.e. all 7
+        steps land in success_steps and self._current_step reaches the FINISHED
+        sentinel (8). Trackers the predicates read (_z_init_*, _quat_init_*,
+        _tilt_peak_*, _shake_path) are updated in step()->_track_success_signals
+        BEFORE this dispatch, so they are live in infer.
         """
+        # 1) Detect completion of the CURRENT sub-goal, record it, advance.
+        if self._current_step <= 7 and self._check_step_success(state):
+            self.success_steps.add(self._current_step)
+            print(f"[cleanbeaker infer] step {self._current_step} success! "
+                  f"-> advance (done={sorted(self.success_steps)})")
+            self._current_step += 1
+
+        # 2) Terminal: all seven sub-goals reached in order.
+        if self._current_step > 7:
+            self.reset_needed = True
+            self._last_success = len(self.success_steps) == 7
+            if self._last_success:
+                self._last_failure_reason = ""
+            else:
+                self._last_failure_reason = (
+                    f"clean_beaker infer ended with steps "
+                    f"{sorted(self.success_steps)} (need 1..7)")
+            return None, True, self._last_success
+
+        # 3) Otherwise keep driving the policy with the current step's instruction.
         language_instruction = self.get_language_instruction()
         if language_instruction is not None:
             state['language_instruction'] = language_instruction
         else:
-            state['language_instruction'] = "Pick up the object from the table"
-        
+            state['language_instruction'] = "Clean the beakers"
+
         action = self.inference_engine.step_inference(state)
-        
-        return action, False, self.is_success()
-    
+        return action, False, False
+
     def _check_success(self):
         # Use world-space geometry centres so the check is independent of
         # how each prim's xform is parented or stacked. The previous code
@@ -404,14 +537,8 @@ class CleanBeakerTaskController(BaseController):
         return ok
     
     def is_success(self):
-        Maxframe = 5000
-        self.frame_count += 1
-        
-        if self.frame_count > Maxframe:
-            self.reset_needed = True
-            return True
-
-        return False
+        """Task success: every step's sub-goal detected in order (device_operate style)."""
+        return len(self.success_steps) == 7
 
     def get_language_instruction(self) -> Optional[str]:
         step_instructions = {

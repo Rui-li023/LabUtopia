@@ -234,9 +234,16 @@ class LightingRandomizer:
         self._set_bool_attr(prim, "inputs:enableColorTemperature", True)
         self._set_float_attr(prim, "inputs:colorTemperature", kelvin)
 
-        # Also set color directly for renderers that ignore colorTemperature
-        rgb = color_temperature_to_rgb(kelvin)
-        self._set_color_attr(prim, "inputs:color", rgb)
+        # ``inputs:color`` must be reset to white, NOT to the Planckian RGB.
+        # It used to be set to the same RGB "for renderers that ignore
+        # colorTemperature", but Isaac's RTX renderer honours the attribute
+        # above, so the tint landed twice: at 9000 K the Planckian RGB is
+        # ~(0.79, 0.85, 1.00) and squaring it gives ~(0.62, 0.72, 1.00) — a
+        # scene rendered essentially monochrome blue. Both ends also darkened,
+        # because every channel of that RGB is <= 1. Measured on a level1/pick
+        # pilot: frame luma swung 41 to 172 across episodes, with the dark end
+        # too dark to make out the bottle at all.
+        self._set_color_attr(prim, "inputs:color", (1.0, 1.0, 1.0))
 
         return kelvin
 
