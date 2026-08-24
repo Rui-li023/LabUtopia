@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<!-- Doosan M0609 with the project-standard Robotiq 2F-85. -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="doosan_m0609_labutopia_robotiq_2f_85">
+  <xacro:include filename="$(find dsr_description)/xacro/macro.m0609.white.xacro"/>
+  <xacro:include filename="$(find robotiq_description)/xacro/2F85.xacro"/>
+
+  <link name="world"/>
+  <xacro:m0609 namespace=""/>
+  <joint name="world_fixed" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="world"/>
+    <child link="base_0"/>
+  </joint>
+  <xacro:Robotiq85 name=""/>
+
+  <joint name="m0609_tool_to_gripper_base" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="link6"/>
+    <child link="gripper_base"/>
+  </joint>
+
+  <link name="grasp_frame"/>
+  <joint name="gripper_base_to_grasp_frame" type="fixed">
+    <origin xyz="0 0 0.13" rpy="0 0 0"/>
+    <parent link="gripper_base"/>
+    <child link="grasp_frame"/>
+  </joint>
+</robot>

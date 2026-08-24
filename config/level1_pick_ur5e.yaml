@@ -1,0 +1,73 @@
+# Level-1 pick with a UR5e carrying a Robotiq 2F-85.
+#
+# The UR arms have a bare tool flange, so the gripper is composed in at the URDF level
+# (see ur_description/urdf/combined/ur5e_robotiq85.xacro) and converted as ONE
+# articulation -- referencing a separately converted gripper would give PhysX two
+# articulations it cannot drive together.
+#
+# No object scaling and no tool-frame correction: the 2F-85 opens 85 mm against the
+# beaker's 68.8 mm base, and its tool frame already uses the canonical convention
+# (+Z approach, +Y fingers) that the grasp eulers are written in.
+
+name: level1_pick_ur5e
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 10
+
+task:
+  max_steps: 2000
+  obj_paths:
+    - path: "/World/beaker2"
+      position_range:
+        x: [0.15, 0.28]
+        y: [-0.10, 0.10]
+        z: [0.84, 0.84]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+grasp:
+  # A 30-degree downward approach, NOT the Franka's horizontal [0, 90, 25].
+  #
+  # An IK sweep endorses every orientation here (the UR5e's +/-2pi joints leave plenty
+  # of freedom), which is exactly why it was the wrong tool: the pre-grasp waypoint sits
+  # BEHIND the object, backed off toward the base, and reaching it horizontally puts the
+  # UR in a configuration RMPFlow cannot leave. In simulation [0, 90, 25] stalls 12 cm
+  # short of the beaker and never descends -- 0/43 episodes -- while [0, 120, 25] tracks
+  # the same pre-grasp, grasp and lift waypoints to under 2 mm.
+  ee_euler_deg: [0, 120, 25]
+
+robot:
+  type: "ur5e_robotiq"
+  position: [-0.40, 0, 0.71]
+
+collector:
+  type: "default"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true

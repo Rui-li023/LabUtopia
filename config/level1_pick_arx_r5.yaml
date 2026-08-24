@@ -1,0 +1,73 @@
+# Level-1 pick with the ARX R5 arm (same family as the X5; see that config for the
+# reasoning behind the grasp pose and spawn box).
+#
+# Same task_type/controller_type as level1_pick -- only the robot block and the
+# arm-specific grasp geometry differ.
+#
+# Placement and grasp pose come from an IK sweep over the three pick waypoints
+# (pre-grasp, grasp, lift), not from copying the Franka's numbers. ARX X5's elbow
+# joints are one-sided (joint2 [0, 3.66], joint3 [0, 3.14]), which rules out the
+# diagonal approach Piper needs: only a side approach solves at bench height.
+#
+# No object scaling: the X5 opens 88 mm against the beaker's 68.8 mm base, wider even
+# than the Franka's 80 mm.
+
+name: level1_pick_arx_r5
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 10
+
+task:
+  max_steps: 2000
+  obj_paths:
+    - path: "/World/beaker2"
+      position_range:
+        x: [0.16, 0.24]
+        y: [-0.10, 0.10]
+        z: [0.84, 0.84]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+grasp:
+  # Re-derived after fixing the tool-frame convention. This arm's approach axis is
+  # local +X, not +Z, so the earlier [0,90,25] actually laid the fingers ACROSS the top
+  # of the cup rather than around it -- it "worked" only because that pose happened to
+  # be easy to reach. With the correction applied the same IK sweep now solves every
+  # cell with up to 1.20 rad of limit margin, against 0.07 before.
+  ee_euler_deg: [0, 90, 0]
+
+robot:
+  type: "arx_r5"
+  position: [-0.30, 0, 0.71]
+
+collector:
+  type: "default"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true

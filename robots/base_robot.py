@@ -75,6 +75,12 @@ class BaseRobot(Robot, ABC):
             articulation_controller=None,
         )
         self.prim_path_str = prim_path
+        # Remembered so post_reset() can re-apply it. A fix-base articulation is anchored
+        # by a root fixed joint at its AUTHORED transform, so the constructor's position
+        # silently does nothing -- both converted arms (piper, arx_x5) come up welded at
+        # their asset origin. set_world_pose() after the world reset does move them.
+        self._requested_position = None if position is None else np.asarray(position, dtype=float)
+        self._requested_orientation = None if orientation is None else np.asarray(orientation, dtype=float)
         self._end_effector: Optional[SingleRigidPrim] = None
         self._gripper: Optional[ParallelGripper] = None
         self._gripper_state: int = GRIPPER_OPEN  # Track current gripper state
@@ -110,6 +116,52 @@ class BaseRobot(Robot, ABC):
             Full prim path string to the end effector link.
         """
         ...
+
+    @property
+    def motion_config(self) -> dict:
+        """Lula/RMPFlow configuration for this arm.
+
+        Returns the dict ``mg.lula.motion_policies.RmpFlow`` expects:
+        ``robot_description_path``, ``urdf_path``, ``rmpflow_config_path`` and
+        ``end_effector_frame_name``. The same paths drive the Lula kinematics solver
+        and c-space trajectory generator.
+
+        Every motion component reads these from the robot instead of hardcoding one
+        arm's files, which is what lets the shared controllers drive any arm. Robots
+        without a Lula description (mobile bases used purely for navigation) may leave
+        this unimplemented; only motion-planned arms need it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not define motion_config; it cannot be used "
+            "with RMPFlow-based controllers."
+        )
+
+    @property
+    def tool_frame_correction_euler_deg(self) -> list[float]:
+        """Rotation from the CANONICAL grasp frame to this arm's tool frame.
+
+        Every ``grasp.ee_euler_deg`` in the configs is written against the Franka/Piper
+        convention: tool local +Z is the approach direction, local +Y separates the
+        fingers. Not all arms agree -- measured by forward kinematics, ARX X5/R5 and the
+        WidowX put their approach on local +X with the fingers still on +Y. Feeding them
+        a canonical euler rotates the gripper 90 degrees off, so the fingers end up
+        lying across the top of a cup instead of around it.
+
+        Those arms declare [0, -90, 0], which maps their local +X onto the canonical +Z
+        and leaves +Y alone. Default is no correction.
+        """
+        return [0.0, 0.0, 0.0]
+
+    @property
+    def ik_end_effector_frame(self) -> str:
+        """Lula frame name the kinematics solver and trajectory generator target.
+
+        Deliberately separate from ``motion_config["end_effector_frame_name"]``: on
+        Franka, RMPFlow steers ``right_gripper`` while IK and c-space trajectories are
+        posed against ``panda_hand``. Collapsing the two would silently move Franka's
+        grasp frame.
+        """
+        return self.motion_config["end_effector_frame_name"]
 
     @property
     @abstractmethod
@@ -409,6 +461,7 @@ class BaseRobot(Robot, ABC):
             physics_sim_view: Physics simulation view from Isaac Sim.
         """
         super().initialize(physics_sim_view)
+        self.ensure_drive_damping()
 
     @abstractmethod
     def post_reset(self) -> None:
@@ -424,6 +477,75 @@ class BaseRobot(Robot, ABC):
         ...
 
     # ── Utility methods ──────────────────────────────────────────────────────
+
+    # Fraction of drive stiffness used as damping when the USD ships none.
+    #
+    # NOT Franka's own 0.2 (22918/4584). Damping only has to be a few times critical to
+    # kill the feedback blow-up; critical damping for these arms is 2*sqrt(K*I), i.e. a
+    # ratio near 0.004 for UR5e and 0.001 for ARX, so 0.2 is ~50x over-damped. That is
+    # not free: it makes the arm sluggish, and the pick controller's phases have fixed
+    # durations, so at 0.2 the UR5e finished every lift short of the +0.1 m success gate
+    # (0/38 episodes) even though its static tracking error looked excellent. 0.02 keeps
+    # the arm responsive and still holds tracking to a few mm in both control regimes.
+    DRIVE_DAMPING_RATIO: float = 0.02
+    # Some vendor URDFs contain a tiny physical joint damping value (iiwa: 0.5).
+    # The importer copies it into a high-stiffness position drive, where it is orders
+    # of magnitude too small but still bypasses the zero-only repair below. Keep this
+    # opt-in so existing tuned assets are unaffected.
+    ENFORCE_DRIVE_DAMPING_FLOOR: bool = False
+
+    def ensure_drive_damping(self) -> None:
+        """Give position drives a damping term when the USD ships none.
+
+        The URDF importer only writes drive damping when the URDF declares
+        ``<dynamics damping="..."/>``, and none of the arm descriptions converted here do
+        -- ARX X5/R5, WidowX and UR5e all come up with stiffness ~35810 and damping 0.
+
+        That is not a cosmetic difference. RMPFlow reads the MEASURED joint velocity back
+        every step (``ignore_robot_state_updates`` is off outside position-only
+        collection), so an undamped position drive feeds its damping term velocity noise
+        and the policy diverges: ARX ended up 0.33 m away from a target 0.05 m from its
+        start, and UR5e 0.57 m from its grasp pose. Restoring Franka's ratio brings both
+        to millimetres. Franka itself is untouched -- its drives already have damping.
+
+        Call from ``initialize()``, after the articulation view exists.
+        """
+        view = getattr(self, "_articulation_view", None)
+        if view is None:
+            return
+        try:
+            stiffness, damping = view.get_gains()
+        except Exception:  # not every articulation exposes gains
+            return
+        stiffness = np.atleast_2d(np.asarray(stiffness, dtype=float))
+        damping = np.atleast_2d(np.asarray(damping, dtype=float))
+        # Only joints that are actually position-driven AND undamped. Mimic followers
+        # have stiffness 0 and are carried by their lead joint, so leave them alone.
+        damping_floor = stiffness * self.DRIVE_DAMPING_RATIO
+        needs_damping = (damping <= 0.0) & (stiffness > 0.0)
+        if self.ENFORCE_DRIVE_DAMPING_FLOOR:
+            needs_damping |= (stiffness > 0.0) & (damping < damping_floor)
+        if not np.any(needs_damping):
+            return
+        damping = np.where(needs_damping, damping_floor, damping)
+        view.set_gains(kds=damping)
+
+    def enforce_requested_world_pose(self) -> None:
+        """Re-apply the configured base pose after a reset.
+
+        Call from ``post_reset()`` on any arm whose USD welds its base. Silently does
+        nothing when no position was requested, so arms that already honour the
+        constructor argument are unaffected.
+        """
+        if self._requested_position is None:
+            return
+        current, _ = self.get_world_pose()
+        if np.allclose(current, self._requested_position, atol=1e-4):
+            return
+        self.set_world_pose(
+            position=self._requested_position,
+            orientation=self._requested_orientation if self._requested_orientation is not None else None,
+        )
 
     def get_arm_joint_indices(self) -> List[int]:
         """Get articulation indices for arm joints.

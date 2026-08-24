@@ -1,0 +1,478 @@
+# Arms to convert from URDF to USD. Driven by batch.py.
+#
+# repo/branch/dir  -- shallow-cloned into third_party/urdf/<dir> (gitignored)
+# package          -- ROS package holding the description, located by its package.xml
+# source           -- path inside the package: .xacro (expanded) or plain .urdf (copied)
+# extra_repos      -- extra cloned repos to resolve packages from (ARX splits arm xacros
+#                     and their component_models meshes across two repos)
+# args             -- xacro $(arg) values, for vendors shipping one parameterised xacro
+# reach_m          -- datasheet reach, INFORMATIONAL only (printed next to the measured
+#                     span). The scale assertion is a broad sanity band in pipeline.py,
+#                     because the unit trap it guards against misses by 100x, not by 10%.
+# preview_pose     -- OPTIONAL per-joint radians for the preview render, when the generic
+#                     showroom pose in pipeline.SHOWROOM_POSE_RAD gets clamped by this
+#                     arm's joint limits into an unreadable folded home pose
+# visual_meshes    -- expected source mesh format, from surveying each repo. Materials
+#                     are inherited from these, never from importer options:
+#                     dae/obj carry materials, stl carries none (flat colour only).
+# visual_rpy       -- OPTIONAL local RPY correction composed onto every visual origin;
+#                     useful when mesh coordinates use a different up axis than URDF.
+
+repos:
+  universal_robot:
+    url: ros-industrial/universal_robot
+    branch: melodic-devel
+  arx:
+    url: fiveages-sim/robot-descriptions-arx
+    branch: main
+  mobile_aloha:
+    url: agilexrobotics/mobile_aloha_sim
+    branch: master
+  agilex_piper:
+    url: agilexrobotics/Piper_ros
+    branch: noetic
+  franka_ros:
+    url: frankaemika/franka_ros
+    branch: develop
+  kinova-ros:
+    url: Kinovarobotics/kinova-ros
+    branch: noetic-devel
+  ros_kortex:
+    url: Kinovarobotics/ros_kortex
+    branch: noetic-devel
+  xarm_ros:
+    url: xArm-Developer/xarm_ros
+    branch: master
+  iiwa_stack:
+    url: IFL-CAMP/iiwa_stack
+    branch: master
+  fanuc:
+    url: ros-industrial/fanuc
+    branch: melodic-devel
+  doosan-robot:
+    url: doosan-robotics/doosan-robot
+    branch: master
+  interbotix:
+    url: Interbotix/interbotix_ros_manipulators
+    branch: main
+  flexiv_description:
+    url: flexivrobotics/flexiv_description
+    branch: humble
+  abb:
+    url: ros-industrial/abb
+    branch: noetic-devel
+  motoman:
+    url: ros-industrial/motoman
+    branch: noetic-devel
+  tmr_ros1:
+    url: TechmanRobotInc/tmr_ros1
+    branch: noetic
+  z1_ros:
+    url: unitreerobotics/z1_ros
+    branch: noetic
+
+# ---------------------------------------------------------------------------
+# Official NVIDIA Isaac Sim assets (fetch_official.py). Preferred wherever NVIDIA
+# publishes the model: same importer, same geometry (ur5e is face-for-face identical
+# to a local conversion), but materials deduplicated into one shared set and an extra
+# *_robot_schema.usd semantic layer. Downloaded to assets/robots/official/<name>/.
+official:
+  # Universal Robots -- full e-series and classic line
+  - {name: ur3,   vendor: UniversalRobots, model: ur3}
+  - {name: ur3e,  vendor: UniversalRobots, model: ur3e}
+  - {name: ur5,   vendor: UniversalRobots, model: ur5}
+  - {name: ur5e,  vendor: UniversalRobots, model: ur5e}
+  - {name: ur10,  vendor: UniversalRobots, model: ur10}
+  - {name: ur10e, vendor: UniversalRobots, model: ur10e}
+  - {name: ur16e, vendor: UniversalRobots, model: ur16e}
+  - {name: ur20,  vendor: UniversalRobots, model: ur20}
+  - {name: ur30,  vendor: UniversalRobots, model: ur30}
+  # Franka
+  - {name: franka_panda, vendor: FrankaRobotics, model: FrankaPanda}
+  - {name: franka_fr3,   vendor: FrankaRobotics, model: FrankaFR3}
+  - {name: franka_emika, vendor: FrankaRobotics, model: FrankaEmika}
+  # Kinova
+  - {name: kinova_gen3,  vendor: Kinova, model: Gen3}
+  - {name: kinova_jaco2, vendor: Kinova, model: Jaco2}
+  # UFACTORY
+  - {name: xarm6, vendor: Ufactory, model: xarm6}
+  - {name: xarm7, vendor: Ufactory, model: xarm7}
+  - {name: lite6, vendor: Ufactory, model: lite6}
+  - {name: uf850, vendor: Ufactory, model: uf850}
+  # Requested explicitly
+  - {name: rizon4,      vendor: Flexiv, model: Rizon4}
+  - {name: festo_cobot, vendor: Festo,  model: FestoCobot}
+  # Ridgeback-mounted variants (LabUtopia L5 already uses a Ridgeback+Franka)
+  - {name: ridgeback_franka_official, vendor: Clearpath, model: RidgebackFranka}
+  - {name: ridgeback_ur_official,     vendor: Clearpath, model: RidgebackUr}
+  # Grippers, for arms that ship bare-flange
+  - {name: robotiq_2f85,  vendor: Robotiq, model: 2F-85,  kind: gripper, entry: payloads/Robotiq_2F_85_base.usd}
+  - {name: robotiq_2f140, vendor: Robotiq, model: 2F-140, kind: gripper}
+
+
+robots:
+  - name: ur3e
+    vendor: Universal Robots
+    repo: universal_robot
+    package: ur_description
+    source: urdf/ur3e.xacro
+    reach_m: 0.50
+    visual_meshes: dae
+
+  - name: ur3e_robotiq85
+    vendor: Universal Robots + Robotiq
+    repo: universal_robot
+    package: ur_description
+    source: urdf/combined/ur3e_robotiq85.xacro
+    extra_repos: [arx_common]
+    reach_m: 0.63
+    visual_meshes: dae
+
+  - name: ur5e
+    vendor: Universal Robots
+    repo: universal_robot
+    package: ur_description
+    source: urdf/ur5e.xacro
+    reach_m: 0.85
+    visual_meshes: dae
+
+  - name: ur10e
+    vendor: Universal Robots
+    repo: universal_robot
+    package: ur_description
+    source: urdf/ur10e.xacro
+    reach_m: 1.30
+    visual_meshes: dae
+
+  - name: ur10e_robotiq85
+    vendor: Universal Robots + Robotiq
+    repo: universal_robot
+    package: ur_description
+    source: urdf/combined/ur10e_robotiq85.xacro
+    extra_repos: [arx_common]
+    reach_m: 1.43
+    visual_meshes: dae
+
+  - name: panda
+    vendor: Franka Robotics
+    repo: franka_ros
+    package: franka_description
+    source: robots/panda/panda.urdf.xacro
+    reach_m: 0.85
+    visual_meshes: dae
+
+  - name: fr3
+    vendor: Franka Robotics
+    repo: franka_ros
+    package: franka_description
+    source: robots/fr3/fr3.urdf.xacro
+    args:
+      hand: "true"
+      # Franka only emits the inertial.yaml values in its Gazebo branch. Without
+      # them the Isaac importer estimates masses from geometry and gravity drives
+      # joint4 into its limit even under the original 87 N m effort cap.
+      gazebo: "true"
+      # Keep this a reusable fixed-base asset; convert.py authors the root weld.
+      parent: ""
+    preview_pose: [0.0, -0.785398, 0.0, -2.356194, 0.0, 1.570796, 0.785398, 0.04, 0.04]
+    reach_m: 0.95
+    visual_meshes: dae
+
+  - name: iiwa7
+    vendor: KUKA
+    repo: iiwa_stack
+    package: iiwa_description
+    source: urdf/iiwa7.urdf.xacro
+    reach_m: 0.80
+    visual_meshes: stl
+
+  - name: iiwa14
+    vendor: KUKA
+    repo: iiwa_stack
+    package: iiwa_description
+    source: urdf/iiwa14.urdf.xacro
+    reach_m: 0.82
+    visual_meshes: stl
+
+  - name: iiwa14_robotiq85
+    vendor: KUKA + Robotiq
+    repo: iiwa_stack
+    package: iiwa_description
+    source_file: scripts/urdf_to_usd/xacro_overlays/iiwa14_robotiq85.xacro
+    extra_repos: [arx_common]
+    preview_pose: [0.0, -0.65, 0.0, 1.15, 0.0, -0.7, 0.0]
+    reach_m: 0.95
+    visual_meshes: dae
+
+  - name: jaco2_j2n6s300
+    vendor: Kinova
+    repo: kinova-ros
+    package: kinova_description
+    source: urdf/j2n6s300_standalone.xacro
+    # Four arm axes are continuous upstream. Lula needs a finite planning interval.
+    continuous_joint_limit: 6.283185307179586
+    preview_pose: [4.8046852, 2.92482, 1.002, 4.2031852, 1.4458, 1.3233]
+    reach_m: 0.90
+    visual_meshes: dae
+
+  - name: gen3_7dof
+    vendor: Kinova
+    repo: ros_kortex
+    package: kortex_description
+    source: robots/gen3.xacro
+    reach_m: 0.90
+    visual_meshes: stl
+
+  - name: gen3_robotiq85
+    vendor: Kinova + Robotiq
+    repo: ros_kortex
+    package: kortex_description
+    source_file: scripts/urdf_to_usd/xacro_overlays/gen3_robotiq85.xacro
+    extra_repos: [arx_common]
+    # Kortex models the four multi-turn axes as continuous. Lula requires finite
+    # position bounds for every c-space coordinate, so use one full turn each way as
+    # the planning interval while retaining the vendor effort/velocity limits.
+    continuous_joint_limit: 6.283185307179586
+    preview_pose: [1.57, -0.35, 3.14, -2.0, 0.0, -1.0, 1.57]
+    reach_m: 0.98
+    visual_meshes: dae
+
+  - name: rizon4_robotiq85
+    vendor: Flexiv + Robotiq
+    repo: flexiv_description
+    package: flexiv_description
+    source_file: scripts/urdf_to_usd/xacro_overlays/rizon4_robotiq85.xacro
+    extra_repos: [arx_common]
+    preview_pose: [0.0, -0.69813, 0.0, 1.570796, 0.0, 0.69813, 0.0]
+    reach_m: 0.98
+    visual_meshes: obj
+
+  - name: xarm6
+    vendor: UFACTORY
+    repo: xarm_ros
+    package: xarm_description
+    source: urdf/xarm_device.urdf.xacro
+    args:
+      dof: "6"
+      robot_type: xarm
+    preview_pose: [0.0, -0.6, -0.6, 0.0, 0.9, 0.0]
+    reach_m: 0.70
+    visual_meshes: stl
+
+  - name: xarm6_robotiq85
+    vendor: UFACTORY + Robotiq
+    repo: xarm_ros
+    package: xarm_description
+    source_file: scripts/urdf_to_usd/xacro_overlays/xarm6_robotiq85.xacro
+    extra_repos: [arx_common]
+    preview_pose: [0.0, -0.6, -0.6, 0.0, 0.9, 0.0]
+    reach_m: 0.83
+    visual_meshes: dae
+
+  - name: xarm7
+    vendor: UFACTORY
+    repo: xarm_ros
+    package: xarm_description
+    source: urdf/xarm_device.urdf.xacro
+    args:
+      dof: "7"
+      robot_type: xarm
+    preview_pose: [0.0, -0.6, 0.0, 0.6, 0.0, 0.9, 0.0]
+    reach_m: 0.75
+    visual_meshes: stl
+
+  - name: xarm7_robotiq85
+    vendor: UFACTORY + Robotiq
+    repo: xarm_ros
+    package: xarm_description
+    source: urdf/combined/xarm7_robotiq85.xacro
+    extra_repos: [arx_common]
+    preview_pose: [0.0, -0.6, 0.0, 0.6, 0.0, 0.9, 0.0]
+    reach_m: 0.88
+    visual_meshes: dae
+
+  - name: doosan_m1013
+    vendor: Doosan
+    repo: doosan-robot
+    package: dsr_description
+    source: xacro/m1013.urdf.xacro
+    args:
+      color: white
+      namespace: ""
+    reach_m: 1.30
+    visual_meshes: dae
+
+  - name: doosan_m1013_robotiq85
+    vendor: Doosan + Robotiq
+    repo: doosan-robot
+    package: dsr_description
+    source_file: scripts/urdf_to_usd/xacro_overlays/doosan_m1013_robotiq85.xacro
+    extra_repos: [arx_common]
+    preview_pose: [0.0, -0.7, 1.3, 0.0, 0.6, 0.0]
+    reach_m: 1.43
+    visual_meshes: dae
+
+  - name: doosan_m0609
+    vendor: Doosan
+    repo: doosan-robot
+    package: dsr_description
+    source: xacro/m0609.urdf.xacro
+    args:
+      color: white
+      namespace: ""
+    reach_m: 0.90
+    visual_meshes: dae
+
+  - name: doosan_m0609_robotiq85
+    vendor: Doosan + Robotiq
+    repo: doosan-robot
+    package: dsr_description
+    source_file: scripts/urdf_to_usd/xacro_overlays/doosan_m0609_robotiq85.xacro
+    extra_repos: [arx_common]
+    preview_pose: [0.0, -0.7, 1.3, 0.0, 0.6, 0.0]
+    reach_m: 1.03
+    visual_meshes: dae
+
+  - name: fanuc_lrmate200id
+    vendor: Fanuc
+    repo: fanuc
+    package: fanuc_lrmate200id_support
+    source: urdf/lrmate200id.xacro
+    reach_m: 0.72
+    visual_meshes: stl
+
+  - name: fanuc_lrmate200id_robotiq85
+    vendor: Fanuc + Robotiq
+    repo: fanuc
+    package: fanuc_lrmate200id_support
+    source_file: scripts/urdf_to_usd/xacro_overlays/fanuc_lrmate200id_robotiq85.xacro
+    extra_repos: [arx_common]
+    preview_pose: [0.0, -0.5, 0.5, 0.0, 0.8, 0.0]
+    reach_m: 0.85
+    visual_meshes: dae
+
+  - name: abb_gofa_robotiq85
+    vendor: ABB + Robotiq
+    repo: abb
+    package: abb_crb15000_support
+    source_file: scripts/urdf_to_usd/xacro_overlays/abb_gofa_robotiq85.xacro
+    extra_repos: [arx_common]
+    preview_pose: [0.0, -0.65, -0.6, 0.0, 1.15, 0.0]
+    reach_m: 1.08
+    visual_meshes: dae
+
+  - name: fanuc_crx10ia_robotiq85
+    vendor: FANUC + Robotiq
+    repo: fanuc
+    package: fanuc_crx10ia_support
+    source_file: scripts/urdf_to_usd/xacro_overlays/fanuc_crx10ia_robotiq85.xacro
+    extra_repos: [arx_common]
+    preview_pose: [0.0, -0.65, -0.6, 0.0, 1.15, 0.0]
+    reach_m: 1.38
+    visual_meshes: dae
+
+  - name: yaskawa_hc10_robotiq85
+    vendor: Yaskawa + Robotiq
+    repo: motoman
+    package: motoman_hc10_support
+    source_file: scripts/urdf_to_usd/xacro_overlays/yaskawa_hc10_robotiq85.xacro
+    extra_repos: [arx_common]
+    preview_pose: [0.0, -0.65, -0.6, 0.0, 1.15, 0.0]
+    reach_m: 1.33
+    visual_meshes: dae
+
+  - name: techman_tm5_900_robotiq85
+    vendor: Techman + Robotiq
+    repo: tmr_ros1
+    package: tm_description
+    source_file: scripts/urdf_to_usd/xacro_overlays/techman_tm5_900_robotiq85.xacro
+    extra_repos: [arx_common]
+    strip_visual_materials: true
+    # Isaac derives mesh prim names from the filename. Techman's hyphenated stems
+    # (for example tm5-base.obj) are invalid Sdf identifiers unless aliased.
+    sanitize_mesh_filenames: true
+    preview_pose: [0.0, -0.65, -0.6, 0.0, 1.15, 0.0]
+    reach_m: 1.03
+    visual_meshes: obj
+
+  - name: unitree_z1
+    vendor: Unitree
+    repo: z1_ros
+    package: z1_description
+    source_file: scripts/urdf_to_usd/xacro_overlays/unitree_z1.xacro
+    args:
+      UnitreeGripper: "true"
+    finger_collider_preset: unitree_z1
+    finger_collider_force: true
+    # Unitree's authoritative ROS DAE files define no materials, and the independent
+    # MuJoCo Menagerie conversion derived from them is intentionally one neutral grey
+    # as well. One colour is therefore source-faithful, not a lost-material symptom.
+    min_material_colors: 1
+    preview_pose: [0.0, 1.0, -1.5, 0.2, 0.0, 0.0, -1.2]
+    reach_m: 0.80
+    visual_meshes: dae
+
+  - name: widowx_vx300s
+    vendor: Trossen / Interbotix
+    repo: interbotix
+    package: interbotix_xsarm_descriptions
+    source: urdf/vx300s.urdf.xacro
+    reach_m: 0.75
+    visual_meshes: stl
+
+  # --- requested models with no official NVIDIA asset -------------------------
+  - name: arx_x5
+    vendor: ARX
+    repo: arx
+    package: arx5_description
+    source: xacro/robot.xacro
+    extra_repos: [arx_common]
+    args:
+      type: x5
+    # ARX's GLB files are Y-up; URDF and Isaac Sim are Z-up.
+    visual_rpy: [-1.5707963267948966, 0, 0]
+    reach_m: 0.62
+    visual_meshes: glb
+
+  - name: arx_r5
+    vendor: ARX
+    repo: arx
+    package: arx5_description
+    source: xacro/robot.xacro
+    extra_repos: [arx_common]
+    args:
+      type: r5
+    # ARX's GLB files are Y-up; URDF and Isaac Sim are Z-up.
+    visual_rpy: [-1.5707963267948966, 0, 0]
+    reach_m: 0.62
+    visual_meshes: glb
+
+  - name: arx_lift2s
+    vendor: ARX
+    repo: arx
+    package: arx_lift2s_description
+    source: xacro/robot.xacro
+    extra_repos: [arx_common]
+    reach_m: 1.20
+    visual_meshes: glb
+
+  - name: split_aloha
+    vendor: AgileX
+    repo: mobile_aloha
+    package: arx5_description
+    source: urdf/arx5_description_isaac.urdf
+    reach_m: 1.20
+    visual_meshes: stl
+
+  # The in-repo piper.usd came from a 20x STL URDF (flat colour). This source has
+  # 16 DAE visual meshes, so re-converting actually improves the materials.
+  - name: piper_agilex
+    vendor: AgileX
+    repo: agilex_piper
+    package: piper_description
+    source: urdf/piper_description_v100.urdf
+    # Every <visual> carries a flat URDF colour that would override the 13-15 materials
+    # each of piper's DAE files actually defines.
+    strip_visual_materials: true
+    reach_m: 0.70
+    visual_meshes: dae

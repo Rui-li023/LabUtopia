@@ -13,8 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
+
 import isaacsim.robot_motion.motion_generation as mg
 from isaacsim.core.prims import SingleArticulation
+
+from robots.base_robot import BaseRobot
 
 
 class RMPFlowController(mg.MotionPolicyController):
@@ -44,8 +47,22 @@ class RMPFlowController(mg.MotionPolicyController):
         physics_dt: float = 1.0 / 60.0,
         use_default_config: bool = True
     ) -> None:
-        # Choose between default config or custom config based on parameter
-        if use_default_config:
+        # The arm supplies its own Lula description. This is what makes the shared
+        # controllers arm-agnostic: previously every one of them planned against
+        # Franka's files no matter which robot was passed in, so any other arm either
+        # refused to solve or drove to Franka's joint frames.
+        robot_motion_config = None
+        if isinstance(robot_articulation, BaseRobot):
+            try:
+                robot_motion_config = robot_articulation.motion_config
+            except NotImplementedError:
+                robot_motion_config = None
+
+        if robot_motion_config is not None:
+            self.rmp_flow_config = dict(robot_motion_config)
+            self.rmp_flow_config.setdefault("maximum_substep_size", 0.00334)
+            self.rmp_flow_config.setdefault("ignore_robot_state_updates", False)
+        elif use_default_config:
             # Use system default RMPflow configuration
             self.rmp_flow_config = mg.interface_config_loader.load_supported_motion_policy_config("Franka", "RMPflow")
         else:
@@ -73,17 +90,42 @@ class RMPFlowController(mg.MotionPolicyController):
         self.articulation_rmp = mg.ArticulationMotionPolicy(robot_articulation, self.rmp_flow, physics_dt)
 
         mg.MotionPolicyController.__init__(self, name=name, articulation_motion_policy=self.articulation_rmp)
-        (
-            self._default_position,
-            self._default_orientation,
-        ) = self._articulation_motion_policy._robot_articulation.get_world_pose()
+        self._default_position, self._default_orientation = self._kinematic_base_pose(robot_articulation)
+        print(
+            f"[rmpflow] base_pose={self._default_position} quat={self._default_orientation} "
+            f"ee_frame={self.rmp_flow_config.get('end_effector_frame_name')} "
+            f"urdf={os.path.basename(str(self.rmp_flow_config.get('urdf_path')))} "
+            f"articulation_prim_pose={robot_articulation.get_world_pose()[0]}",
+            flush=True,
+        )
         self._motion_policy.set_robot_base_pose(
             robot_position=self._default_position, robot_orientation=self._default_orientation
         )
         return
 
+    @staticmethod
+    def _kinematic_base_pose(robot_articulation):
+        """World pose of the arm's base, read AFTER physics initialisation.
+
+        Deliberately re-read in reset() rather than cached in __init__: controllers are
+        built before the articulation is initialised, and at that point get_world_pose()
+        still reports the authored prim transform. For an arm whose USD welds its base
+        somewhere other than the prim origin (piper sits at [-0.20, -0.15, 0.80] no
+        matter what the config asks for), the two differ and RMPFlow would plan in a
+        frame shifted by that much.
+        """
+        return robot_articulation.get_world_pose()
+
     def reset(self):
         mg.MotionPolicyController.reset(self)
+        # Re-read rather than reuse the pose captured in __init__. Controllers are
+        # built before the robot's world pose is applied, so at construction time an
+        # arm whose base_link is offset inside its USD (piper) reports the raw offset
+        # [-0.20, -0.15, 0.80] instead of its placed position -- RMPFlow then plans in
+        # a frame shifted by that much and the gripper stalls short of the target.
+        self._default_position, self._default_orientation = self._kinematic_base_pose(
+            self._articulation_motion_policy._robot_articulation
+        )
         self._motion_policy.set_robot_base_pose(
             robot_position=self._default_position, robot_orientation=self._default_orientation
         )

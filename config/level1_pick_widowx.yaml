@@ -1,0 +1,76 @@
+# Level-1 pick with the Trossen/Interbotix WidowX VX300s.
+#
+# Same task_type/controller_type as level1_pick -- only the robot block and the
+# arm-specific grasp geometry differ.
+#
+# Placement and grasp pose come from an IK sweep over the three pick waypoints
+# (pre-grasp, grasp, lift), not from copying the Franka's numbers. ARX X5's elbow
+# joints are one-sided (joint2 [0, 3.66], joint3 [0, 3.14]), which rules out the
+# diagonal approach Piper needs: only a side approach solves at bench height.
+#
+# No object scaling: the X5 opens 88 mm against the beaker's 68.8 mm base, wider even
+# than the Franka's 80 mm.
+
+name: level1_pick_widowx
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 10
+
+task:
+  max_steps: 2000
+  obj_paths:
+    - path: "/World/beaker2"
+      # Measured in sim, not picked by IK margin. The highest-margin cells from an IK
+      # sweep (x~0.13 with euler [0,80,0]) scored 0/8 here, while this wider, closer box
+      # scores ~20%: joint-limit margin says whether a pose is solvable, not whether
+      # RMPFlow's local policy actually converges to it.
+      # Bigger arm than the ARX (~0.75 m reach), base further back, so the beaker sits
+      # further out. Centre from the IK solve used to derive this arm's home pose.
+      position_range:
+        x: [0.12, 0.24]
+        y: [-0.10, 0.10]
+        z: [0.84, 0.84]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+grasp:
+  # Side approach. The diagonal poses Piper needs have no IK solution here at all --
+  # both elbow joints are limited to positive angles. [0,80,0] scores better on paper
+  # (0.26 rad of limit margin against 0.07) but 0/8 in sim.
+  ee_euler_deg: [0, 90, 25]
+
+robot:
+  type: "widowx_vx300s"
+  position: [-0.38, 0, 0.71]
+
+collector:
+  type: "default"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true

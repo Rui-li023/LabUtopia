@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!-- Techman TM5-900 with the project-standard Robotiq 2F-85. -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="techman_tm5_900_labutopia_robotiq_2f_85">
+  <xacro:include filename="$(find tm_description)/xacro/macro.tm5-900-nominal.urdf.xacro"/>
+  <xacro:include filename="$(find robotiq_description)/xacro/2F85.xacro"/>
+
+  <xacro:tm5-900 ns="" prefix="" color="none" format="obj"/>
+  <xacro:Robotiq85 name=""/>
+
+  <joint name="tm5_tool0_to_gripper_base" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="tool0"/>
+    <child link="gripper_base"/>
+  </joint>
+
+  <link name="grasp_frame"/>
+  <joint name="gripper_base_to_grasp_frame" type="fixed">
+    <origin xyz="0 0 0.13" rpy="0 0 0"/>
+    <parent link="gripper_base"/>
+    <child link="grasp_frame"/>
+  </joint>
+</robot>

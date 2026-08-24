@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!-- FANUC LR Mate 200iD with the project-standard Robotiq 2F-85. -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="fanuc_lrmate200id_labutopia_robotiq_2f_85">
+  <xacro:include filename="$(find fanuc_lrmate200id_support)/urdf/lrmate200id_macro.xacro"/>
+  <xacro:include filename="$(find robotiq_description)/xacro/2F85.xacro"/>
+
+  <xacro:fanuc_lrmate200id prefix=""/>
+  <xacro:Robotiq85 name=""/>
+
+  <!-- tool0 points out through the flange, matching the gripper's local +Z axis. -->
+  <joint name="fanuc_tool0_to_gripper_base" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="tool0"/>
+    <child link="gripper_base"/>
+  </joint>
+
+  <!-- Pad plane measured on the composed 2F-85: 130 mm from gripper_base. -->
+  <link name="grasp_frame"/>
+  <joint name="gripper_base_to_grasp_frame" type="fixed">
+    <origin xyz="0 0 0.13" rpy="0 0 0"/>
+    <parent link="gripper_base"/>
+    <child link="grasp_frame"/>
+  </joint>
+</robot>

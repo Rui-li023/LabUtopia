@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!-- FANUC CRX-10iA/L with the project-standard Robotiq 2F-85. -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="fanuc_crx10ia_labutopia_robotiq_2f_85">
+  <xacro:include filename="$(find fanuc_crx10ia_support)/urdf/crx10ial_macro.xacro"/>
+  <xacro:include filename="$(find robotiq_description)/xacro/2F85.xacro"/>
+
+  <xacro:fanuc_crx10ial prefix=""/>
+  <xacro:Robotiq85 name=""/>
+
+  <joint name="crx_tool0_to_gripper_base" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="tool0"/>
+    <child link="gripper_base"/>
+  </joint>
+
+  <link name="grasp_frame"/>
+  <joint name="gripper_base_to_grasp_frame" type="fixed">
+    <origin xyz="0 0 0.13" rpy="0 0 0"/>
+    <parent link="gripper_base"/>
+    <child link="grasp_frame"/>
+  </joint>
+</robot>

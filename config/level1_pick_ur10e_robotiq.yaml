@@ -1,0 +1,63 @@
+# Level-1 pick with a UR10e carrying a Robotiq 2F-85.
+#
+# The arm and gripper are imported from one combined URDF/USD articulation. UR10e
+# shares the UR5e/UR3e joint and tool-frame conventions, while its longer reach uses
+# a separate Lula/RMPFlow description and a base position tuned for this bench.
+
+name: level1_pick_ur10e_robotiq
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 10
+
+task:
+  max_steps: 2000
+  obj_paths:
+    - path: "/World/beaker2"
+      position_range:
+        x: [0.15, 0.28]
+        y: [-0.10, 0.10]
+        z: [0.84, 0.84]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+grasp:
+  # The UR family uses the canonical +Z approach frame. A 30-degree downward
+  # approach is shared by UR5e/UR3e and avoids the horizontal pre-grasp trap.
+  ee_euler_deg: [0, 120, 25]
+
+robot:
+  type: "ur10e_robotiq"
+  # Keep the beaker at a comfortable mid-reach radius for the longer UR10e arm.
+  position: [-0.55, 0, 0.71]
+
+collector:
+  type: "default"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true

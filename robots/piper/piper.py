@@ -10,7 +10,8 @@ import carb
 import numpy as np
 from isaacsim.core.prims import SingleRigidPrim
 from isaacsim.core.utils.prims import get_prim_at_path
-from isaacsim.core.utils.stage import add_reference_to_stage, get_stage_units
+from isaacsim.core.utils.stage import add_reference_to_stage, get_current_stage, get_stage_units
+from pxr import Gf, UsdGeom
 from isaacsim.robot.manipulators.grippers.parallel_gripper import ParallelGripper
 from isaacsim.sensors.physics import ContactSensor
 from isaacsim.sensors.camera import Camera
@@ -40,6 +41,11 @@ class Piper(BaseRobot):
 
     # Default home position: 6 arm joints + 2 gripper joints
     DEFAULT_JOINT_POSITIONS = np.array([0.0, 1.57, -1.57, 0.0, 0.0, 0.0, 0.035, -0.035])
+
+    # Distance from gripper_base/link6 to the point where the fingers close, along the
+    # gripper's local +Z (its approach axis). Measured in sim: the finger pads span
+    # 0.057-0.137 m ahead of link6, so the grasp seats around 0.11 m.
+    TOOL_CENTER_OFFSET_M = 0.11
 
     # Piper-specific joint names
     _ARM_JOINT_NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
@@ -125,6 +131,14 @@ class Piper(BaseRobot):
             radius=0.1,
         )
 
+        # Tool centre point, mirroring the URDF's tool_frame so planning and the
+        # reported gripper position agree. Created here because piper.usd ships no
+        # such prim, unlike Franka's /panda_hand/tool_center.
+        tool_center = UsdGeom.Xform.Define(
+            get_current_stage(), self.prim_path_str + "/gripper_base/tool_center"
+        )
+        tool_center.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, self.TOOL_CENTER_OFFSET_M))
+
         # Wrist camera mounted on gripper base
         self._camera = Camera(
             prim_path=prim_path + "/gripper_base/arm_camera",
@@ -164,9 +178,31 @@ class Piper(BaseRobot):
         return self._end_effector_prim_path
 
     @property
+    def ik_end_effector_frame(self) -> str:
+        return "tool_frame"
+
+    @property
+    def motion_config(self) -> dict:
+        """Piper has no Isaac-supported config; its Lula files live in this package."""
+        package_dir = os.path.dirname(os.path.abspath(__file__))
+        rmpflow_dir = os.path.join(package_dir, "rmpflow")
+        return {
+            "end_effector_frame_name": "tool_frame",
+            "maximum_substep_size": 0.00334,
+            "robot_description_path": os.path.join(rmpflow_dir, "robot_descriptor.yaml"),
+            "urdf_path": os.path.join(package_dir, "piper.urdf"),
+            "rmpflow_config_path": os.path.join(rmpflow_dir, "piper_rmpflow_common.yaml"),
+        }
+
+    @property
     def gripper_center_prim_path(self) -> str:
-        """USD prim path of the gripper center (tool center point)."""
-        return self.prim_path_str + "/gripper_base"
+        """USD prim path of the gripper center (tool center point).
+
+        A runtime Xform created in __init__, matching the URDF's ``tool_frame``.
+        Pointing this at ``gripper_base`` instead reports the WRIST as the gripper
+        position, which is ~0.11 m short of where the fingers actually close.
+        """
+        return self.prim_path_str + "/gripper_base/tool_center"
 
     @property
     def camera(self) -> Optional[Camera]:
@@ -214,6 +250,7 @@ class Piper(BaseRobot):
             set_joint_positions_func=self.set_joint_positions,
             dof_names=dof_names,
         )
+        self.enforce_requested_world_pose()
         self.set_joint_positions(self._default_joint_positions)
 
     def post_reset(self) -> None:

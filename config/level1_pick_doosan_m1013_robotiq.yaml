@@ -1,0 +1,69 @@
+# Level-1 physical pick with a Doosan M1013 and Robotiq 2F-85.
+
+name: level1_pick_doosan_m1013_robotiq
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 10
+seed: 7
+
+task:
+  max_steps: 2000
+  obj_paths:
+    - path: "/World/beaker2"
+      scale: 0.75
+      friction: 1.5
+      position_range:
+        x: [0.22, 0.24]
+        y: [-0.055, -0.04]
+        z: [0.84, 0.84]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+grasp:
+  ee_euler_deg: [0, 120, 0]
+  approach_along_tool: true
+  require_pregrasp_xyz: true
+  pregrasp_position_threshold: 0.02
+  events_dt: [0.004, 0.002, 0.01, 0.02, 0.05, 0.002, 0.008]
+  pre_offset_x: 0.087
+  pick_z_offset: 0.0
+  after_offset_z: 0.15
+  lift_offset_xyz: [-0.05, 0.0, 0.13]
+  gripper_distance: 0.035
+
+robot:
+  type: "doosan_m1013_robotiq"
+  position: [-0.65, -0.04, 0.71]
+
+collector:
+  type: "default"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true
+action_randomization: false
