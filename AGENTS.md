@@ -226,7 +226,7 @@ python tests/test_config_files.py
 ## 7. 已知陷阱
 
 - `main.py` 的 `--config-name` 默认值为 `level3_heat_liquid`；运行时建议显式传 `--config-name` 指定任务
-- `main.py` 虽然解析了 `--headless`，但当前 `SimulationApp` 初始化仍写死为 `"headless": False`；不要假设这个参数已经生效
+- `--headless` 会传给 `SimulationApp`；也可设置 `LABUTOPIA_HEADLESS=1`，此时仍可保存视频但不会调用 `cv2.imshow`
 - registry key（`task_type` / `controller_type`）已统一为 `snake_case`（如 `open_transport_pour`、`liquid_mixing`）；改配置时要按源码中的注册值填写
 - 工作区可能已经有用户未提交改动；除非用户明确要求，不要回退他人的变更
 

@@ -130,6 +130,7 @@ class RemoteInferenceEngine(BaseInferenceEngine):
         Returns:
             Predicted action array
         """
+        observation = None
         try:
             # Prepare observation data
             observation = self._prepare_observation(obs_dict)
@@ -179,21 +180,27 @@ class RemoteInferenceEngine(BaseInferenceEngine):
                     f"state_g={float(obs_dict.get('gripper_state', -1)) if isinstance(obs_dict, dict) else -1:.4f}"
                 )
             if self._infer_call_count <= 3:
-                a_min = action.min(axis=0) if action.ndim > 1 else action
-                a_max = action.max(axis=0) if action.ndim > 1 else action
                 logger.info(
                     f"[act#{self._infer_call_count}] shape={action.shape} dtype={action.dtype} "
                     f"first={np.array2string(action[0] if action.ndim>1 else action, precision=3)} "
                     f"last={np.array2string(action[-1] if action.ndim>1 else action, precision=3)}"
                 )
+            # A successful call ends any failure streak. Without this reset the
+            # counter accumulated across the whole run, so five *scattered*
+            # failures aborted the eval as if they had been consecutive.
+            self._consecutive_failures = 0
+            self._last_action = action
             return action
-            
+
         except Exception as e:
             # 断线可恢复：隧道/服务端偶发断开时重建 client 重发同一份 observation。
             # 旧行为是直接返回全零动作继续跑，结果整轮评测"成功完成"但每步都是空动作，
             # 成功率恒为 0 且毫无提示 —— 这种静默失败比直接报错危险得多。
             import time as _t
-            for attempt in range(1, 4):
+            # `observation` stays None when _prepare_observation itself raised —
+            # retrying then would die on NameError and mask the real error.
+            retries = int(getattr(self.cfg.infer, "max_retries", 3))
+            for attempt in range(1, retries + 1) if observation is not None else ():
                 try:
                     _t.sleep(min(2 * attempt, 5))
                     self.client = WebsocketClientPolicy(host=self.host, port=self.port, api_key=self.api_key)
@@ -201,9 +208,10 @@ class RemoteInferenceEngine(BaseInferenceEngine):
                     action = np.array(result.get('action', result.get('actions')))
                     logger.success(f"OpenPI 重连成功（第 {attempt} 次重试）")
                     self._consecutive_failures = 0
+                    self._last_action = action
                     return action
                 except Exception as e2:
-                    logger.warning(f"  重试 {attempt}/3 失败: {e2}")
+                    logger.warning(f"  重试 {attempt}/{retries} 失败: {e2}")
             self._consecutive_failures = getattr(self, "_consecutive_failures", 0) + 1
             logger.error(
                 f"OpenPI 推理连续失败 {self._consecutive_failures} 次（3 次重连均失败）: {e}"
@@ -212,7 +220,19 @@ class RemoteInferenceEngine(BaseInferenceEngine):
                 raise RuntimeError(
                     f"远程推理连续 {self._consecutive_failures} 次失败，中止评测以免产出无效结果"
                 ) from e
-            return np.zeros((8, 8))  # Default action shape
+            # Hold the last commanded pose. The old fallback returned zeros, which
+            # in this ABSOLUTE joint-position action space is not "do nothing" —
+            # it slams the arm to the all-zero configuration and opens the
+            # gripper, dropping whatever is held.
+            last = getattr(self, "_last_action", None)
+            if last is not None:
+                hold = np.asarray(last)
+                hold = hold[-1:] if hold.ndim > 1 else hold[np.newaxis, :]
+                logger.warning("远程推理失败: 保持上一条动作 (旧行为是甩到全零构型)")
+                return np.repeat(hold, 8, axis=0)
+            raise RuntimeError(
+                "远程推理在第一次调用就失败, 没有可保持的上一条动作; 中止而不是发送零动作"
+            ) from e
     
     def close(self):
         """Close OpenPI client connection"""

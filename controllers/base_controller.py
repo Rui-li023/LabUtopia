@@ -14,7 +14,6 @@ from controllers.robot_controllers.grapper_manager import Gripper
 from controllers.robot_controllers.trajectory_controller import FrankaTrajectoryController
 from factories.collector_factory import create_collector
 from robots.franka.rmpflow_controller import RMPFlowController as FrankaRMPFlowController
-from robots.piper.rmpflow_controller import RMPFlowController as PiperRMPFlowController
 from utils.object_utils import ObjectUtils
 from utils.replay_data_loader import ReplayDataLoader
 
@@ -23,9 +22,13 @@ class BaseController(ABC):
     
     @staticmethod
     def _select_rmp_controller_cls(robot):
-        robot_name = str(getattr(robot, "name", "")).lower()
-        if "piper" in robot_name:
-            return PiperRMPFlowController
+        """The shared RMPFlow controller, whatever the arm.
+
+        Used to branch on ``"piper" in robot.name``. That is redundant now the
+        controller takes its Lula description and kinematic base from the robot, and
+        it was actively harmful: a second copy of the class meant Piper silently kept
+        a stale configuration when the shared one was fixed.
+        """
         return FrankaRMPFlowController
 
     """Base class for all controllers in the chemistry lab simulator.
@@ -245,6 +248,8 @@ class BaseController(ABC):
     def episode_num(self) -> int:
         """The current episode number."""
         if self.mode == "collect":
+            if getattr(self.data_collector, "counts_attempts", False):
+                return self._episode_num
             return self.data_collector.episode_count
         return self._episode_num
 
