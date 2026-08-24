@@ -71,6 +71,10 @@ collector:
   type: "default"
   compression: gzip
 
+environment:
+  hdr_path: "assets/hdr"
+  intensity: 1000.0
+
 hydra:
   run:
     dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
