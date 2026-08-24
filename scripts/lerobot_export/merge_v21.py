@@ -76,8 +76,6 @@ def merge(src_dirs: list[Path], dst: Path):
     cameras = sorted(k[len("observation.images."):]
                      for k in ref_feats if k.startswith("observation.images."))
     fps = ref["fps"]
-    image_shape = ref_feats[f"observation.images.{cameras[0]}"]["shape"]
-
     for i, info in enumerate(infos[1:], 1):
         fts = info["features"]
         sd = fts["observation.state"]["shape"][0]
@@ -116,10 +114,13 @@ def merge(src_dirs: list[Path], dst: Path):
         for ep in src_eps:
             old_idx = ep["episode_index"]
             T = int(ep["length"])
-            task_str = ep["tasks"][0] if ep["tasks"] else src_tasks.get(0, "")
-            if task_str not in tasks:
-                tasks.append(task_str)
-            task_index = tasks.index(task_str)
+            # Per-frame instructions must survive the merge: multi-phase tasks
+            # (pick_pour, clean_beaker, liquid_mixing, open_transport_pour) switch
+            # instruction mid-episode, and collapsing an episode onto ep["tasks"][0]
+            # is exactly the defect the writer was just fixed for — it relabels
+            # every pour frame with the episode's FIRST (pick) sentence and leaves
+            # the merged vocabulary with almost no pour verb at all.
+            # Read the real per-frame column below and remap it source->global.
 
             # ── parquet: rewrite episode_index / index / task_index ──
             src_chunk = _chunk_of(old_idx)
@@ -128,7 +129,14 @@ def merge(src_dirs: list[Path], dst: Path):
             df = pd.read_parquet(src_pq)
             df["episode_index"] = np.full(T, new_ep_idx, dtype=np.int64)
             df["index"] = np.arange(global_index, global_index + T, dtype=np.int64)
-            df["task_index"] = np.full(T, task_index, dtype=np.int64)
+            # remap this episode's per-frame task_index into the merged vocabulary
+            frame_task_strs = [src_tasks.get(int(i), "") for i in df["task_index"].to_numpy()]
+            for s in frame_task_strs:
+                if s not in tasks:
+                    tasks.append(s)
+            frame_task_idx = np.asarray([tasks.index(s) for s in frame_task_strs], dtype=np.int64)
+            df["task_index"] = frame_task_idx
+            ep_task_strs = list(dict.fromkeys(frame_task_strs))
             out_dir = dst / "data" / f"chunk-{dst_chunk:03d}"
             out_dir.mkdir(parents=True, exist_ok=True)
             out_pq = out_dir / f"episode_{new_ep_idx:06d}.parquet"
@@ -158,12 +166,12 @@ def merge(src_dirs: list[Path], dst: Path):
             new_indices = np.arange(global_index, global_index + T, dtype=np.float32)
             ep_st["index"] = _scalar_stat(new_indices)
             ep_st["episode_index"] = _scalar_stat(np.full(T, new_ep_idx, dtype=np.float32))
-            ep_st["task_index"] = _scalar_stat(np.full(T, task_index, dtype=np.float32))
+            ep_st["task_index"] = _scalar_stat(frame_task_idx.astype(np.float32))
             episode_stats_rows.append({"episode_index": new_ep_idx, "stats": ep_st})
 
             episode_rows.append({
                 "episode_index": new_ep_idx,
-                "tasks": [task_str],
+                "tasks": ep_task_strs,
                 "length": T,
             })
             new_ep_idx += 1

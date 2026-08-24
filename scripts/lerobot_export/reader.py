@@ -26,6 +26,12 @@ class Episode:
     length: int
     spawn_yaw: float = 0.0                  # base world yaw at spawn (mobile tasks)
     video_trim: int | None = None           # keep only the first N video frames
+    # Per-frame instruction. Multi-phase tasks (pick_pour, open_transport_pour,
+    # clean_beaker, liquid_mixing) switch the instruction mid-episode; keeping
+    # only the first frame's label — as this reader used to — silently trained
+    # every pour frame under the *pick* sentence and left the exported vocabulary
+    # with no pour verb at all.
+    frame_tasks: list[str] | None = None
 
 
 def discover_run(data_dir: Path) -> dict:
@@ -100,10 +106,13 @@ def iter_episodes(data_dir: Path, nav_only: bool = False):
                 if n0 < 30:
                     continue
                 state, action, trim = state[:n0], action[:n0], n0
+            frame_tasks = None
             if "task_index" in f:
-                ti = f["task_index"][()]
-                ti_val = int(np.asarray(ti).flat[0])
+                ti = np.asarray(f["task_index"][()]).reshape(-1)
+                ti_val = int(ti.flat[0])
                 task = task_map.get(ti_val, "")
+                if ti.size == state.shape[0] or (trim is not None and ti.size >= state.shape[0]):
+                    frame_tasks = [task_map.get(int(x), "") for x in ti[:state.shape[0]]]
             elif "language_instruction" in f:
                 v = f["language_instruction"][()]
                 task = v.decode("utf-8") if isinstance(v, bytes) else str(v)
@@ -135,6 +144,7 @@ def iter_episodes(data_dir: Path, nav_only: bool = False):
             length=int(state.shape[0]),
             spawn_yaw=spawn_yaw,
             video_trim=trim,
+            frame_tasks=frame_tasks,
         )
 
 
