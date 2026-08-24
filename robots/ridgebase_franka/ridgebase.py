@@ -13,7 +13,6 @@ from isaacsim.core.prims import SingleRigidPrim
 from isaacsim.core.utils.prims import get_prim_at_path
 from isaacsim.core.utils.stage import add_reference_to_stage, get_stage_units
 from isaacsim.robot.manipulators.grippers.parallel_gripper import ParallelGripper
-from isaacsim.sensors.physics import ContactSensor
 
 from robots.base_robot import BaseRobot
 from utils.object_utils import ObjectUtils

@@ -58,6 +58,11 @@ class MobileTransportPlaceController(MobileManipControllerBase):
         place_euler = getattr(cfg.task, "place_ee_euler_deg", [0, 90, 20])
         self._place_orientation = R.from_euler(
             "xyz", np.radians([float(v) for v in place_euler])).as_quat()
+        # Base->platform reach for the correction before the PLACE (the wide
+        # dock_jitter hits the place dock too; the 5 cm place gate needs the
+        # base back in the validated band).
+        self._corr_place_reach = float(getattr(
+            cfg.task, "correction_place_reach", self._corr_target_reach))
 
     def _init_collect_mode(self, cfg: Any, robot: Any = None) -> None:
         super()._init_collect_mode(cfg, robot)
@@ -148,11 +153,24 @@ class MobileTransportPlaceController(MobileManipControllerBase):
                     "object_name": state.get("object_name", "unknown"),
                     "carry_navigation": bool(state.get("carry_navigation", False)),
                 })
-        action, nav_done, action11 = self._nav_step(state)
-        self._record_step(state, action11, PHASE_NAVIGATE)
-        if nav_done:
-            self._log_dock_diag(state, state["dock_point"], label="DOCK-A")
-            logger.info("Navigation to bench A complete — starting pick")
+        if not self._nav_reached:
+            action, nav_done, action11 = self._nav_step(state)
+            self._record_step(state, action11, PHASE_NAVIGATE)
+            if nav_done:
+                if not self._corr_enabled:
+                    self._log_dock_diag(state, state["dock_point"], label="DOCK-A")
+                    logger.info("Navigation to bench A complete — starting pick")
+                    self.current_phase = Phase.PICKING
+                else:
+                    self._nav_reached = True
+            return action, False, False
+        action, corr_done = self._base_correction_step(
+            state, state["object_position"], state["dock_point"], diag_label="DOCK-A")
+        if corr_done:
+            logger.info("Base correction done — starting pick")
+            # Re-arm the correction flags for the second (place-dock) correction.
+            self._nav_reached = False
+            self._corr_targeted = False
             self.current_phase = Phase.PICKING
         return action, False, False
 
@@ -210,11 +228,23 @@ class MobileTransportPlaceController(MobileManipControllerBase):
                 state["carry_waypoints"], final_angle, hold_heading=hold)
             logger.info(f"[carry] len={carry_len:.2f}m hold_heading={hold}")
             self.carry_waypoints_set = True
-        action, nav_done, action11 = self._nav_step(state)
-        self._record_step(state, action11, PHASE_CARRY_NAVIGATE)
-        if nav_done:
-            self._log_dock_diag(state, state["place_dock"], label="DOCK-B")
-            logger.info("Carry navigation complete — starting place")
+        if not self._nav_reached:
+            action, nav_done, action11 = self._nav_step(state)
+            self._record_step(state, action11, PHASE_CARRY_NAVIGATE)
+            if nav_done:
+                if not self._corr_enabled:
+                    self._log_dock_diag(state, state["place_dock"], label="DOCK-B")
+                    logger.info("Carry navigation complete — starting place")
+                    self.current_phase = Phase.PLACING
+                else:
+                    self._nav_reached = True
+            return action, False, False
+        action, corr_done = self._base_correction_step(
+            state, state["place_target_position"], state["place_dock"],
+            target_reach=self._corr_place_reach, diag_label="DOCK-B",
+            record_phase=PHASE_CARRY_NAVIGATE)
+        if corr_done:
+            logger.info("Base correction done — starting place")
             self.current_phase = Phase.PLACING
         return action, False, False
 

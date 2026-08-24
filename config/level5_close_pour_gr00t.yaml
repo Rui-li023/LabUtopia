@@ -1,11 +1,11 @@
-name: level5_close_pick
+name: level5_close_pour_gr00t
 
-task_type: "mobile_pick"
-controller_type: "mobile_pick"
+task_type: "mobile_pour"
+controller_type: "mobile_pour"
 
-mode: "collect"  # "collect", "infer", or "replay"
+mode: "infer"  # "collect", "infer", or "replay"
 usd_path: "assets/navigation_lab/navigation_lab_01/lab.usd"
-max_episodes: 100
+max_episodes: 20
 collect_position_only: true
 
 replay:
@@ -24,29 +24,49 @@ infer:
   base_delta_actions: true
   image_color: "rgb"          # LeRobot loaders decode RGB (no BGR swap)
   host: "127.0.0.1"
-  port: 8000
+  port: 18084          # gr00t tunnel
   n_obs_steps: 1
-  action_chunk_len: 10        # openpi action_horizon; smolvla/lingbot patch to 50, gr00t 40
+  action_chunk_len: 40
   timeout: 30
   max_retries: 3
 
 task:
-  max_steps: 2000
+  max_steps: 2800        # +pour segment after the pick
   navigation_config_path: "config/navigation/navigation_assets.yaml"
   pick_object_path: "/World/beaker"
-  object_position_range:
-    x: [-3.5, -1.8]
-    y: [0.55, 0.65]  # y>0.66 puts the dock inside the inflated A* grid (plan fails)
+  object_position_range:            # narrowed vs close_pick so the pour target stays in reach
+    x: [-2.7, -2.5]
+    y: [0.55, 0.60]  # y>0.66 puts the dock inside the inflated A* grid (plan fails)
     z: [0.80, 0.80]
   dock_standoff: 0.75            # 0.70 pushed the dock into the inflated obstacle grid (A* end invalid); slip fixed via GRIP_SQUEEZE instead
   dock_jitter: [0.12, 0.10]      # wide dock jitter: +/-12 cm x, +/-10 cm y
   base_correction: true            # data-aug: nudge base closer after an imperfect dock
-  correction_target_reach: 0.79    # target base->object reach (m) before grasp
+  correction_target_reach: 0.66    # target base->object reach (m) before grasp
                                  # (~0.018 m grasp undershoot → beaker shoved out)
   spawn:
     mode: "near"
     distance_range: [0.9, 1.1]     # ~1 m forward drive to the dock (spawn behind it, facing the object)
   grasp_ee_euler_deg: [-115, 90, 0]  # side grasp: static [0,90,25] rotated to the -y
+  pour_wrist_delta_deg: -110         # wrist-only tilt (joint 7); -110 parks the staging hand
+                                     # closest to the spout; sign auto-flips if no headroom
+  pour_height: 0.12                  # tilted MOUTH height (m) above target center (rim+7cm):
+                                     # clears the LOWER FINGERTIP (grasp-3.5cm) over the rim;
+                                     # 0.08 left only ~2cm and the finger clipped the target
+  pour_spout_offset: 0.02            # spout just inside the NEAR rim; base micro-crab lands the
+                                     # mouth ON this point; also shifts the hand outboard
+  pour_transit_clearance: 0.07       # approach rises this much above the pour height while
+                                     # traversing (a straight low carry grazed the target rim)
+  pour_center_tolerance: 0.04        # success gate: peak-tilt mouth within this xy radius of
+                                     # the target center (the opening radius)
+  pour_min_tilt_deg: 80              # success gate: beaker must actually tilt past this angle
+  pour_target:                       # container the source is poured INTO (referenced from a lab USD)
+    prim_path: "/World/pour_target"
+    usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+    source_prim_path: "/World/beaker1"
+    position_range:                  # ~0.1-0.35 m +x of the source, same y -> in reach at the source dock
+      x: [-2.45, -2.35]
+      y: [0.55, 0.60]
+      z: [0.80, 0.80]
                                      # dock approach — palm blocks escape; top-down
                                      # [0,180,0] slipped ~40% (contact-width fingers
                                      # eject the beaker sideways at the reach edge)

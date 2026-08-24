@@ -1,11 +1,11 @@
-name: level5_close_pick_place
+name: level5_close_shake_gr00t
 
-task_type: "mobile_transport_place"
-controller_type: "mobile_transport_place"
+task_type: "mobile_pick"
+controller_type: "mobile_shake"
 
-mode: "collect"  # "collect", "infer", or "replay"
+mode: "infer"  # "collect", "infer", or "replay"
 usd_path: "assets/navigation_lab/navigation_lab_01/lab.usd"
-max_episodes: 100
+max_episodes: 20
 collect_position_only: true
 
 replay:
@@ -13,30 +13,36 @@ replay:
   # episode_indices: [0, 1, 2]
 
 infer:
-  type: "local"
-  obs_names: {"image": 'front_camera_rgb', "image_2": 'top_camera_rgb', "wrist_image": 'wrist_camera_rgb'}
-  policy_model_path: ""
-  policy_config_path: ""
-  normalizer_path: ""
+  # Full-body VLA (move+pick): the policy drives all 12 DOFs. Base action dims
+  # 0:3 are BODY-frame deltas — integrated onto the measured base pose by the
+  # mobile controller (base_delta_actions). remote_mobile bypasses the Franka
+  # trajectory controller. obs_names map camera_data keys (= camera NAME for a
+  # plain-rgb camera) -> server obs keys; defaults are openpi's, the eval
+  # harness patches per-model (smolvla/gr00t/lingbot).
+  type: "remote_mobile"
+  obs_names: {"front_camera": "observation/image", "top_camera": "observation/wrist_image", "wrist_camera": "observation/wrist_image_2"}
+  base_delta_actions: true
+  image_color: "rgb"          # LeRobot loaders decode RGB (no BGR swap)
   host: "127.0.0.1"
-  port: 8000
+  port: 18084          # gr00t tunnel
   n_obs_steps: 1
+  action_chunk_len: 40
   timeout: 30
   max_retries: 3
 
 task:
-  max_steps: 3000
+  max_steps: 2600        # +shake segment after the pick
   navigation_config_path: "config/navigation/navigation_assets.yaml"
   pick_object_path: "/World/beaker"
   object_position_range:
-    x: [-3.15, -3.0]               # tuned (Task 11): midpoint dock puts the arm
-    y: [0.58, 0.65]                # sep/2 laterally off the beaker; keep worst-case
-    z: [0.80, 0.80]                # reach sqrt((sep/2)^2 + fwd^2) under ~0.50 m
+    x: [-3.5, -1.8]
+    y: [0.55, 0.65]  # y>0.66 puts the dock inside the inflated A* grid (plan fails)
+    z: [0.80, 0.80]
   dock_standoff: 0.75            # 0.70 pushed the dock into the inflated obstacle grid (A* end invalid); slip fixed via GRIP_SQUEEZE instead
-  dock_jitter: [0.12, 0.10]      # wide dock jitter (VLA reach augmentation) — recovered by base_correction
-  base_correction: true            # data-aug: nudge base closer after an imperfect dock (pick AND place docks)
+  dock_jitter: [0.12, 0.10]      # wide dock jitter: +/-12 cm x, +/-10 cm y
+  base_correction: true            # data-aug: nudge base closer after an imperfect dock
   correction_target_reach: 0.79    # target base->object reach (m) before grasp
-  correction_place_reach: 0.79     # target base->platform reach (m) before place
+                                 # (~0.018 m grasp undershoot → beaker shoved out)
   spawn:
     mode: "near"
     distance_range: [0.9, 1.1]     # ~1 m forward drive to the dock (spawn behind it, facing the object)
@@ -44,25 +50,7 @@ task:
                                      # dock approach — palm blocks escape; top-down
                                      # [0,180,0] slipped ~40% (contact-width fingers
                                      # eject the beaker sideways at the reach edge)
-  place_target:
-    prim_path: "/World/target_plat"
-    usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
-    source_prim_path: "/World/target_plat"
-    position_range:
-      # Same-bench: the plat sits 0.3-0.55 m from the source beaker.
-      x: [-2.7, -2.6]
-      y: [0.58, 0.65]           # matches source y so the plat stays in reach too
-      z: [0.776, 0.776]         # tuned so the plat rests ON the 0.76 bench top
-    # Short base shuffle between pick and place. A single midpoint dock put
-    # BOTH the source (grasp) and the plat (place) at the edge of the Franka
-    # reach envelope (pick ~1/9, place misses); docking in front of each and
-    # shuffling sideways keeps every manipulation well inside reach — the
-    # same proven flow as the far variant, just with a ~0.4 m carry hop.
-    carry_navigation: true
-  place_ee_euler_deg: [-110, 90, 0]  # static place [0,90,20] rotated to the -y
-                                     # dock frame, matching the side grasp (the
-                                     # +x-frame default yawed the held beaker 90
-                                     # deg mid-place and missed the plat)
+  shake_distance: 0.1            # ShakeController XY oscillation amplitude (m); randomized 0.06-0.14
   max_linear_speed: 0.04
   max_angular_speed: 0.12        # per-step yaw cap: smooth face-forward, decoupled from translation
   position_threshold: 0.05        # tightened: exact dock endpoint appended to the A* path
