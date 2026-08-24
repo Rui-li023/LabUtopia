@@ -73,6 +73,7 @@ collector:
 
 environment:
   hdr_path: "assets/hdr"
+  randomize_each_episode: true
   intensity: 1000.0
 
 hydra:

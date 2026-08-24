@@ -7,14 +7,13 @@ projection attribute, so it works on every render mode and version.
 """
 
 import os
-import logging
-from typing import Optional, Tuple
+from contextlib import suppress
 
+import cv2
 import numpy as np
+from loguru import logger
 
-logger = logging.getLogger(__name__)
-
-_S2 = 0.7071067811865476  # √2/2
+_S2 = 0.7071067811865476
 
 # ---------------------------------------------------------------------------
 # Cube face definitions  (Z-up world, matching Isaac Sim stage up-axis = Z)
@@ -23,12 +22,12 @@ _S2 = 0.7071067811865476  # √2/2
 # with the stated up vector.
 # ---------------------------------------------------------------------------
 _CUBE_FACES = [
-    ("nz", (1.0,   0.0,   0.0,   0.0)),   # forward=-Z (down),  up=+Y
-    ("pz", (0.0,   0.0,   1.0,   0.0)),   # forward=+Z (up),    up=+Y  (180° Y)
-    ("px", (0.5,   0.5,  -0.5,  -0.5)),   # forward=+X,         up=+Z
-    ("nx", (0.5,   0.5,   0.5,   0.5)),   # forward=-X,         up=+Z
-    ("py", (_S2,   _S2,   0.0,   0.0)),   # forward=+Y,         up=+Z  (+90° X)
-    ("ny", (0.0,   0.0,  -_S2,  -_S2)),   # forward=-Y,         up=+Z
+    ("nz", (1.0, 0.0, 0.0, 0.0)),  # forward=-Z (down),  up=+Y
+    ("pz", (0.0, 0.0, 1.0, 0.0)),  # forward=+Z (up),    up=+Y  (180° Y)
+    ("px", (0.5, 0.5, -0.5, -0.5)),  # forward=+X,         up=+Z
+    ("nx", (0.5, 0.5, 0.5, 0.5)),  # forward=-X,         up=+Z
+    ("py", (_S2, _S2, 0.0, 0.0)),  # forward=+Y,         up=+Z  (+90° X)
+    ("ny", (0.0, 0.0, -_S2, -_S2)),  # forward=-Y,         up=+Z
 ]
 
 
@@ -36,15 +35,17 @@ _CUBE_FACES = [
 # Camera
 # ---------------------------------------------------------------------------
 
+
 def _define_cube_camera(stage, prim_path, position, quat_wxyz):
-    from pxr import UsdGeom, Gf
+    from pxr import Gf, UsdGeom
+
     cam = UsdGeom.Camera.Define(stage, prim_path)
     xf = UsdGeom.Xformable(cam)
     xf.ClearXformOpOrder()
     xf.AddTranslateOp().Set(Gf.Vec3d(*position))
     w, x, y, z = quat_wxyz
     xf.AddOrientOp().Set(Gf.Quatf(w, x, y, z))
-    # 90° FOV: aperture = 2 × focal_length
+    # 90-degree FOV: aperture = 2 x focal_length.
     cam.CreateFocalLengthAttr(10.0)
     cam.CreateHorizontalApertureAttr(20.0)
     cam.CreateVerticalApertureAttr(20.0)
@@ -54,10 +55,8 @@ def _define_cube_camera(stage, prim_path, position, quat_wxyz):
 def _remove_prim(stage, path):
     p = stage.GetPrimAtPath(path)
     if p.IsValid():
-        try:
+        with suppress(Exception):
             stage.RemovePrim(path)
-        except Exception:
-            pass
 
 
 # ---------------------------------------------------------------------------
@@ -79,9 +78,18 @@ def _attach_annotator(rep, rp):
     raise RuntimeError(f"No annotator found. Tried: {_ANN_PRIORITY}")
 
 
+def _destroy_render_product(annotator, render_product) -> None:
+    if annotator is not None:
+        with suppress(Exception):
+            annotator.detach(render_product)
+    with suppress(Exception):
+        render_product.destroy()
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
+
 
 def _step(rep, app, n=1, rt_subframes: int = 0):
     """
@@ -94,7 +102,6 @@ def _step(rep, app, n=1, rt_subframes: int = 0):
     for _ in range(n):
         # Prefer step() with rt_subframes (Isaac Sim 4.x RTX requirement)
         if hasattr(orch, "step"):
-            kwargs = {}
             if rt_subframes > 0:
                 try:
                     orch.step(rt_subframes=rt_subframes, pause_timeline=False)
@@ -112,6 +119,7 @@ def _step(rep, app, n=1, rt_subframes: int = 0):
 # ---------------------------------------------------------------------------
 # Cube-map → equirectangular stitching
 # ---------------------------------------------------------------------------
+
 
 def _stitch(faces, out_w, out_h):
     """
@@ -131,36 +139,49 @@ def _stitch(faces, out_w, out_h):
       pz (forward=+Z, right=-X, up=+Y): sc = -dx/dz,   tc = dy/|dz|
       nz (forward=-Z, right=+X, up=+Y): sc =  dx/|dz|, tc = dy/|dz|
     """
-    S = next(iter(faces.values())).shape[0]
-    C = next(iter(faces.values())).shape[2]
-    out = np.zeros((out_h, out_w, C), dtype=np.float32)
+    expected_faces = {name for name, _ in _CUBE_FACES}
+    missing_faces = expected_faces.difference(faces)
+    if missing_faces:
+        missing = ", ".join(sorted(missing_faces))
+        raise ValueError(f"missing cube faces: {missing}")
+    if out_w <= 0 or out_h <= 0:
+        raise ValueError("output dimensions must be positive")
+
+    first_shape = faces[_CUBE_FACES[0][0]].shape
+    if len(first_shape) != 3 or first_shape[0] != first_shape[1] or first_shape[2] < 3:
+        raise ValueError(f"cube faces must be square HxWxC arrays, got {first_shape}")
+    for name in expected_faces:
+        if faces[name].shape != first_shape:
+            raise ValueError(f"cube face '{name}' has shape {faces[name].shape}; expected {first_shape}")
+
+    face_size = first_shape[0]
+    channels = first_shape[2]
+    out = np.zeros((out_h, out_w, channels), dtype=np.float32)
 
     lon = (np.linspace(0, 1, out_w, endpoint=False) + 0.5 / out_w) * 2 * np.pi - np.pi
     lat = np.pi / 2 - (np.linspace(0, 1, out_h, endpoint=False) + 0.5 / out_h) * np.pi
-    LON, LAT = np.meshgrid(lon, lat)
+    longitude, latitude = np.meshgrid(lon, lat)
 
     # Z-up world direction vectors
-    dx = np.cos(LAT) * np.sin(LON)
-    dy = np.cos(LAT) * np.cos(LON)
-    dz = np.sin(LAT)                   # Z = up
+    dx = np.cos(latitude) * np.sin(longitude)
+    dy = np.cos(latitude) * np.cos(longitude)
+    dz = np.sin(latitude)  # Z = up
     ax, ay, az = np.abs(dx), np.abs(dy), np.abs(dz)
 
     # Avoid division by zero
     _eps = 1e-9
     rules = [
-        ("px", (dx > 0) & (ax >= ay) & (ax >= az), -dy / (dx  + _eps),  dz / (ax + _eps)),
-        ("nx", (dx < 0) & (ax >= ay) & (ax >= az),  dy / (ax  + _eps),  dz / (ax + _eps)),
-        ("py", (dy > 0) & (ay > ax)  & (ay > az),   dx / (dy  + _eps),  dz / (ay + _eps)),
-        ("ny", (dy < 0) & (ay > ax)  & (ay > az),  -dx / (ay  + _eps),  dz / (ay + _eps)),
-        ("pz", (dz > 0) & (az > ax)  & (az > ay),  -dx / (dz  + _eps),  dy / (az + _eps)),
-        ("nz", (dz < 0) & (az > ax)  & (az > ay),   dx / (az  + _eps),  dy / (az + _eps)),
+        ("px", (dx > 0) & (ax >= ay) & (ax >= az), -dy / (dx + _eps), dz / (ax + _eps)),
+        ("nx", (dx < 0) & (ax >= ay) & (ax >= az), dy / (ax + _eps), dz / (ax + _eps)),
+        ("py", (dy > 0) & (ay > ax) & (ay > az), dx / (dy + _eps), dz / (ay + _eps)),
+        ("ny", (dy < 0) & (ay > ax) & (ay > az), -dx / (ay + _eps), dz / (ay + _eps)),
+        ("pz", (dz > 0) & (az > ax) & (az > ay), -dx / (dz + _eps), dy / (az + _eps)),
+        ("nz", (dz < 0) & (az > ax) & (az > ay), dx / (az + _eps), dy / (az + _eps)),
     ]
 
     for name, mask, sc, tc in rules:
-        if name not in faces:
-            continue
-        pu = np.clip(((sc + 1.0) * 0.5 * (S - 1)).astype(np.int32), 0, S - 1)
-        pv = np.clip(((1.0 - tc) * 0.5 * (S - 1)).astype(np.int32), 0, S - 1)
+        pu = np.clip(((sc + 1.0) * 0.5 * (face_size - 1)).astype(np.int32), 0, face_size - 1)
+        pv = np.clip(((1.0 - tc) * 0.5 * (face_size - 1)).astype(np.int32), 0, face_size - 1)
         out[mask] = faces[name][pv[mask], pu[mask]]
 
     return out
@@ -170,19 +191,26 @@ def _stitch(faces, out_w, out_h):
 # EXR writer
 # ---------------------------------------------------------------------------
 
+
 def _write_exr(data, output_dir, filename="environment.exr"):
+    data = np.asarray(data)
+    if data.ndim != 3 or data.shape[2] < 3:
+        raise ValueError(f"EXR data must be an HxWxC array with at least 3 channels, got {data.shape}")
+
     rgb = data[:, :, :3].astype(np.float32)
     if data.dtype == np.uint8:
         rgb /= 255.0
+    if not np.all(np.isfinite(rgb)):
+        raise ValueError("EXR data contains non-finite values")
     if np.all(rgb == 0):
-        logger.warning("All-black image — scene may have no light sources")
-    path = os.path.join(output_dir, filename)
-    try:
-        import imageio
-        imageio.v3.imwrite(path, rgb)
-    except AttributeError:
-        import imageio as iio
-        iio.imwrite(path, rgb, format="exr")
+        raise ValueError("refusing to write an all-black EXR")
+
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.abspath(os.path.join(output_dir, filename))
+    os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    if not cv2.imwrite(path, bgr):
+        raise OSError(f"failed to write EXR: {path}")
     logger.info(f"EXR written: {path}  max={rgb.max():.4f}")
     return path
 
@@ -191,14 +219,15 @@ def _write_exr(data, output_dir, filename="environment.exr"):
 # Public interface
 # ---------------------------------------------------------------------------
 
+
 def capture_hdr_panorama(
     output_dir: str,
-    position: Tuple[float, float, float] = (0.0, 0.0, 1.5),
+    position: tuple[float, float, float] = (0.0, 0.0, 1.5),
     face_size: int = 1024,
     camera_prim_base: str = "/World/HDRCaptureCam",
     cleanup_cameras: bool = True,
     render_warmup_frames: int = 16,
-) -> Optional[str]:
+) -> str | None:
     """
     Capture an equirectangular HDR panorama (.exr) via a 6-face cube map.
 
@@ -214,9 +243,9 @@ def capture_hdr_panorama(
     Returns:
         Absolute path to the saved .exr, or None on failure.
     """
-    import omni.usd
     import omni.kit.app
     import omni.replicator.core as rep
+    import omni.usd
 
     os.makedirs(output_dir, exist_ok=True)
     stage = omni.usd.get_context().get_stage()
@@ -224,9 +253,15 @@ def capture_hdr_panorama(
 
     cube_faces = {}
     cam_paths = []
+    render_resources = []
     result_path = None
 
     try:
+        if face_size <= 0:
+            raise ValueError("face_size must be positive")
+        if render_warmup_frames < 0:
+            raise ValueError("render_warmup_frames must be non-negative")
+
         for face_name, quat in _CUBE_FACES:
             prim_path = f"{camera_prim_base}_{face_name}"
             cam_paths.append(prim_path)
@@ -236,17 +271,19 @@ def capture_hdr_panorama(
                 app.update()
 
             rp = rep.create.render_product(prim_path, (face_size, face_size))
-            for _ in range(16):          # more updates so RTX initialises the RP
+            render_resources.append((None, rp))
+            for _ in range(16):  # more updates so RTX initialises the RP
                 app.update()
 
             ann = _attach_annotator(rep, rp)
-            for _ in range(8):           # let annotator bind before first step
+            render_resources[-1] = (ann, rp)
+            for _ in range(8):  # let annotator bind before first step
                 app.update()
 
             # ── Adaptive warm-up ────────────────────────────────────────────
             # Step in small batches; stop as soon as the annotator returns
             # non-zero data.  Falls back to render_warmup_frames as the cap.
-            _BATCH       = 8    # frames per probe
+            _BATCH = 8  # frames per probe
             _MAX_RETRIES = max(1, render_warmup_frames // _BATCH)
             rgb = None
             for attempt in range(_MAX_RETRIES):
@@ -262,29 +299,21 @@ def capture_hdr_panorama(
                 if not np.all(candidate == 0):
                     rgb = candidate
                     logger.info(
-                        f"Face '{face_name}' converged after "
-                        f"{(attempt+1)*_BATCH} frames  max={rgb.max():.4f}"
+                        f"Face '{face_name}' converged after {(attempt + 1) * _BATCH} frames  max={rgb.max():.4f}"
                     )
                     break
             # ────────────────────────────────────────────────────────────────
 
-            rp.destroy()
+            _destroy_render_product(ann, rp)
+            render_resources.pop()
 
             if rgb is None:
-                logger.warning(
-                    f"Face '{face_name}': still all-zero after "
-                    f"{_MAX_RETRIES*_BATCH} frames, skipping"
-                )
-                continue
+                raise RuntimeError(f"Face '{face_name}' stayed all-black after {_MAX_RETRIES * _BATCH} frames")
 
             cube_faces[face_name] = rgb
             logger.info(f"Face '{face_name}' OK  max={rgb.max():.4f}")
 
-        if not cube_faces:
-            logger.error("No cube faces captured")
-            return None
-
-        logger.info(f"Stitching {len(cube_faces)}/6 faces → {face_size*4}x{face_size*2}")
+        logger.info(f"Stitching 6/6 faces -> {face_size * 4}x{face_size * 2}")
         equirect = _stitch(cube_faces, face_size * 4, face_size * 2)
         result_path = _write_exr(equirect, output_dir)
 
@@ -292,6 +321,8 @@ def capture_hdr_panorama(
         logger.exception("capture_hdr_panorama failed")
 
     finally:
+        for ann, rp in reversed(render_resources):
+            _destroy_render_product(ann, rp)
         if cleanup_cameras:
             for p in cam_paths:
                 _remove_prim(stage, p)

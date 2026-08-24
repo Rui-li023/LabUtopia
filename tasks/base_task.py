@@ -9,7 +9,7 @@ from isaacsim.core.utils.prims import set_prim_visibility
 from isaacsim.core.utils.semantics import add_update_semantics
 from isaacsim.sensors.camera import Camera
 from loguru import logger
-from pxr import Sdf, UsdLux, UsdShade
+from pxr import Gf, Sdf, UsdLux, UsdShade
 from scipy.spatial.transform import Rotation
 
 from utils.camera_utils import process_camera_image
@@ -85,6 +85,7 @@ class BaseTask(ABC):
         self._occupied_xy_regions = []
         self._reserved_xy_regions = self._build_reserved_xy_regions()
         self._randomize_lighting()
+        self._randomize_environment()
         self._randomize_cameras()
         self._randomize_distractors()
         self.apply_materials()
@@ -112,6 +113,7 @@ class BaseTask(ABC):
             "camera_poses":     dict(init_state.get("camera_poses", {})),
             "extra":            dict(init_state.get("extra", {})),
         }
+        self._restore_environment(self._episode_init_state)
         self._occupied_xy_regions = []
         self._reserved_xy_regions = []
         self._hide_all_distractors()
@@ -315,11 +317,15 @@ class BaseTask(ABC):
             logger.info("Lighting randomization enabled")
 
     def setup_environment(self) -> None:
-        """Create a DomeLight from ``cfg.environment.hdr_path`` when configured.
+        """Prepare per-episode HDR dome-light randomization."""
+        self._environment_candidates: list[str] = []
+        self._environment_cycle: list[str] = []
+        self._environment_current: str | None = None
+        self._environment_dome_light = None
+        self._environment_randomize_each_episode = False
+        self._environment_intensity = 1000.0
+        self._environment_exposure = 0.0
 
-        ``hdr_path`` may point to a single ``.exr`` file or to a directory. When
-        a directory is provided, one ``.exr`` is selected at random.
-        """
         env_cfg = getattr(self.cfg, "environment", None)
         if env_cfg is None:
             return
@@ -328,19 +334,120 @@ class BaseTask(ABC):
         if not hdr_path:
             return
 
-        if os.path.isdir(hdr_path):
-            candidates = glob.glob(os.path.join(hdr_path, "**", "*.exr"), recursive=True)
-            if not candidates:
-                logger.warning(f"No .exr files found under {hdr_path}, skipping DomeLight")
-                return
-            hdr_path = random.choice(candidates)
-            logger.info(f"HDR: randomly selected {hdr_path}")
+        hdr_path = os.path.normpath(str(hdr_path))
+        is_directory = os.path.isdir(hdr_path)
+        if is_directory:
+            candidates = sorted(glob.glob(os.path.join(hdr_path, "**", "*.exr"), recursive=True))
+        elif os.path.isfile(hdr_path) and hdr_path.lower().endswith(".exr"):
+            candidates = [hdr_path]
+        else:
+            candidates = []
 
-        intensity = float(getattr(env_cfg, "intensity", 1000.0))
-        dome_light = UsdLux.DomeLight.Define(self.stage, "/World/HDRDomeLight")
-        dome_light.CreateTextureFileAttr(Sdf.AssetPath(hdr_path))
-        dome_light.CreateIntensityAttr(intensity)
-        logger.info(f"HDR DomeLight created: {hdr_path} (intensity={intensity})")
+        if not candidates:
+            logger.warning(f"No .exr files found at {hdr_path}, skipping DomeLight")
+            return
+
+        self._environment_candidates = candidates
+        self._environment_randomize_each_episode = bool(
+            getattr(env_cfg, "randomize_each_episode", is_directory)
+        )
+        self._environment_intensity = float(getattr(env_cfg, "intensity", 1000.0))
+        self._environment_exposure = float(getattr(env_cfg, "exposure", 0.0))
+        self._environment_dome_light = UsdLux.DomeLight.Define(self.stage, "/World/HDRDomeLight")
+        logger.info(
+            f"HDR environment enabled with {len(candidates)} candidate(s); "
+            f"randomize_each_episode={self._environment_randomize_each_episode}"
+        )
+
+    def _next_environment_path(self) -> str | None:
+        if not self._environment_candidates:
+            return None
+        if not self._environment_randomize_each_episode:
+            return self._environment_current or self._environment_candidates[0]
+        if not self._environment_cycle:
+            self._environment_cycle = random.sample(
+                self._environment_candidates, k=len(self._environment_candidates)
+            )
+            if (
+                len(self._environment_cycle) > 1
+                and self._environment_cycle[-1] == self._environment_current
+            ):
+                self._environment_cycle[0], self._environment_cycle[-1] = (
+                    self._environment_cycle[-1],
+                    self._environment_cycle[0],
+                )
+        return self._environment_cycle.pop()
+
+    def _apply_environment(
+        self,
+        hdr_path: str,
+        intensity: float,
+        exposure: float,
+        *,
+        record: bool,
+    ) -> None:
+        if self._environment_dome_light is None:
+            return
+        if not os.path.isfile(hdr_path):
+            logger.warning(f"HDR environment file is unavailable: {hdr_path}")
+            return
+
+        asset_path = Sdf.AssetPath(os.path.abspath(hdr_path))
+        self._environment_dome_light.CreateTextureFileAttr(asset_path)
+        self._environment_dome_light.CreateTextureFormatAttr(UsdLux.Tokens.latlong)
+        self._environment_dome_light.CreateIntensityAttr(float(intensity))
+        self._environment_dome_light.CreateExposureAttr(float(exposure))
+        self._environment_dome_light.CreateEnableColorTemperatureAttr(False)
+        self._environment_dome_light.CreateColorAttr(Gf.Vec3f(1.0, 1.0, 1.0))
+        self._environment_current = hdr_path
+
+        if record:
+            self._episode_init_state["extra"]["environment"] = {
+                "hdr_path": hdr_path,
+                "intensity": float(intensity),
+                "exposure": float(exposure),
+            }
+        logger.info(
+            f"HDR environment applied: {hdr_path} "
+            f"(intensity={intensity}, exposure={exposure})"
+        )
+
+    def _randomize_environment(self) -> None:
+        hdr_path = self._next_environment_path()
+        if hdr_path is None:
+            return
+        self._apply_environment(
+            hdr_path,
+            self._environment_intensity,
+            self._environment_exposure,
+            record=True,
+        )
+
+    def _restore_environment(self, init_state: dict) -> None:
+        if self._environment_dome_light is None:
+            return
+        environment_state = init_state.get("extra", {}).get("environment")
+        if not isinstance(environment_state, dict):
+            hdr_path = self._next_environment_path()
+            if hdr_path is not None:
+                self._apply_environment(
+                    hdr_path,
+                    self._environment_intensity,
+                    self._environment_exposure,
+                    record=False,
+                )
+            return
+
+        hdr_path = environment_state.get("hdr_path")
+        if not hdr_path:
+            logger.warning("Replay environment state has no hdr_path")
+            return
+        self._apply_environment(
+            os.path.normpath(str(hdr_path)),
+            float(environment_state.get("intensity", self._environment_intensity)),
+            float(environment_state.get("exposure", self._environment_exposure)),
+            record=False,
+        )
 
     def _randomize_lighting(self) -> None:
         """Apply lighting randomization if enabled.  Called during ``reset()``.
