@@ -2,7 +2,7 @@ import glob
 import os
 import random
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 from isaacsim.core.prims import SingleRigidPrim
@@ -109,10 +109,10 @@ class BaseTask(ABC):
         self.reset_needed = False
         self.frame_idx = 0
         self._episode_init_state = {
-            "object_poses":     dict(init_state.get("object_poses", {})),
+            "object_poses": dict(init_state.get("object_poses", {})),
             "object_materials": dict(init_state.get("object_materials", {})),
-            "camera_poses":     dict(init_state.get("camera_poses", {})),
-            "extra":            dict(init_state.get("extra", {})),
+            "camera_poses": dict(init_state.get("camera_poses", {})),
+            "extra": dict(init_state.get("extra", {})),
         }
         self._restore_environment(self._episode_init_state)
         self._occupied_xy_regions = []
@@ -123,9 +123,7 @@ class BaseTask(ABC):
             logger.info(f"Bound material {material_path} to object {obj_path}")
         task_cfg = getattr(self.cfg, "task", None)
         restore_orient = bool(getattr(task_cfg, "replay_restore_orientation", False))
-        self._apply_init_state_poses(
-            self._episode_init_state, restore_orientation=restore_orient
-        )
+        self._apply_init_state_poses(self._episode_init_state, restore_orientation=restore_orient)
         self._restore_distractor_visibility(self._episode_init_state)
         self._restore_camera_poses(self._episode_init_state)
         self.robot.initialize()
@@ -236,7 +234,7 @@ class BaseTask(ABC):
                 display_data[cam_cfg.name] = display
         return camera_data, display_data
 
-    def get_camera_intrinsics(self) -> Dict[str, Any]:
+    def get_camera_intrinsics(self) -> dict[str, Any]:
         """Return ``{camera_name: 3x3 intrinsic matrix (list)}``, cached.
 
         Consumed by RGB-D navigation clients (NavDP) that need the pinhole
@@ -245,14 +243,12 @@ class BaseTask(ABC):
         """
         if getattr(self, "_camera_intrinsics_cache", None) is not None:
             return self._camera_intrinsics_cache
-        intrinsics: Dict[str, Any] = {}
+        intrinsics: dict[str, Any] = {}
         for camera, cam_cfg in zip(self.cameras, self.cfg.cameras):
             try:
-                intrinsics[cam_cfg.name] = np.asarray(
-                    camera.get_intrinsics_matrix(), dtype=float).tolist()
+                intrinsics[cam_cfg.name] = np.asarray(camera.get_intrinsics_matrix(), dtype=float).tolist()
             except Exception as exc:
-                logger.warning(f"[camera] intrinsics unavailable for "
-                               f"{cam_cfg.name}: {exc}")
+                logger.warning(f"[camera] intrinsics unavailable for {cam_cfg.name}: {exc}")
         self._camera_intrinsics_cache = intrinsics
         return intrinsics
 
@@ -268,10 +264,12 @@ class BaseTask(ABC):
         if obj_paths is not None:
             for obj in obj_paths:
                 if isinstance(obj, str):
-                    self.obj_configs.append({
-                        "path": obj,
-                        "position_range": {"x": [0.24, 0.30], "y": [-0.05, 0.05], "z": [0.85, 0.85]},
-                    })
+                    self.obj_configs.append(
+                        {
+                            "path": obj,
+                            "position_range": {"x": [0.24, 0.30], "y": [-0.05, 0.05], "z": [0.85, 0.85]},
+                        }
+                    )
                 else:
                     self.obj_configs.append(obj)
 
@@ -287,20 +285,14 @@ class BaseTask(ABC):
             root = self.stage.GetPrimAtPath(object_path)
             if not root.IsValid():
                 continue
-            root_world = UsdGeom.Xformable(root).ComputeLocalToWorldTransform(
-                Usd.TimeCode.Default()
-            )
+            root_world = UsdGeom.Xformable(root).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
             root_world_inverse = root_world.GetInverse()
             offsets = []
             for candidate in Usd.PrimRange(root):
                 if not candidate.HasAPI(UsdPhysics.RigidBodyAPI):
                     continue
-                rigid_world = UsdGeom.Xformable(candidate).ComputeLocalToWorldTransform(
-                    Usd.TimeCode.Default()
-                )
-                offsets.append(
-                    (str(candidate.GetPath()), rigid_world * root_world_inverse)
-                )
+                rigid_world = UsdGeom.Xformable(candidate).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+                offsets.append((str(candidate.GetPath()), rigid_world * root_world_inverse))
             self._object_rigid_body_offsets[object_path] = offsets
 
     def _sync_object_rigid_bodies(self, object_path: str) -> None:
@@ -311,9 +303,7 @@ class BaseTask(ABC):
         root = self.stage.GetPrimAtPath(object_path)
         if not root.IsValid():
             return
-        root_world = UsdGeom.Xformable(root).ComputeLocalToWorldTransform(
-            Usd.TimeCode.Default()
-        )
+        root_world = UsdGeom.Xformable(root).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
         for rigid_path, relative_transform in offsets:
             try:
                 desired_world = relative_transform * root_world
@@ -413,11 +403,13 @@ class BaseTask(ABC):
                 paths = [path_attr]
             else:
                 paths = []
-            self.material_configs.append({
-                "paths":    paths,
-                "materials": materials,
-                "random":   bool(getattr(mat_cfg, "random", False)),
-            })
+            self.material_configs.append(
+                {
+                    "paths": paths,
+                    "materials": materials,
+                    "random": bool(getattr(mat_cfg, "random", False)),
+                }
+            )
 
     def setup_lighting(self) -> None:
         """Parse lighting randomization config from ``cfg.lighting``.
@@ -479,9 +471,7 @@ class BaseTask(ABC):
             return
 
         self._environment_candidates = candidates
-        self._environment_randomize_each_episode = bool(
-            getattr(env_cfg, "randomize_each_episode", is_directory)
-        )
+        self._environment_randomize_each_episode = bool(getattr(env_cfg, "randomize_each_episode", is_directory))
         self._environment_intensity = float(getattr(env_cfg, "intensity", 1000.0))
         self._environment_exposure = float(getattr(env_cfg, "exposure", 0.0))
         self._environment_dome_light = UsdLux.DomeLight.Define(self.stage, "/World/HDRDomeLight")
@@ -496,13 +486,8 @@ class BaseTask(ABC):
         if not self._environment_randomize_each_episode:
             return self._environment_current or self._environment_candidates[0]
         if not self._environment_cycle:
-            self._environment_cycle = random.sample(
-                self._environment_candidates, k=len(self._environment_candidates)
-            )
-            if (
-                len(self._environment_cycle) > 1
-                and self._environment_cycle[-1] == self._environment_current
-            ):
+            self._environment_cycle = random.sample(self._environment_candidates, k=len(self._environment_candidates))
+            if len(self._environment_cycle) > 1 and self._environment_cycle[-1] == self._environment_current:
                 self._environment_cycle[0], self._environment_cycle[-1] = (
                     self._environment_cycle[-1],
                     self._environment_cycle[0],
@@ -538,10 +523,7 @@ class BaseTask(ABC):
                 "intensity": float(intensity),
                 "exposure": float(exposure),
             }
-        logger.info(
-            f"HDR environment applied: {hdr_path} "
-            f"(intensity={intensity}, exposure={exposure})"
-        )
+        logger.info(f"HDR environment applied: {hdr_path} (intensity={intensity}, exposure={exposure})")
 
     def _randomize_environment(self) -> None:
         hdr_path = self._next_environment_path()
@@ -686,14 +668,16 @@ class BaseTask(ABC):
                     "z": list(getattr(trans_range, "z", [-0.05, 0.05])),
                 }
 
-            self._camera_randomization_configs.append({
-                "base_translation":   base_translation,
-                "base_orientation":   base_orientation,
-                "base_focal_length":  base_focal_length,
-                "translation_range":  trans_range,
-                "orientation_noise":  float(getattr(rand_cfg, "orientation_noise", 0.0)),
-                "focal_length_range": list(getattr(rand_cfg, "focal_length_range", [0.0, 0.0])),
-            })
+            self._camera_randomization_configs.append(
+                {
+                    "base_translation": base_translation,
+                    "base_orientation": base_orientation,
+                    "base_focal_length": base_focal_length,
+                    "translation_range": trans_range,
+                    "orientation_noise": float(getattr(rand_cfg, "orientation_noise", 0.0)),
+                    "focal_length_range": list(getattr(rand_cfg, "focal_length_range", [0.0, 0.0])),
+                }
+            )
 
         has_any = any(c is not None for c in self._camera_randomization_configs)
         if has_any:
@@ -708,9 +692,7 @@ class BaseTask(ABC):
             return
 
         camera_poses: dict = {}
-        for camera, cam_cfg, rand_cfg in zip(
-            self.cameras, self.cfg.cameras, self._camera_randomization_configs
-        ):
+        for camera, cam_cfg, rand_cfg in zip(self.cameras, self.cfg.cameras, self._camera_randomization_configs):
             if rand_cfg is None:
                 continue
 
@@ -721,11 +703,13 @@ class BaseTask(ABC):
             new_translation = rand_cfg["base_translation"].astype(np.float64, copy=True)
             trans_range = rand_cfg["translation_range"]
             if trans_range is not None:
-                new_translation += np.array([
-                    np.random.uniform(trans_range["x"][0], trans_range["x"][1]),
-                    np.random.uniform(trans_range["y"][0], trans_range["y"][1]),
-                    np.random.uniform(trans_range["z"][0], trans_range["z"][1]),
-                ])
+                new_translation += np.array(
+                    [
+                        np.random.uniform(trans_range["x"][0], trans_range["x"][1]),
+                        np.random.uniform(trans_range["y"][0], trans_range["y"][1]),
+                        np.random.uniform(trans_range["z"][0], trans_range["z"][1]),
+                    ]
+                )
 
             # --- Orientation perturbation (small-angle noise) ---
             base_quat = rand_cfg["base_orientation"]  # [x, y, z, w] USD convention
@@ -733,7 +717,7 @@ class BaseTask(ABC):
             if noise_mag > 0:
                 # Sample a small random rotation vector, then compose with base
                 axis = np.random.randn(3)
-                axis /= (np.linalg.norm(axis) + 1e-8)
+                axis /= np.linalg.norm(axis) + 1e-8
                 angle = np.random.uniform(-noise_mag, noise_mag)
                 # scipy uses [x, y, z, w] scalar-last, same as our USD convention
                 delta_rot = Rotation.from_rotvec(axis * angle)
@@ -756,14 +740,11 @@ class BaseTask(ABC):
             camera.set_focal_length(new_focal_length)
 
             camera_poses[cam_cfg.name] = {
-                "translation":  new_translation.tolist(),
-                "orientation":  new_orientation.tolist(),
+                "translation": new_translation.tolist(),
+                "orientation": new_orientation.tolist(),
                 "focal_length": float(new_focal_length),
             }
-            logger.debug(
-                f"Camera '{cam_cfg.name}' randomized: "
-                f"t={new_translation.tolist()}, fl={new_focal_length:.2f}"
-            )
+            logger.debug(f"Camera '{cam_cfg.name}' randomized: t={new_translation.tolist()}, fl={new_focal_length:.2f}")
 
         self._episode_init_state["camera_poses"] = camera_poses
 
@@ -881,10 +862,12 @@ class BaseTask(ABC):
             position_range = self._get_cfg_value(obj_cfg, "position_range")
             obj_path = self._get_cfg_value(obj_cfg, "path")
             if obj_path and position_range is not None:
-                requests.append({
-                    "path": obj_path,
-                    "position_range": position_range,
-                })
+                requests.append(
+                    {
+                        "path": obj_path,
+                        "position_range": position_range,
+                    }
+                )
         return requests
 
     def _build_reserved_xy_regions(self) -> list[dict[str, Any]]:
@@ -901,11 +884,13 @@ class BaseTask(ABC):
             half_extent = np.maximum(np.abs(aabb["size"][:2]) / 2.0, 1.0e-6)
             x_range = self._get_axis_range(position_range, "x", [0.0, 0.0])
             y_range = self._get_axis_range(position_range, "y", [0.0, 0.0])
-            reserved_regions.append({
-                "path": f"reserved:{obj_path}",
-                "min": np.array([x_range[0], y_range[0]], dtype=np.float64) - half_extent - margin,
-                "max": np.array([x_range[1], y_range[1]], dtype=np.float64) + half_extent + margin,
-            })
+            reserved_regions.append(
+                {
+                    "path": f"reserved:{obj_path}",
+                    "min": np.array([x_range[0], y_range[0]], dtype=np.float64) - half_extent - margin,
+                    "max": np.array([x_range[1], y_range[1]], dtype=np.float64) + half_extent + margin,
+                }
+            )
 
         return reserved_regions
 
@@ -969,10 +954,7 @@ class BaseTask(ABC):
 
         if self._distractors_enabled:
             self._distractor_candidates: list[str] = list(dist_cfg.candidates)
-            logger.info(
-                f"Distractor randomization enabled: "
-                f"{len(self._distractor_candidates)} candidates"
-            )
+            logger.info(f"Distractor randomization enabled: {len(self._distractor_candidates)} candidates")
 
     def _get_task_object_paths(self) -> set:
         """Return the set of prim paths currently used by the task.
@@ -1020,12 +1002,14 @@ class BaseTask(ABC):
         # Parse placement zones
         zones = []
         for zone_cfg in cfg.placement_zones:
-            zones.append({
-                "x": self._get_axis_range(zone_cfg, "x", [0.0, 0.5]),
-                "y": self._get_axis_range(zone_cfg, "y", [-0.3, 0.3]),
-                "z": self._get_axis_range(zone_cfg, "z", [0.82, 0.82]),
-                "support_surface_path": self._resolve_support_surface_path(zone_cfg, cfg),
-            })
+            zones.append(
+                {
+                    "x": self._get_axis_range(zone_cfg, "x", [0.0, 0.5]),
+                    "y": self._get_axis_range(zone_cfg, "y", [-0.3, 0.3]),
+                    "z": self._get_axis_range(zone_cfg, "z", [0.82, 0.82]),
+                    "support_surface_path": self._resolve_support_surface_path(zone_cfg, cfg),
+                }
+            )
 
         selected = random.sample(available, len(available))
         distractor_poses: dict = {}
@@ -1089,9 +1073,7 @@ class BaseTask(ABC):
 
         visible_paths = init_state.get("extra", {}).get("visible_distractors")
         if visible_paths is None:
-            visible_paths = [
-                path for path in init_state.get("object_poses", {}) if path in self._distractor_candidates
-            ]
+            visible_paths = [path for path in init_state.get("object_poses", {}) if path in self._distractor_candidates]
 
         visible_paths = set(visible_paths)
         for obj_path in self._distractor_candidates:
@@ -1154,11 +1136,13 @@ class BaseTask(ABC):
             # its success criterion and is discarded — a recoverable outcome,
             # unlike the RuntimeError that aborted entire collect campaigns
             # (level4 device_operation died on '/World/DryingBox_01').
-            position = np.array([
-                (position_range["x"][0] + position_range["x"][1]) / 2.0,
-                (position_range["y"][0] + position_range["y"][1]) / 2.0,
-                (position_range["z"][0] + position_range["z"][1]) / 2.0,
-            ])
+            position = np.array(
+                [
+                    (position_range["x"][0] + position_range["x"][1]) / 2.0,
+                    (position_range["y"][0] + position_range["y"][1]) / 2.0,
+                    (position_range["z"][0] + position_range["z"][1]) / 2.0,
+                ]
+            )
             logger.warning(
                 f"No overlap-free placement for '{obj_path}' after "
                 f"{self._placement_max_sample_attempts} attempts; "
@@ -1224,7 +1208,7 @@ class BaseTask(ABC):
         pose = self.object_utils.get_world_pose(obj_path)
         if pose is not None:
             self._episode_init_state["object_poses"][obj_path] = {
-                "position":    pose["position"].tolist(),
+                "position": pose["position"].tolist(),
                 "orientation": pose["orientation"].tolist(),
             }
 
@@ -1240,7 +1224,7 @@ class BaseTask(ABC):
             pose = self.object_utils.get_world_pose(path)
             if pose is not None:
                 self._episode_init_state["object_poses"][path] = {
-                    "position":    pose["position"].tolist(),
+                    "position": pose["position"].tolist(),
                     "orientation": pose["orientation"].tolist(),
                 }
 
@@ -1253,7 +1237,7 @@ class BaseTask(ABC):
         set_world_pose mis-poses the flask so the recorded trajectory misses.
         (Determinism test confirmed replay is deterministic: the SAME episodes
         fail every run — they're the most-marginal saved grasps, not random
-        physics; position-only restore + continuous grip = 70–81%.)
+        physics; position-only restore + continuous grip = 70-81%.)
 
         Args:
             init_state: Dict containing ``object_poses`` with position and orientation.
@@ -1261,18 +1245,16 @@ class BaseTask(ABC):
         """
         for path, pose in init_state.get("object_poses", {}).items():
             position = np.asarray(pose["position"])
-            orientation = (
-                np.asarray(pose["orientation"])
-                if restore_orientation and "orientation" in pose
-                else None
-            )
+            orientation = np.asarray(pose["orientation"]) if restore_orientation and "orientation" in pose else None
             self._restore_object_pose(path, position, orientation)
             msg = f"Restored object {path} to position {pose['position']}"
             if orientation is not None:
                 msg += f" orientation {pose['orientation']}"
             logger.info(msg)
 
-    def _restore_object_pose(self, path: str, world_position: np.ndarray, orientation: np.ndarray | None = None) -> None:
+    def _restore_object_pose(
+        self, path: str, world_position: np.ndarray, orientation: np.ndarray | None = None
+    ) -> None:
         """Place an object at its recorded **world** pose, pivot-aware.
 
         ``set_object_position`` / ``set_world_pose`` write the recorded world
@@ -1300,9 +1282,7 @@ class BaseTask(ABC):
             return
         offset = np.asarray(world["position"]) - np.asarray(world_position)
         if np.linalg.norm(offset) > 1e-4:
-            self.object_utils.set_object_position(
-                object_path=path, position=np.asarray(world_position) - offset
-            )
+            self.object_utils.set_object_position(object_path=path, position=np.asarray(world_position) - offset)
         self._sync_object_rigid_bodies(path)
 
     def _has_xform_pivot(self, path: str) -> bool:
@@ -1348,29 +1328,33 @@ class BaseTask(ABC):
 
         camera_data, display_data = self.get_camera_data()
         state = {
-            "joint_positions":  joint_positions,
-            "camera_data":      camera_data,
-            "camera_display":   display_data,
-            "done":             self.reset_needed,
+            "joint_positions": joint_positions,
+            "camera_data": camera_data,
+            "camera_display": display_data,
+            "done": self.reset_needed,
             "gripper_position": self.robot.get_gripper_position(),
-            "init_state":       self._episode_init_state,
+            "init_state": self._episode_init_state,
         }
 
         if object_path:
-            state.update({
-                "object_position": self.object_utils.get_geometry_center(object_path=object_path),
-                "object_size":     self.object_utils.get_object_size(object_path=object_path),
-                "object_path":     object_path,
-                "object_name":     object_path.split("/")[-1],
-            })
+            state.update(
+                {
+                    "object_position": self.object_utils.get_geometry_center(object_path=object_path),
+                    "object_size": self.object_utils.get_object_size(object_path=object_path),
+                    "object_path": object_path,
+                    "object_name": object_path.split("/")[-1],
+                }
+            )
 
         if target_path:
-            state.update({
-                "target_position": self.object_utils.get_geometry_center(object_path=target_path),
-                "target_size":     self.object_utils.get_object_size(object_path=target_path),
-                "target_path":     target_path,
-                "target_name":     target_path.split("/")[-1],
-            })
+            state.update(
+                {
+                    "target_position": self.object_utils.get_geometry_center(object_path=target_path),
+                    "target_size": self.object_utils.get_object_size(object_path=target_path),
+                    "target_path": target_path,
+                    "target_name": target_path.split("/")[-1],
+                }
+            )
 
         if additional_info:
             state.update(additional_info)
