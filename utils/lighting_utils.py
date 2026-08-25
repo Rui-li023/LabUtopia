@@ -6,25 +6,25 @@ different light types, etc.).
 """
 
 import random
-from typing import Dict, List, Optional, Tuple, Union
+from collections.abc import Mapping
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
-from pxr import Gf, Sdf, Usd, UsdGeom
 from loguru import logger
-
+from pxr import Gf, Sdf, Usd, UsdGeom
 
 # ---------------------------------------------------------------------------
 # Color temperature presets (Kelvin ranges for real-world light sources)
 # ---------------------------------------------------------------------------
 COLOR_TEMP_PRESETS: Dict[str, Tuple[float, float]] = {
-    "candle":     (1800.0, 2200.0),
-    "warm_white": (2700.0, 3200.0),   # Incandescent / warm LED
-    "soft_white": (3000.0, 3500.0),   # Halogen
-    "neutral":    (3800.0, 4200.0),   # Fluorescent neutral
-    "cool_white": (4500.0, 5000.0),   # Fluorescent cool
-    "daylight":   (5000.0, 5500.0),   # Direct sunlight
-    "overcast":   (6000.0, 7000.0),   # Cloudy sky
-    "blue_sky":   (8000.0, 12000.0),  # Clear blue sky
+    "candle": (1800.0, 2200.0),
+    "warm_white": (2700.0, 3200.0),  # Incandescent / warm LED
+    "soft_white": (3000.0, 3500.0),  # Halogen
+    "neutral": (3800.0, 4200.0),  # Fluorescent neutral
+    "cool_white": (4500.0, 5000.0),  # Fluorescent cool
+    "daylight": (5000.0, 5500.0),  # Direct sunlight
+    "overcast": (6000.0, 7000.0),  # Cloudy sky
+    "blue_sky": (8000.0, 12000.0),  # Clear blue sky
 }
 
 # ---------------------------------------------------------------------------
@@ -61,9 +61,73 @@ LAB_LIGHTING_SCENARIOS: Dict[str, Dict] = {
 LIGHT_TYPE_NAMES = {"SphereLight", "RectLight", "DistantLight", "DomeLight", "DiskLight", "CylinderLight"}
 
 
+def _cfg_value(cfg: Any, key: str, default: Any = None) -> Any:
+    """Read a key from either a mapping or an OmegaConf-like object."""
+    if cfg is None:
+        return default
+    if isinstance(cfg, Mapping):
+        return cfg.get(key, default)
+    getter = getattr(cfg, "get", None)
+    return getter(key, default) if getter is not None else getattr(cfg, key, default)
+
+
+def resolve_lighting_options(cfg: Any, split: str | None = None) -> dict[str, Any]:
+    """Merge scenario defaults with explicit (optionally split-specific) values."""
+    scenario = _cfg_value(cfg, "scenario")
+    preset: dict[str, Any] = {}
+    if scenario:
+        if scenario in LAB_LIGHTING_SCENARIOS:
+            preset = LAB_LIGHTING_SCENARIOS[str(scenario)]
+        else:
+            logger.warning(f"Unknown lighting scenario '{scenario}', using generic defaults")
+
+    def merged(key: str, fallback: Any) -> Any:
+        if split:
+            value = _cfg_value(cfg, f"{split}_{key}")
+            if value is not None:
+                return value
+        value = _cfg_value(cfg, key)
+        return value if value is not None else preset.get(key, fallback)
+
+    randomize_intensity = bool(_cfg_value(cfg, "randomize_intensity", True))
+    configured_intensity_range = tuple(merged("intensity_range", (500.0, 5000.0)))
+    color_temp_range = merged("color_temp_range", (2700.0, 6500.0))
+    if isinstance(color_temp_range, str):
+        if color_temp_range not in COLOR_TEMP_PRESETS:
+            raise ValueError(f"Unknown color-temperature preset: {color_temp_range}")
+        color_temp_range = COLOR_TEMP_PRESETS[color_temp_range]
+
+    def axes(key: str, defaults: dict[str, tuple[float, float]]) -> dict | None:
+        axis_cfg = merged(key, None)
+        if axis_cfg is None:
+            return None
+        return {axis: tuple(_cfg_value(axis_cfg, axis, default)) for axis, default in defaults.items()}
+
+    return {
+        "enabled": bool(_cfg_value(cfg, "enabled", False)),
+        "scenario": str(scenario) if scenario else None,
+        "num_lights": int(_cfg_value(cfg, "num_lights", 3)),
+        "parent_path": str(_cfg_value(cfg, "parent_path", "/World/VisualRandomization")),
+        "light_types": list(merged("light_types", ["RectLight", "SphereLight"])),
+        "intensity_range": configured_intensity_range if randomize_intensity else None,
+        "created_intensity_range": configured_intensity_range,
+        "exposure_range": tuple(merged("exposure_range", (-2.0, 4.0))),
+        "color_temp_range": tuple(color_temp_range),
+        "randomize_position": bool(_cfg_value(cfg, "randomize_position", False)),
+        "position_range": axes("position_range", {"x": (-1.0, 1.0), "y": (-1.0, 1.0), "z": (1.5, 3.0)}),
+        "randomize_rotation": bool(_cfg_value(cfg, "randomize_rotation", False)),
+        "rotation_range": axes("rotation_range", {"x": (-30.0, 30.0), "y": (-30.0, 30.0), "z": (0.0, 360.0)}),
+        "shared_exposure": bool(_cfg_value(cfg, "shared_exposure", not randomize_intensity)),
+        "exposure_jitter_range": tuple(_cfg_value(cfg, "exposure_jitter_range", (0.0, 0.0))),
+        "shared_color_temperature": bool(_cfg_value(cfg, "shared_color_temperature", False)),
+        "geometry_ranges": _cfg_value(cfg, "geometry_ranges", {}) or {},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Color temperature to RGB conversion
 # ---------------------------------------------------------------------------
+
 
 def color_temperature_to_rgb(kelvin: float) -> Tuple[float, float, float]:
     """Convert color temperature (Kelvin) to linear RGB values in [0, 1].
@@ -105,6 +169,7 @@ def color_temperature_to_rgb(kelvin: float) -> Tuple[float, float, float]:
 # ---------------------------------------------------------------------------
 # LightingRandomizer
 # ---------------------------------------------------------------------------
+
 
 class LightingRandomizer:
     """Randomize scene lighting parameters for visual domain randomization.
@@ -230,20 +295,7 @@ class LightingRandomizer:
 
         kelvin = random.uniform(*temp_range)
 
-        # Enable color temperature
-        self._set_bool_attr(prim, "inputs:enableColorTemperature", True)
-        self._set_float_attr(prim, "inputs:colorTemperature", kelvin)
-
-        # ``inputs:color`` must be reset to white, NOT to the Planckian RGB.
-        # It used to be set to the same RGB "for renderers that ignore
-        # colorTemperature", but Isaac's RTX renderer honours the attribute
-        # above, so the tint landed twice: at 9000 K the Planckian RGB is
-        # ~(0.79, 0.85, 1.00) and squaring it gives ~(0.62, 0.72, 1.00) — a
-        # scene rendered essentially monochrome blue. Both ends also darkened,
-        # because every channel of that RGB is <= 1. Measured on a level1/pick
-        # pilot: frame luma swung 41 to 172 across episodes, with the dark end
-        # too dark to make out the bottle at all.
-        self._set_color_attr(prim, "inputs:color", (1.0, 1.0, 1.0))
+        self._apply_color_temperature(prim, kelvin)
 
         return kelvin
 
@@ -306,11 +358,13 @@ class LightingRandomizer:
             logger.warning(f"Light prim not found: {light_path}")
             return np.zeros(3)
 
-        position = np.array([
-            random.uniform(*position_range.get("x", (0.0, 0.0))),
-            random.uniform(*position_range.get("y", (0.0, 0.0))),
-            random.uniform(*position_range.get("z", (0.0, 0.0))),
-        ])
+        position = np.array(
+            [
+                random.uniform(*position_range.get("x", (0.0, 0.0))),
+                random.uniform(*position_range.get("y", (0.0, 0.0))),
+                random.uniform(*position_range.get("z", (0.0, 0.0))),
+            ]
+        )
 
         self._set_translate(prim, position)
         return position
@@ -344,11 +398,13 @@ class LightingRandomizer:
             logger.warning(f"Light prim not found: {light_path}")
             return np.zeros(3)
 
-        rotation = np.array([
-            random.uniform(*rotation_range.get("x", (0.0, 0.0))),
-            random.uniform(*rotation_range.get("y", (0.0, 0.0))),
-            random.uniform(*rotation_range.get("z", (0.0, 0.0))),
-        ])
+        rotation = np.array(
+            [
+                random.uniform(*rotation_range.get("x", (0.0, 0.0))),
+                random.uniform(*rotation_range.get("y", (0.0, 0.0))),
+                random.uniform(*rotation_range.get("z", (0.0, 0.0))),
+            ]
+        )
 
         self._set_rotation(prim, rotation)
         return rotation
@@ -498,6 +554,10 @@ class LightingRandomizer:
         parent_path: str = "/World",
         scenario: Optional[str] = None,
         position_range: Optional[Dict[str, Tuple[float, float]]] = None,
+        intensity_range: Optional[Tuple[float, float]] = None,
+        exposure_range: Optional[Tuple[float, float]] = None,
+        color_temp_range: Optional[Tuple[float, float]] = None,
+        light_types: Optional[List[str]] = None,
     ) -> List[str]:
         """Create a complete randomized lighting rig with multiple lights.
 
@@ -515,17 +575,11 @@ class LightingRandomizer:
         """
         self.remove_created_lights()
 
-        if scenario and scenario in LAB_LIGHTING_SCENARIOS:
-            cfg = LAB_LIGHTING_SCENARIOS[scenario]
-            intensity_range = cfg["intensity_range"]
-            color_temp_range = cfg["color_temp_range"]
-            allowed_types = cfg["light_types"]
-            exposure_range = cfg["exposure_range"]
-        else:
-            intensity_range = (500.0, 5000.0)
-            color_temp_range = (2700.0, 6500.0)
-            allowed_types = list(LIGHT_TYPE_NAMES)
-            exposure_range = (-1.0, 3.0)
+        scenario_cfg = LAB_LIGHTING_SCENARIOS.get(scenario or "", {})
+        intensity_range = intensity_range or scenario_cfg.get("intensity_range", (500.0, 5000.0))
+        color_temp_range = color_temp_range or scenario_cfg.get("color_temp_range", (2700.0, 6500.0))
+        allowed_types = light_types or scenario_cfg.get("light_types", list(LIGHT_TYPE_NAMES))
+        exposure_range = exposure_range or scenario_cfg.get("exposure_range", (-1.0, 3.0))
 
         paths: List[str] = []
         for _ in range(num_lights):
@@ -542,10 +596,89 @@ class LightingRandomizer:
                 paths.append(path)
 
         logger.info(
-            f"Created lighting setup with {len(paths)} lights"
-            + (f" (scenario: {scenario})" if scenario else "")
+            f"Created lighting setup with {len(paths)} lights" + (f" (scenario: {scenario})" if scenario else "")
         )
         return paths
+
+    # ------------------------------------------------------------------
+    # Serializable layout application
+    # ------------------------------------------------------------------
+
+    def apply_background_layout(self, layout: Mapping[str, Any]) -> bool:
+        """Create or update the DomeLight described by a visual layout."""
+        path = str(layout["path"])
+        prim = self.stage.GetPrimAtPath(path)
+        if prim.IsValid() and prim.GetTypeName() != "DomeLight":
+            logger.error(f"Visual background path {path} is not a DomeLight")
+            return False
+        if not prim.IsValid():
+            prim = self.stage.DefinePrim(path, "DomeLight")
+
+        if layout.get("texture_file"):
+            self._ensure_dome_texture_subframes()
+        self._set_float_attr(prim, "inputs:intensity", float(layout["intensity"]))
+        self._set_float_attr(prim, "inputs:exposure", float(layout["exposure"]))
+        self._set_bool_attr(prim, "visibleInPrimaryRay", bool(layout.get("visible_in_primary_ray", True)))
+        self._set_color_attr(prim, "inputs:color", tuple(layout.get("color", (1.0, 1.0, 1.0))))
+        texture_attr = prim.GetAttribute("inputs:texture:file")
+        if not texture_attr or not texture_attr.IsValid():
+            texture_attr = prim.CreateAttribute("inputs:texture:file", Sdf.ValueTypeNames.Asset)
+        texture_attr.Set(Sdf.AssetPath(str(layout.get("texture_file", ""))))
+        format_attr = prim.GetAttribute("inputs:texture:format")
+        if not format_attr or not format_attr.IsValid():
+            format_attr = prim.CreateAttribute("inputs:texture:format", Sdf.ValueTypeNames.Token)
+        format_attr.Set(str(layout.get("texture_format", "latlong")))
+        self._set_rotation(prim, np.asarray(layout.get("rotation", (0.0, 0.0, 0.0))))
+        return True
+
+    @staticmethod
+    def _ensure_dome_texture_subframes() -> None:
+        """Avoid blank dynamically changed Dome textures in RaytracedLighting."""
+        try:
+            # Delayed deliberately: this utility is unit-tested without starting
+            # Isaac Sim, where the Carbonite module is not importable.
+            import carb
+        except ImportError:
+            return
+        settings = carb.settings.get_settings()
+        if settings.get("/rtx/rendermode") != "RaytracedLighting":
+            return
+        subframes = settings.get("/omni/replicator/RTSubframes")
+        if subframes is None or subframes < 3:
+            settings.set("/omni/replicator/RTSubframes", 3)
+            logger.warning("Raised /omni/replicator/RTSubframes to 3 for Dome HDR randomization")
+
+    def apply_light_layout(self, layout: Mapping[str, Any]) -> dict[str, dict]:
+        """Apply an absolute, JSON-serializable light layout to the stage."""
+        applied: dict[str, dict] = {}
+        for light in layout.get("lights", []):
+            path = str(light["path"])
+            requested_type = light.get("type")
+            prim = self.stage.GetPrimAtPath(path)
+            if requested_type and prim.IsValid() and prim.GetTypeName() != requested_type:
+                self.stage.RemovePrim(path)
+                prim = self.stage.GetPrimAtPath(path)
+            if not prim.IsValid() and requested_type:
+                prim = self.stage.DefinePrim(path, str(requested_type))
+                self._created_light_paths.append(path)
+            if not prim.IsValid():
+                logger.warning(f"Light prim from visual layout not found: {path}")
+                continue
+
+            if "intensity" in light:
+                self._set_float_attr(prim, "inputs:intensity", float(light["intensity"]))
+            if "exposure" in light:
+                self._set_float_attr(prim, "inputs:exposure", float(light["exposure"]))
+            if "color_temperature" in light:
+                self._apply_color_temperature(prim, float(light["color_temperature"]))
+            if "position" in light:
+                self._set_translate(prim, np.asarray(light["position"], dtype=float))
+            if "rotation" in light:
+                self._set_rotation(prim, np.asarray(light["rotation"], dtype=float))
+            for name, value in (light.get("geometry") or {}).items():
+                self._set_float_attr(prim, f"inputs:{name}", float(value))
+            applied[path] = {key: value for key, value in light.items() if key != "path"}
+        return applied
 
     # ------------------------------------------------------------------
     # Batch randomization of existing lights
@@ -558,6 +691,11 @@ class LightingRandomizer:
         color_temp_range: Union[Tuple[float, float], str] = (2700.0, 6500.0),
         position_range: Optional[Dict[str, Tuple[float, float]]] = None,
         randomize_position_flag: bool = False,
+        rotation_range: Optional[Dict[str, Tuple[float, float]]] = None,
+        randomize_rotation_flag: bool = False,
+        shared_exposure: bool = False,
+        exposure_jitter_range: Tuple[float, float] = (0.0, 0.0),
+        shared_color_temperature: bool = False,
     ) -> Dict[str, Dict]:
         """Randomize all properties of every light currently in the scene.
 
@@ -577,22 +715,30 @@ class LightingRandomizer:
             logger.warning("No lights found in scene to randomize")
             return {}
 
-        results: Dict[str, Dict] = {}
-        for path in light_paths:
-            result: Dict = {}
-            # intensity_range=None means "leave intensity alone". Needed by any
-            # scene whose lights are photometrically calibrated against a real
-            # rig: writing one absolute range over lights that legitimately span
-            # 60 to 785000 would flatten them to the same value and destroy the
-            # calibration. Exposure below is a power-of-2 MULTIPLIER, so it varies
-            # the level while preserving every light's relative contribution.
+        if isinstance(color_temp_range, str):
+            color_temp_range = COLOR_TEMP_PRESETS.get(color_temp_range, (2700.0, 6500.0))
+        common_exposure = random.uniform(*exposure_range) if shared_exposure else None
+        common_temperature = random.uniform(*color_temp_range) if shared_color_temperature else None
+        lights: list[dict[str, Any]] = []
+        for path in sorted(light_paths):
+            result: dict[str, Any] = {"path": path}
+            # None preserves authored intensities. A shared exposure then scales
+            # a calibrated rig without changing relative light contributions.
             if intensity_range is not None:
-                result["intensity"] = self.randomize_intensity(path, intensity_range)
-            result["exposure"] = self.randomize_exposure(path, exposure_range)
-            result["color_temperature"] = self.randomize_color_temperature(path, color_temp_range)
+                result["intensity"] = random.uniform(*intensity_range)
+            exposure = common_exposure if common_exposure is not None else random.uniform(*exposure_range)
+            result["exposure"] = exposure + random.uniform(*exposure_jitter_range)
+            result["color_temperature"] = (
+                common_temperature if common_temperature is not None else random.uniform(*color_temp_range)
+            )
             if randomize_position_flag and position_range:
-                result["position"] = self.randomize_position(path, position_range).tolist()
-            results[path] = result
+                result["position"] = [random.uniform(*position_range.get(axis, (0.0, 0.0))) for axis in ("x", "y", "z")]
+            if randomize_rotation_flag:
+                ranges = rotation_range or {"x": (-30.0, 30.0), "y": (-30.0, 30.0), "z": (0.0, 360.0)}
+                result["rotation"] = [random.uniform(*ranges.get(axis, (0.0, 0.0))) for axis in ("x", "y", "z")]
+            lights.append(result)
+
+        results = self.apply_light_layout({"lights": lights})
 
         logger.info(f"Randomized {len(results)} scene lights")
         return results
@@ -660,13 +806,19 @@ class LightingRandomizer:
             attr = prim.CreateAttribute(name, Sdf.ValueTypeNames.Bool)
         attr.Set(bool(value))
 
-    def _set_color_attr(
-        self, prim: Usd.Prim, name: str, rgb: Tuple[float, float, float]
-    ) -> None:
+    def _set_color_attr(self, prim: Usd.Prim, name: str, rgb: Tuple[float, float, float]) -> None:
         attr = prim.GetAttribute(name)
         if not attr or not attr.IsValid():
             attr = prim.CreateAttribute(name, Sdf.ValueTypeNames.Color3f)
         attr.Set(Gf.Vec3f(*rgb))
+
+    def _apply_color_temperature(self, prim: Usd.Prim, kelvin: float) -> None:
+        """Set one sampled temperature without applying its tint twice."""
+        self._set_bool_attr(prim, "inputs:enableColorTemperature", True)
+        self._set_float_attr(prim, "inputs:colorTemperature", kelvin)
+        # RTX already evaluates colorTemperature. A Planckian inputs:color
+        # would apply the same tint twice and darken both endpoints.
+        self._set_color_attr(prim, "inputs:color", (1.0, 1.0, 1.0))
 
     def _set_translate(self, prim: Usd.Prim, position: np.ndarray) -> None:
         """Set or update the translate xform op on *prim*."""

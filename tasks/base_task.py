@@ -10,12 +10,14 @@ from isaacsim.core.utils.prims import set_prim_visibility
 from isaacsim.core.utils.semantics import add_update_semantics
 from isaacsim.sensors.camera import Camera
 from loguru import logger
+from omegaconf import OmegaConf
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux, UsdPhysics, UsdShade
 from scipy.spatial.transform import Rotation
 
 from utils.camera_utils import process_camera_image
-from utils.lighting_utils import LightingRandomizer
+from utils.lighting_utils import LightingRandomizer, resolve_lighting_options
 from utils.object_utils import ObjectUtils
+from utils.visual_randomization import sample_visual_layout
 
 
 class BaseTask(ABC):
@@ -57,6 +59,7 @@ class BaseTask(ABC):
         self.setup_objects()
         self.setup_materials()
         self.setup_lighting()
+        self.setup_visual_randomization()
         self.setup_environment()
         self.setup_object_placement()
         self.setup_distractors()
@@ -85,11 +88,14 @@ class BaseTask(ABC):
         self._episode_init_state = {"object_poses": {}, "object_materials": {}, "camera_poses": {}, "extra": {}}
         self._occupied_xy_regions = []
         self._reserved_xy_regions = self._build_reserved_xy_regions()
-        self._randomize_lighting()
-        self._randomize_environment()
+        if self._visual_randomization_enabled:
+            self._randomize_visual_layout()
+        else:
+            self._randomize_lighting()
+            self._randomize_environment()
         self._randomize_cameras()
         self._randomize_distractors()
-        self.apply_materials()
+        self.apply_materials(skip_paths=self._visual_surface_paths)
 
     def reset_with_init_state(self, init_state: dict) -> None:
         """Restore scene from a previously recorded initial state.
@@ -121,6 +127,7 @@ class BaseTask(ABC):
         for obj_path, material_path in self._episode_init_state["object_materials"].items():
             self._bind_material(obj_path, material_path)
             logger.info(f"Bound material {material_path} to object {obj_path}")
+        self._restore_visual_layout(self._episode_init_state)
         task_cfg = getattr(self.cfg, "task", None)
         restore_orient = bool(getattr(task_cfg, "replay_restore_orientation", False))
         self._apply_init_state_poses(self._episode_init_state, restore_orientation=restore_orient)
@@ -449,6 +456,11 @@ class BaseTask(ABC):
         self._environment_intensity = 1000.0
         self._environment_exposure = 0.0
 
+        # The layout system owns its own replayable DomeLight. Avoid creating a
+        # second environment light when both old and new config blocks exist.
+        if self._visual_randomization_enabled:
+            return
+
         env_cfg = getattr(self.cfg, "environment", None)
         if env_cfg is None:
             return
@@ -572,55 +584,120 @@ class BaseTask(ABC):
         if not self._lighting_enabled or self._lighting_randomizer is None:
             return
 
-        cfg = self._lighting_cfg
-        scenario = getattr(cfg, "scenario", None)
-        num_lights = int(getattr(cfg, "num_lights", 3))
-
-        # Build position range dict if configured
-        position_range = None
-        if getattr(cfg, "randomize_position", False):
-            pos_cfg = getattr(cfg, "position_range", None)
-            if pos_cfg is not None:
-                position_range = {
-                    "x": tuple(getattr(pos_cfg, "x", [-1.0, 1.0])),
-                    "y": tuple(getattr(pos_cfg, "y", [-1.0, 1.0])),
-                    "z": tuple(getattr(pos_cfg, "z", [1.5, 3.0])),
-                }
-
-        # Check whether the scene already has lights
+        options = resolve_lighting_options(self._lighting_cfg)
         existing_lights = self._lighting_randomizer.find_scene_lights()
-
         if existing_lights:
-            # Randomize existing scene lights
-            if scenario:
-                self._lighting_randomizer.randomize_scene_for_episode(
-                    scenario=scenario,
-                    position_range=position_range,
-                )
-            else:
-                # randomize_intensity: false keeps each light's authored intensity
-                # and varies only exposure (a power-of-2 multiplier), so a scene
-                # calibrated against a real rig keeps its relative light balance.
-                if bool(getattr(cfg, "randomize_intensity", True)):
-                    intensity_range = tuple(getattr(cfg, "intensity_range", [500.0, 5000.0]))
-                else:
-                    intensity_range = None
-                exposure_range = tuple(getattr(cfg, "exposure_range", [-2.0, 4.0]))
-                color_temp_range = tuple(getattr(cfg, "color_temp_range", [2700.0, 6500.0]))
-                self._lighting_randomizer.randomize_all(
-                    intensity_range=intensity_range,
-                    exposure_range=exposure_range,
-                    color_temp_range=color_temp_range,
-                    position_range=position_range,
-                    randomize_position_flag=position_range is not None,
-                )
-        else:
-            # No lights in scene — create a randomized light setup
-            self._lighting_randomizer.create_random_light_setup(
-                num_lights=num_lights,
-                scenario=scenario,
-                position_range=position_range,
+            self._lighting_randomizer.randomize_all(
+                intensity_range=options["intensity_range"],
+                exposure_range=options["exposure_range"],
+                color_temp_range=options["color_temp_range"],
+                position_range=options["position_range"],
+                randomize_position_flag=options["randomize_position"],
+                rotation_range=options["rotation_range"],
+                randomize_rotation_flag=options["randomize_rotation"],
+                shared_exposure=options["shared_exposure"],
+                exposure_jitter_range=options["exposure_jitter_range"],
+                shared_color_temperature=options["shared_color_temperature"],
             )
+        else:
+            self._lighting_randomizer.create_random_light_setup(
+                num_lights=options["num_lights"],
+                parent_path=options["parent_path"],
+                scenario=options["scenario"],
+                position_range=options["position_range"],
+                intensity_range=options["created_intensity_range"],
+                exposure_range=options["exposure_range"],
+                color_temp_range=options["color_temp_range"],
+                light_types=options["light_types"],
+            )
+
+    def setup_visual_randomization(self) -> None:
+        """Parse the opt-in, layout-based visual randomization configuration."""
+        visual_cfg = getattr(self.cfg, "visual_randomization", None)
+        self._visual_randomization_enabled = bool(getattr(visual_cfg, "enabled", False)) if visual_cfg else False
+        self._visual_episode_index = 0
+        self._visual_surface_paths: set[str] = set()
+        self._visual_cfg: dict[str, Any] = {}
+        self._visual_lighting_options: dict[str, Any] = {"enabled": False}
+        if not self._visual_randomization_enabled:
+            return
+
+        plain_cfg = OmegaConf.to_container(visual_cfg, resolve=True)
+        if not isinstance(plain_cfg, dict):
+            raise TypeError("visual_randomization must be a mapping")
+        self._visual_cfg = plain_cfg
+        if "split" not in self._visual_cfg:
+            self._visual_cfg["split"] = "test" if getattr(self.cfg, "mode", None) == "infer" else "train"
+        self._visual_episode_index = int(self._visual_cfg.get("episode_index_start", 0))
+
+        for surface in self._visual_cfg.get("surfaces") or []:
+            paths = surface.get("paths")
+            if paths is None and surface.get("path") is not None:
+                paths = [surface["path"]]
+            self._visual_surface_paths.update(str(path) for path in (paths or []))
+
+        nested_lighting = self._visual_cfg.get("lighting")
+        lighting_source = nested_lighting if nested_lighting is not None else self._lighting_cfg
+        self._visual_lighting_options = resolve_lighting_options(lighting_source, split=self._visual_cfg["split"])
+        if self._lighting_randomizer is None:
+            self._lighting_randomizer = LightingRandomizer(self.stage)
+        seed = self._visual_cfg.get("seed", getattr(self.cfg, "seed", 0))
+        logger.info(f"Visual layout randomization enabled (split={self._visual_cfg['split']}, seed={seed})")
+
+    def _randomize_visual_layout(self) -> None:
+        """Sample, apply, and record one complete per-episode visual layout."""
+        if self._lighting_randomizer is None:
+            return
+        background_cfg = self._visual_cfg.get("background") or {}
+        background_path = str(background_cfg.get("dome_light_path", "/World/VisualRandomization/Background"))
+        generated_parent = str(self._visual_lighting_options.get("parent_path", "/World/VisualRandomization")).rstrip(
+            "/"
+        )
+        light_paths = [
+            path
+            for path in self._lighting_randomizer.find_scene_lights()
+            if path != background_path and not path.startswith(f"{generated_parent}/Light_")
+        ]
+        layout = sample_visual_layout(
+            self._visual_cfg,
+            episode_index=self._visual_episode_index,
+            light_paths=light_paths,
+            lighting_options=self._visual_lighting_options,
+            default_seed=int(getattr(self.cfg, "seed", 0)),
+        )
+        self._apply_visual_layout(layout)
+        self._episode_init_state["extra"]["visual_layout"] = layout
+        self._visual_episode_index += 1
+        logger.info(f"Applied visual layout {layout['layout_id']}")
+
+    def _apply_visual_layout(self, layout: dict[str, Any]) -> None:
+        if self._lighting_randomizer is None:
+            return
+        background = layout.get("background")
+        if background:
+            self._lighting_randomizer.apply_background_layout(background)
+        lighting = layout.get("lighting")
+        if lighting:
+            self._lighting_randomizer.apply_light_layout(lighting)
+        for surface in layout.get("surfaces", []):
+            material_path = str(surface["material"])
+            if not self.stage.GetPrimAtPath(material_path).IsValid():
+                logger.warning(f"Visual layout material not found: {material_path}")
+                continue
+            for obj_path in surface.get("paths", []):
+                obj_path = str(obj_path)
+                if not self.stage.GetPrimAtPath(obj_path).IsValid():
+                    logger.warning(f"Visual layout surface not found: {obj_path}")
+                    continue
+                self._bind_material(obj_path, material_path)
+                self._episode_init_state["object_materials"][obj_path] = material_path
+
+    def _restore_visual_layout(self, init_state: dict[str, Any]) -> None:
+        layout = init_state.get("extra", {}).get("visual_layout")
+        if not layout:
+            return
+        self._apply_visual_layout(layout)
+        logger.info(f"Restored visual layout {layout.get('layout_id', '<legacy>')}")
 
     # -------------------------------------------------------------------------
     # Camera randomization
@@ -1081,8 +1158,9 @@ class BaseTask(ABC):
             if prim.IsValid():
                 set_prim_visibility(prim, obj_path in visible_paths)
 
-    def apply_materials(self) -> None:
-        """Apply configured materials and record them in ``_episode_init_state``."""
+    def apply_materials(self, skip_paths: set[str] | None = None) -> None:
+        """Apply legacy material configs, excluding visual-layout-owned paths."""
+        skip_paths = skip_paths or set()
         for mat_cfg in self.material_configs:
             if not mat_cfg["materials"]:
                 continue
@@ -1092,6 +1170,8 @@ class BaseTask(ABC):
                 else mat_cfg["materials"][self.current_material_idx % len(mat_cfg["materials"])]
             )
             for obj_path in mat_cfg["paths"]:
+                if obj_path in skip_paths:
+                    continue
                 self._bind_material(obj_path, material_path)
                 self._episode_init_state["object_materials"][obj_path] = material_path
 

@@ -1,0 +1,63 @@
+# RoboDojo-style visual generalization profile for level3_pick.
+#
+# Use `visual_randomization.split=train` while collecting.  Switch to `test`
+# during OOD evaluation; background tint, tabletop material, and color
+# temperature then come from disjoint candidate sets. Add more HDR files to the
+# two lists as they become available without changing any Python code.
+defaults:
+  - level3_pick
+  - _self_
+
+name: level3_pick_visual
+seed: 7
+
+visual_randomization:
+  enabled: true
+  seed: ${seed}
+  split: train
+
+  background:
+    enabled: true
+    dome_light_path: /World/VisualRandomization/Background
+    train_hdrs:
+      - assets/sim2real/hdri/studio_small_05_4k.hdr
+    test_hdrs:
+      - assets/sim2real/hdri/studio_small_05_4k.hdr
+    train_colors:
+      - [1.0, 1.0, 1.0]
+      - [0.9, 0.96, 1.0]
+    test_colors:
+      - [1.0, 0.82, 0.72]
+      - [0.72, 0.86, 1.0]
+    intensity_range: [500.0, 1000.0]
+    exposure_range: [-0.5, 0.5]
+    rotation_range: [0.0, 360.0]
+
+  surfaces:
+    - path: /World/table/surface
+      train_materials:
+        - /World/Looks/Material1_plastic_dark_blue
+        - /World/Looks/Material2_wood
+        - /World/Looks/Material3_plastic_dark_green
+        - /World/Looks/Material4_plastic_light_white
+        - /World/Looks/Material5_black
+      test_materials:
+        - /World/Looks/Material6_plastic_light_blue
+        - /World/Looks/Material7_stainless
+
+  lighting:
+    enabled: true
+    scenario: standard_lab
+    randomize_intensity: false
+    shared_exposure: true
+    exposure_range: [-0.7, 0.7]
+    exposure_jitter_range: [0.0, 0.0]
+    shared_color_temperature: true
+    train_color_temp_range: [4500.0, 7500.0]
+    test_color_temp_range: [3000.0, 4200.0]
+    randomize_position: false
+    randomize_rotation: true
+    rotation_range:
+      x: [-20.0, 20.0]
+      y: [-20.0, 20.0]
+      z: [0.0, 360.0]
