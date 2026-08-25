@@ -431,6 +431,8 @@ robots:
       type: x5
     # ARX's GLB files are Y-up; URDF and Isaac Sim are Z-up.
     visual_rpy: [-1.5707963267948966, 0, 0]
+    # Upstream omits collision geometry for both fingers and both pads.
+    finger_collider_preset: arx
     reach_m: 0.62
     visual_meshes: glb
 
@@ -444,6 +446,8 @@ robots:
       type: r5
     # ARX's GLB files are Y-up; URDF and Isaac Sim are Z-up.
     visual_rpy: [-1.5707963267948966, 0, 0]
+    # Upstream omits collision geometry for both fingers and both pads.
+    finger_collider_preset: arx
     reach_m: 0.62
     visual_meshes: glb
 

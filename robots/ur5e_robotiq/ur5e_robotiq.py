@@ -35,8 +35,7 @@ class UR5eRobotiq(BaseRobot):
     GRIPPER_BASE_LINK_NAME = "gripper_base"
 
     # The articulation contains the gripper driver plus five mimic followers. Only
-    # the driver is an actuator; the followers have zero drive stiffness and must be
-    # carried by the imported mimic linkage.
+    # the driver is an actuator; PhysX carries the followers through mimic constraints.
     DEFAULT_JOINT_POSITIONS = np.array([0.0, -1.2, 1.4, -1.75, -1.57, 0.0] + [0.0] * 6)
 
     _ARM_JOINT_NAMES = [
@@ -48,6 +47,15 @@ class UR5eRobotiq(BaseRobot):
         "wrist_3_joint",
     ]
     _GRIPPER_JOINT_NAMES = ["gripper_joint"]
+    _MIMIC_JOINT_NAMES = (
+        "left_inner_knuckle_joint",
+        "right_inner_knuckle_joint",
+        "right_outer_knuckle_joint",
+        "left_inner_finger_joint",
+        "right_inner_finger_joint",
+    )
+    MIMIC_NATURAL_FREQUENCY = 50.0
+    MIMIC_DAMPING_RATIO = 1.0
 
     # 2F-85 datasheet: 85 mm stroke, closing over 0..0.81 rad of the driver.
     GRIPPER_MAX_WIDTH_M = 0.085
@@ -76,6 +84,8 @@ class UR5eRobotiq(BaseRobot):
                 raise FileNotFoundError(f"UR5e+Robotiq USD not found: {usd_path}")
             add_reference_to_stage(usd_path=usd_path, prim_path=prim_path)
 
+        self._tune_mimic_constraints(prim_path)
+
         self._end_effector_prim_path = prim_path + "/" + self.GRIPPER_BASE_LINK_NAME
 
         super().__init__(prim_path=prim_path, name=name, position=position, orientation=orientation)
@@ -95,6 +105,20 @@ class UR5eRobotiq(BaseRobot):
             action_deltas=None,
             use_mimic_joints=True,
         )
+
+    @classmethod
+    def _tune_mimic_constraints(cls, prim_path: str) -> None:
+        """Make the imported four-bar constraints track without long oscillation."""
+        for joint_name in cls._MIMIC_JOINT_NAMES:
+            joint = get_prim_at_path(f"{prim_path}/joints/{joint_name}")
+            if not joint.IsValid():
+                raise RuntimeError(f"Missing Robotiq mimic joint: {joint.GetPath()}")
+            damping = joint.GetAttribute("physxMimicJoint:rotX:dampingRatio")
+            frequency = joint.GetAttribute("physxMimicJoint:rotX:naturalFrequency")
+            if not damping.IsValid() or not frequency.IsValid():
+                raise RuntimeError(f"Robotiq joint {joint.GetPath()} has no rotX mimic constraint")
+            damping.Set(cls.MIMIC_DAMPING_RATIO)
+            frequency.Set(cls.MIMIC_NATURAL_FREQUENCY)
 
     # ── BaseRobot contract ───────────────────────────────────────────────────
 
