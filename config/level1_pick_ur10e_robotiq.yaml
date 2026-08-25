@@ -17,6 +17,10 @@ task:
   max_steps: 2000
   obj_paths:
     - path: "/World/beaker2"
+      # A full-size beaker rim is wider than the 2F-85's 85 mm opening. Keep the
+      # same physically graspable scale used by the validated UR5e task.
+      scale: 0.65
+      friction: 1.5
       position_range:
         x: [0.15, 0.28]
         y: [-0.10, 0.10]
@@ -40,9 +44,18 @@ cameras:
     image_type: "rgb"
 
 grasp:
-  # The UR family uses the canonical +Z approach frame. A 30-degree downward
-  # approach is shared by UR5e/UR3e and avoids the horizontal pre-grasp trap.
-  ee_euler_deg: [0, 120, 25]
+  # Keep both fingers level while following a shallow 10-degree diagonal ingress.
+  ee_euler_deg: [180, 10, 0]
+  orientation_noise_deg: 0
+  approach_along_tool: true
+  pre_offset_x: 0.009
+  adaptive_phase_completion: true
+  arrival_stable_steps: 5
+  require_pregrasp_xyz: true
+  pregrasp_position_threshold: 0.003
+  grasp_position_threshold: 0.003
+  lock_final_approach_target: true
+  gripper_distance: 0.040
 
 robot:
   type: "ur10e_robotiq"

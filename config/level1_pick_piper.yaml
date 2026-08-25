@@ -26,11 +26,10 @@ task:
       # and shove the beaker instead of closing around it. Franka has 11 mm to spare,
       # which is why the same task and controller succeed there unscaled.
       scale: 0.70
-      # Centred on Piper's actual workspace. piper.usd WELDS the arm base at
-      # [-0.20, -0.15, 0.80] -- the robot.position in this file has no effect on it --
-      # so the object has to come to the arm. An IK sweep over the three pick waypoints
-      # (pre-grasp, grasp, lift) puts the feasible region at x in [0.00, 0.28],
-      # y in [-0.34, 0.02]; this box sits comfortably inside it.
+      # Centred on Piper's workspace at the configured [-0.20, -0.15, 0.80] base pose.
+      # An IK sweep over the three pick waypoints (pre-grasp, grasp, lift) puts the
+      # feasible region at x in [0.00, 0.28], y in [-0.34, 0.02]; this box sits
+      # comfortably inside it.
       # Centred on the highest joint-limit-margin cells from an IK sweep that scores
       # pre-grasp, grasp AND a +12 cm lift together. Reaching the beaker is not the
       # binding constraint -- the lift is: further out the arm grasps but can only raise
@@ -60,9 +59,10 @@ cameras:
 
 robot:
   type: "piper"
-  # Ignored: piper.usd welds the articulation base at [-0.20, -0.15, 0.80] via a fixed
-  # root_joint, so this value does not move the arm. Kept for schema consistency.
-  position: [0.0, 0.0, 0.0]
+  # BaseRobot now re-applies configured poses after reset, including fixed-base USDs.
+  # Keep Piper at the authored lab pose; [0,0,0] puts the z=0.75 beaker beyond this
+  # arm's ~0.57 m reach and makes every phase converge to an unreachable local minimum.
+  position: [-0.20, -0.15, 0.80]
 
 # Piper cannot use the Franka's side-approach grasp. Its joints are far more limited
 # (joint2 [0, pi], joint3 [-2.7, 0], joint5 +/-1.22), and an IK sweep at the beaker's
@@ -74,10 +74,18 @@ grasp:
   # 150 deg, not steeper: at 170 the approach is nearly vertical and the arm can no
   # longer reach the beaker at all (measured 0/6). This is the best of the sweep.
   ee_euler_deg: [0, 150, 0]
+  orientation_noise_deg: 0
   # Longer approach and lift windows. Piper is slower through its workspace than the
   # Franka these defaults were tuned for; with the stock lift budget it is still only
   # ~3 cm up when the phase ends.
   events_dt: [0.003, 0.0015, 0.006, 0.02, 0.05, 0.0012, 0.008]
+  adaptive_phase_completion: true
+  arrival_stable_steps: 5
+  require_pregrasp_xyz: true
+  pregrasp_position_threshold: 0.015
+  # The diagonal ingress stops when the pads contact the cup. Treat that physical
+  # contact pose as arrival instead of asking the abstract TCP to penetrate it.
+  grasp_position_threshold: 0.04
   lift_along_tool: true
   # NOTE: approach_from_base was tried and made things worse (the gripper still swept
   # the beaker away, from a different angle); left off deliberately.

@@ -8,7 +8,7 @@ python_bin="${PYTHON_BIN:-python}"
 timeout_seconds="${TIMEOUT_SECONDS:-900}"
 
 arms=(
-    "franka:level1_pick"
+    "franka:level1_pick_franka_ref"
     "fr3:level1_pick_fr3"
     "piper:level1_pick_piper"
     "arx_x5:level1_pick_arx_x5"

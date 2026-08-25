@@ -80,10 +80,9 @@ class PickTaskController(BaseController):
 
     def _init_collect_mode(self, cfg, robot):
         super()._init_collect_mode(cfg, robot)
-        # Phase durations. Each event runs for ~1/dt steps regardless of whether the arm
-        # got there, so a slower or shorter-reach arm needs a longer window: Piper grasps
-        # the beaker reliably but lifts it only ~3 cm inside the default 250-step lift
-        # phase, well short of the +10 cm the task scores, and is then cut off.
+        # Phase durations in legacy mode, or per-phase timeouts when adaptive phase
+        # completion is enabled. A slower arm needs a longer window either way: Piper
+        # only lifts ~3 cm inside the default 250-step window, short of the +10 cm score.
         default_events_dt = [0.004, 0.002, 0.01, 0.02, 0.05, 0.004, 0.008]
         events_dt = list(getattr(self._grasp_cfg, "events_dt", None) or default_events_dt)
         self.pick_controller = PickController(
@@ -91,6 +90,25 @@ class PickTaskController(BaseController):
             cspace_controller=self.rmp_controller,
             events_dt=events_dt,
         )
+        self.pick_controller.adaptive_phase_completion = bool(
+            getattr(self._grasp_cfg, "adaptive_phase_completion", False)
+        )
+        raw_arrival_stable_steps = getattr(self._grasp_cfg, "arrival_stable_steps", 1)
+        self.pick_controller.arrival_stable_steps = int(raw_arrival_stable_steps)
+        if self.pick_controller.arrival_stable_steps <= 0:
+            raise ValueError("grasp.arrival_stable_steps must be a positive integer")
+        if self.pick_controller.adaptive_phase_completion:
+            logger.info(
+                "[grasp] adaptive phase completion enabled: motion phases require "
+                f"{self.pick_controller.arrival_stable_steps} stable arrival steps; "
+                "events_dt is used as the timeout"
+            )
+        raw_orientation_noise = getattr(self._grasp_cfg, "orientation_noise_deg", None)
+        if raw_orientation_noise is not None:
+            self.pick_controller.orientation_noise_deg = float(raw_orientation_noise)
+            if self.pick_controller.orientation_noise_deg < 0.0:
+                raise ValueError("grasp.orientation_noise_deg must be non-negative")
+            logger.info(f"[grasp] orientation_noise_deg = {self.pick_controller.orientation_noise_deg:.1f}")
         self.pick_controller.lift_along_tool = bool(getattr(self._grasp_cfg, "lift_along_tool", False))
         if self.pick_controller.lift_along_tool:
             logger.info("[grasp] lift retracts along the tool axis instead of straight up")
@@ -101,42 +119,33 @@ class PickTaskController(BaseController):
                 raise ValueError("grasp.lift_offset_xyz must contain exactly 3 values")
             self.pick_controller.lift_offset_xyz = lift_offset
             logger.info(f"[grasp] lift_offset_xyz = {lift_offset.tolist()} m")
-        self.pick_controller.approach_along_tool = bool(
-            getattr(self._grasp_cfg, "approach_along_tool", False)
-        )
+        self.pick_controller.approach_along_tool = bool(getattr(self._grasp_cfg, "approach_along_tool", False))
         if self.pick_controller.approach_along_tool:
             logger.info("[grasp] pre-grasp backs off along the tool approach axis")
-        self.pick_controller.require_pregrasp_xyz = bool(
-            getattr(self._grasp_cfg, "require_pregrasp_xyz", False)
-        )
+        self.pick_controller.require_pregrasp_xyz = bool(getattr(self._grasp_cfg, "require_pregrasp_xyz", False))
         if self.pick_controller.require_pregrasp_xyz:
             logger.info("[grasp] final approach waits for the full XYZ pre-grasp pose")
+        self.pick_controller.lock_final_approach_target = bool(
+            getattr(self._grasp_cfg, "lock_final_approach_target", False)
+        )
+        if self.pick_controller.lock_final_approach_target:
+            logger.info("[grasp] object target locks when the final descent starts")
         raw_pregrasp_threshold = (
-            getattr(self._grasp_cfg, "pregrasp_position_threshold", None)
-            if self._grasp_cfg
-            else None
+            getattr(self._grasp_cfg, "pregrasp_position_threshold", None) if self._grasp_cfg else None
         )
         if raw_pregrasp_threshold is not None:
             self.pick_controller.pregrasp_position_threshold = float(raw_pregrasp_threshold)
             if self.pick_controller.pregrasp_position_threshold <= 0.0:
                 raise ValueError("grasp.pregrasp_position_threshold must be positive")
             logger.info(
-                "[grasp] pregrasp_position_threshold = "
-                f"{self.pick_controller.pregrasp_position_threshold:.3f} m"
+                f"[grasp] pregrasp_position_threshold = {self.pick_controller.pregrasp_position_threshold:.3f} m"
             )
-        raw_grasp_threshold = (
-            getattr(self._grasp_cfg, "grasp_position_threshold", None)
-            if self._grasp_cfg
-            else None
-        )
+        raw_grasp_threshold = getattr(self._grasp_cfg, "grasp_position_threshold", None) if self._grasp_cfg else None
         if raw_grasp_threshold is not None:
             self.pick_controller.grasp_position_threshold = float(raw_grasp_threshold)
             if self.pick_controller.grasp_position_threshold <= 0.0:
                 raise ValueError("grasp.grasp_position_threshold must be positive")
-            logger.info(
-                "[grasp] grasp_position_threshold = "
-                f"{self.pick_controller.grasp_position_threshold:.3f} m"
-            )
+            logger.info(f"[grasp] grasp_position_threshold = {self.pick_controller.grasp_position_threshold:.3f} m")
         if events_dt != default_events_dt:
             logger.info(f"[grasp] events_dt override = {events_dt}")
         if self._approach_from_base:
@@ -234,7 +243,10 @@ class PickTaskController(BaseController):
             self._debug_step = 0  # new episode
         self._debug_last_event = event
         self._debug_step = getattr(self, "_debug_step", 0) + 1
-        if self._debug_step % 60:
+        interval = int(os.environ.get("LABUTOPIA_PICK_DEBUG_INTERVAL", "60"))
+        if interval <= 0:
+            raise ValueError("LABUTOPIA_PICK_DEBUG_INTERVAL must be positive")
+        if self._debug_step % interval:
             return
         grip = np.asarray(state.get("gripper_position", [np.nan] * 3), dtype=float)
         obj = np.asarray(state["object_position"], dtype=float)
@@ -245,6 +257,30 @@ class PickTaskController(BaseController):
             f"size={np.round(size, 3)} dist={np.linalg.norm(grip - obj):.3f} "
             f"obj_z_rise={obj[2] - self.initial_position[2]:+.3f}"
         )
+        if "robotiq" not in self.robot.name.lower():
+            return
+
+        joint_positions = np.asarray(state["joint_positions"], dtype=float)
+        dof_names = list(self.robot.dof_names or [])
+        gripper_indices = [
+            index
+            for index, name in enumerate(dof_names)
+            if any(token in name for token in ("gripper", "finger", "knuckle"))
+        ]
+        gripper_joints = {dof_names[index]: round(float(joint_positions[index]), 4) for index in gripper_indices}
+        root = self.robot.prim_path_str.rstrip("/")
+        link_positions = {}
+        for link_name in (
+            "left_inner_finger",
+            "left_inner_finger_pad",
+            "right_inner_finger",
+            "right_inner_finger_pad",
+        ):
+            link_positions[link_name] = np.round(
+                self.object_utils.get_object_xform_position(object_path=f"{root}/{link_name}"),
+                4,
+            ).tolist()
+        logger.info(f"[pick-debug-gripper] q={gripper_joints} links={link_positions}")
 
     def _step_collect(self, state):
         self._debug_trace(state)
@@ -300,7 +336,10 @@ class PickTaskController(BaseController):
             self.reset_needed = True
             return None, True, True
 
-        self._last_failure_reason = "Pick task failed: object height did not reach required (initial_z + 0.1) for REQUIRED_SUCCESS_STEPS"
+        phase_failure_reason = self.pick_controller.get_failure_reason()
+        self._last_failure_reason = phase_failure_reason or (
+            "Pick task failed: object height did not reach required (initial_z + 0.1) for REQUIRED_SUCCESS_STEPS"
+        )
         self.data_collector.clear_cache()
         self._last_success = False
         self.reset_needed = True

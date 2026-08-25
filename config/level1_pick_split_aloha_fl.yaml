@@ -17,32 +17,27 @@ task:
       scale: 0.75
       friction: 1.5
       position_range:
-        x: [0.20, 0.24]
+        # Keep the cup just inside the table's x=-0.924 edge while the complete
+        # mobile platform remains outside. Robot and cup are shifted together,
+        # preserving the already validated front-left-arm reach geometry.
+        x: [-0.80, -0.76]
         y: [-0.05, -0.03]
         z: [0.84, 0.84]
 
 cameras:
   - prim_path: "/World/Camera1"
     name: "camera_1"
-    translation: [1.6, 0, 1.85]
+    translation: [0.6, 0, 1.85]
     resolution: [256, 256]
     focal_length: 4
     orientation: [0.61237, 0.35355, 0.35355, 0.61237]
     image_type: "rgb"
 
-  - prim_path: "/World/Camera2"
-    name: "camera_2"
-    translation: [0.17, 0, 2.3]
-    resolution: [256, 256]
-    focal_length: 4
-    orientation: [0.70711, 0, 0, -0.70711]
-    image_type: "rgb"
-
-  # Wide platform view: the two task cameras intentionally frame the active arm
-  # and beaker tightly, so they cannot show whether all four parked arms are intact.
+  # The second half of the video is always the complete mobile manipulator. A tight
+  # top view made the platform look like a missing single arm after video tiling.
   - prim_path: "/World/SplitAlohaOverviewCamera"
-    name: "camera_3"
-    translation: [1.7, -1.8, 2.3]
+    name: "camera_2"
+    translation: [0.7, -1.8, 2.3]
     resolution: [256, 256]
     focal_length: 4
     orientation: [0.79070, 0.45495, 0.20430, 0.35508]
@@ -64,10 +59,10 @@ grasp:
 
 robot:
   type: "split_aloha_fl"
-  # The complete mobile platform remains outside the bench; its front-left arm base
-  # lands at approximately [-0.217, 0.0, 0.928] in world coordinates. The 0.15 m
-  # root height puts the mobile-base wheel bottoms on the laboratory floor.
-  position: [-0.45, -0.30, 0.15]
+  # Table bounds begin at x=-0.924. At this pose the complete platform occupies
+  # x=[-2.031,-0.977], leaving about 5 cm of clearance; only the front-left arm
+  # reaches over the edge. The 0.15 m root height keeps all wheels on the floor.
+  position: [-1.45, -0.30, 0.15]
 
 collector:
   type: "default"

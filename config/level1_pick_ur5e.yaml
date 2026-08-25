@@ -22,6 +22,11 @@ task:
   max_steps: 2000
   obj_paths:
     - path: "/World/beaker2"
+      # The 111 mm rim cannot pass through a 2F-85's 85 mm maximum opening.
+      # At 65% scale the rim is about 72.2 mm and the lower body is about 44.7 mm,
+      # allowing a shallow angled ingress and physical two-pad grasp.
+      scale: 0.65
+      friction: 1.5
       position_range:
         x: [0.15, 0.28]
         y: [-0.10, 0.10]
@@ -45,15 +50,25 @@ cameras:
     image_type: "rgb"
 
 grasp:
-  # A 30-degree downward approach, NOT the Franka's horizontal [0, 90, 25].
-  #
-  # An IK sweep endorses every orientation here (the UR5e's +/-2pi joints leave plenty
-  # of freedom), which is exactly why it was the wrong tool: the pre-grasp waypoint sits
-  # BEHIND the object, backed off toward the base, and reaching it horizontally puts the
-  # UR in a configuration RMPFlow cannot leave. In simulation [0, 90, 25] stalls 12 cm
-  # short of the beaker and never descends -- 0/43 episodes -- while [0, 120, 25] tracks
-  # the same pre-grasp, grasp and lift waypoints to under 2 mm.
-  ee_euler_deg: [0, 120, 25]
+  # Tilt 10 degrees in the tool XZ plane. The finger-separation axis stays level,
+  # so both pads enter around the rim together instead of one finger striking first.
+  # A 9 mm tool-aligned setback makes the last 50 mm descent follow the same angle.
+  ee_euler_deg: [180, 10, 0]
+  orientation_noise_deg: 0
+  approach_along_tool: true
+  pre_offset_x: 0.009
+  adaptive_phase_completion: true
+  arrival_stable_steps: 5
+  require_pregrasp_xyz: true
+  # Freeze the last contact-free centre before descending so a small initial
+  # bump cannot turn into a controller that pursues and keeps pushing the cup.
+  pregrasp_position_threshold: 0.003
+  grasp_position_threshold: 0.003
+  lock_final_approach_target: true
+  # Under the current 2F-85 four-bar calibration this command yields an actual
+  # collision-pad gap of about 43.5 mm: roughly 0.6 mm hold per side on the
+  # scaled 44.7 mm lower body, without commanding a full-close penetration.
+  gripper_distance: 0.040
 
 robot:
   type: "ur5e_robotiq"

@@ -17,6 +17,10 @@ task:
   max_steps: 2000
   obj_paths:
     - path: "/World/beaker2"
+      # A full-size beaker rim is wider than the 2F-85's 85 mm opening. Keep the
+      # same physically graspable scale used by the validated UR5e task.
+      scale: 0.65
+      friction: 1.5
       position_range:
         x: [0.15, 0.28]
         y: [-0.10, 0.10]
@@ -40,15 +44,26 @@ cameras:
     image_type: "rgb"
 
 grasp:
-  # UR3e uses the same canonical +Z approach frame as UR5e. The steeper approach
-  # leaves the short arm room to descend behind the beaker and still lift vertically.
-  ee_euler_deg: [0, 120, 25]
+  # Keep both fingers level while following a shallow 10-degree diagonal ingress.
+  ee_euler_deg: [180, 10, 0]
+  orientation_noise_deg: 0
+  approach_along_tool: true
+  pre_offset_x: 0.009
+  adaptive_phase_completion: true
+  arrival_stable_steps: 5
+  require_pregrasp_xyz: true
+  pregrasp_position_threshold: 0.003
+  # The short arm settles within about 4 mm at the lowest waypoint. Five
+  # millimetres still leaves pad clearance at the open 83 mm jaw gap.
+  grasp_position_threshold: 0.005
+  lock_final_approach_target: true
+  gripper_distance: 0.040
 
 robot:
   type: "ur3e_robotiq"
-  # The UR3e reaches about 0.50 m (versus 0.85 m for UR5e). Move its base
-  # forward so the full object randomization range stays inside the workspace.
-  position: [-0.25, 0, 0.71]
+  # The vertical pre-grasp sits roughly 0.25 m above the base. Moving the short
+  # arm forward keeps that waypoint and the +0.25 m lift inside its 0.50 m reach.
+  position: [-0.10, 0, 0.71]
 
 collector:
   type: "default"
