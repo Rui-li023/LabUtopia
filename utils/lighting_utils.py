@@ -5,6 +5,7 @@ and position to simulate real-world lighting variations (warm/cool light sources
 different light types, etc.).
 """
 
+import os
 import random
 from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -103,12 +104,16 @@ def resolve_lighting_options(cfg: Any, split: str | None = None) -> dict[str, An
             return None
         return {axis: tuple(_cfg_value(axis_cfg, axis, default)) for axis, default in defaults.items()}
 
+    default_parent_path = "/World/VisualRandomization" if split else "/World"
+    default_light_types = ["RectLight", "SphereLight"] if split else list(LIGHT_TYPE_NAMES)
+    default_shared_exposure = not randomize_intensity if split else False
+
     return {
         "enabled": bool(_cfg_value(cfg, "enabled", False)),
         "scenario": str(scenario) if scenario else None,
         "num_lights": int(_cfg_value(cfg, "num_lights", 3)),
-        "parent_path": str(_cfg_value(cfg, "parent_path", "/World/VisualRandomization")),
-        "light_types": list(merged("light_types", ["RectLight", "SphereLight"])),
+        "parent_path": str(_cfg_value(cfg, "parent_path", default_parent_path)),
+        "light_types": list(merged("light_types", default_light_types)),
         "intensity_range": configured_intensity_range if randomize_intensity else None,
         "created_intensity_range": configured_intensity_range,
         "exposure_range": tuple(merged("exposure_range", (-2.0, 4.0))),
@@ -117,7 +122,7 @@ def resolve_lighting_options(cfg: Any, split: str | None = None) -> dict[str, An
         "position_range": axes("position_range", {"x": (-1.0, 1.0), "y": (-1.0, 1.0), "z": (1.5, 3.0)}),
         "randomize_rotation": bool(_cfg_value(cfg, "randomize_rotation", False)),
         "rotation_range": axes("rotation_range", {"x": (-30.0, 30.0), "y": (-30.0, 30.0), "z": (0.0, 360.0)}),
-        "shared_exposure": bool(_cfg_value(cfg, "shared_exposure", not randomize_intensity)),
+        "shared_exposure": bool(_cfg_value(cfg, "shared_exposure", default_shared_exposure)),
         "exposure_jitter_range": tuple(_cfg_value(cfg, "exposure_jitter_range", (0.0, 0.0))),
         "shared_color_temperature": bool(_cfg_value(cfg, "shared_color_temperature", False)),
         "geometry_ranges": _cfg_value(cfg, "geometry_ranges", {}) or {},
@@ -618,12 +623,15 @@ class LightingRandomizer:
             self._ensure_dome_texture_subframes()
         self._set_float_attr(prim, "inputs:intensity", float(layout["intensity"]))
         self._set_float_attr(prim, "inputs:exposure", float(layout["exposure"]))
-        self._set_bool_attr(prim, "visibleInPrimaryRay", bool(layout.get("visible_in_primary_ray", True)))
+        self._set_bool_attr(prim, "inputs:visibleInPrimaryRay", bool(layout.get("visible_in_primary_ray", True)))
         self._set_color_attr(prim, "inputs:color", tuple(layout.get("color", (1.0, 1.0, 1.0))))
         texture_attr = prim.GetAttribute("inputs:texture:file")
         if not texture_attr or not texture_attr.IsValid():
             texture_attr = prim.CreateAttribute("inputs:texture:file", Sdf.ValueTypeNames.Asset)
-        texture_attr.Set(Sdf.AssetPath(str(layout.get("texture_file", ""))))
+        texture_file = os.path.expanduser(str(layout.get("texture_file", "")))
+        if texture_file and "://" not in texture_file and not os.path.isabs(texture_file):
+            texture_file = os.path.abspath(texture_file)
+        texture_attr.Set(Sdf.AssetPath(texture_file))
         format_attr = prim.GetAttribute("inputs:texture:format")
         if not format_attr or not format_attr.IsValid():
             format_attr = prim.CreateAttribute("inputs:texture:format", Sdf.ValueTypeNames.Token)

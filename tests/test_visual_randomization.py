@@ -1,6 +1,9 @@
 import json
+import os
+from pathlib import Path
 
 import pytest
+from omegaconf import OmegaConf
 from pxr import Sdf, Usd
 
 from data_collectors.data_collector import _flatten_init_state
@@ -69,6 +72,20 @@ def test_episode_and_split_change_layout_identity():
     assert episode_zero["layout_id"] != train["layout_id"]
     assert train["background"]["texture_file"] == "train_a.hdr"
     assert train["surfaces"][0]["material"] == "/World/Looks/Train"
+
+
+def test_level3_profile_uses_disjoint_existing_backgrounds():
+    repo_root = Path(__file__).resolve().parents[1]
+    cfg = OmegaConf.load(repo_root / "config/level3_pick_visual.yaml")
+    background = cfg.visual_randomization.background
+    train_hdrs = set(background.train_hdrs)
+    test_hdrs = set(background.test_hdrs)
+
+    assert train_hdrs
+    assert test_hdrs
+    assert train_hdrs.isdisjoint(test_hdrs)
+    for relative_path in train_hdrs | test_hdrs:
+        assert (repo_root / relative_path).is_file()
 
 
 def test_layout_uses_existing_init_state_json_channel():
@@ -154,7 +171,8 @@ def test_sampled_layout_can_be_applied_and_restored_on_usd_stage():
     randomizer.apply_light_layout(lighting)
     dome = stage.GetPrimAtPath("/World/Background")
     key = stage.GetPrimAtPath("/World/Key")
-    assert dome.GetAttribute("inputs:texture:file").Get() == Sdf.AssetPath("studio.hdr")
+    assert dome.GetAttribute("inputs:texture:file").Get() == Sdf.AssetPath(os.path.abspath("studio.hdr"))
+    assert dome.GetAttribute("inputs:visibleInPrimaryRay").Get() is True
     assert dome.GetAttribute("inputs:intensity").Get() == pytest.approx(750.0)
     assert key.GetAttribute("inputs:intensity").Get() == pytest.approx(1234.0)
     assert key.GetAttribute("inputs:exposure").Get() == pytest.approx(-0.25)

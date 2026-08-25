@@ -1,9 +1,8 @@
 # RoboDojo-style visual generalization profile for level3_pick.
 #
 # Use `visual_randomization.split=train` while collecting.  Switch to `test`
-# during OOD evaluation; background tint, tabletop material, and color
-# temperature then come from disjoint candidate sets. Add more HDR files to the
-# two lists as they become available without changing any Python code.
+# during OOD evaluation; HDR background, tint, tabletop material, and color
+# temperature then come from disjoint candidate sets.
 defaults:
   - level3_pick
   - _self_
@@ -21,8 +20,15 @@ visual_randomization:
     dome_light_path: /World/VisualRandomization/Background
     train_hdrs:
       - assets/sim2real/hdri/studio_small_05_4k.hdr
+      - assets/hdr/lab_003/environment.exr
+      - assets/hdr/lab_006/environment.exr
+      - assets/hdr/lab_008/environment.exr
+      - assets/hdr/lab_009/environment.exr
+      - assets/hdr/lab_010/environment.exr
     test_hdrs:
-      - assets/sim2real/hdri/studio_small_05_4k.hdr
+      - assets/hdr/lab_017/environment.exr
+      - assets/hdr/lab_019/environment.exr
+      - assets/hdr/suburban_garden_4k.exr
     train_colors:
       - [1.0, 1.0, 1.0]
       - [0.9, 0.96, 1.0]

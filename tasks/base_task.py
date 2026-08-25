@@ -120,7 +120,8 @@ class BaseTask(ABC):
             "camera_poses": dict(init_state.get("camera_poses", {})),
             "extra": dict(init_state.get("extra", {})),
         }
-        self._restore_environment(self._episode_init_state)
+        if not self._episode_init_state["extra"].get("visual_layout"):
+            self._restore_environment(self._episode_init_state)
         self._occupied_xy_regions = []
         self._reserved_xy_regions = []
         self._hide_all_distractors()
@@ -630,7 +631,15 @@ class BaseTask(ABC):
             self._visual_cfg["split"] = "test" if getattr(self.cfg, "mode", None) == "infer" else "train"
         self._visual_episode_index = int(self._visual_cfg.get("episode_index_start", 0))
 
+        split = self._visual_cfg["split"]
         for surface in self._visual_cfg.get("surfaces") or []:
+            if not bool(surface.get("enabled", True)):
+                continue
+            materials = surface.get(f"{split}_materials")
+            if materials is None:
+                materials = surface.get("materials")
+            if not materials:
+                continue
             paths = surface.get("paths")
             if paths is None and surface.get("path") is not None:
                 paths = [surface["path"]]
@@ -696,6 +705,8 @@ class BaseTask(ABC):
         layout = init_state.get("extra", {}).get("visual_layout")
         if not layout:
             return
+        if self._lighting_randomizer is None:
+            self._lighting_randomizer = LightingRandomizer(self.stage)
         self._apply_visual_layout(layout)
         logger.info(f"Restored visual layout {layout.get('layout_id', '<legacy>')}")
 
