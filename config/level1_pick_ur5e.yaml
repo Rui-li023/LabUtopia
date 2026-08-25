@@ -1,0 +1,88 @@
+# Level-1 pick with a UR5e carrying a Robotiq 2F-85.
+#
+# The UR arms have a bare tool flange, so the gripper is composed in at the URDF level
+# (see ur_description/urdf/combined/ur5e_robotiq85.xacro) and converted as ONE
+# articulation -- referencing a separately converted gripper would give PhysX two
+# articulations it cannot drive together.
+#
+# No object scaling and no tool-frame correction: the 2F-85 opens 85 mm against the
+# beaker's 68.8 mm base, and its tool frame already uses the canonical convention
+# (+Z approach, +Y fingers) that the grasp eulers are written in.
+
+name: level1_pick_ur5e
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 10
+
+task:
+  max_steps: 2000
+  obj_paths:
+    - path: "/World/beaker2"
+      # The 111 mm rim cannot pass through a 2F-85's 85 mm maximum opening.
+      # At 65% scale the rim is about 72.2 mm and the lower body is about 44.7 mm,
+      # allowing a shallow angled ingress and physical two-pad grasp.
+      scale: 0.65
+      friction: 1.5
+      position_range:
+        x: [0.15, 0.28]
+        y: [-0.10, 0.10]
+        z: [0.84, 0.84]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+grasp:
+  # Tilt 10 degrees in the tool XZ plane. The finger-separation axis stays level,
+  # so both pads enter around the rim together instead of one finger striking first.
+  # A 9 mm tool-aligned setback makes the last 50 mm descent follow the same angle.
+  ee_euler_deg: [180, 10, 0]
+  orientation_noise_deg: 0
+  approach_along_tool: true
+  pre_offset_x: 0.009
+  adaptive_phase_completion: true
+  arrival_stable_steps: 5
+  require_pregrasp_xyz: true
+  # Freeze the last contact-free centre before descending so a small initial
+  # bump cannot turn into a controller that pursues and keeps pushing the cup.
+  pregrasp_position_threshold: 0.003
+  grasp_position_threshold: 0.003
+  lock_final_approach_target: true
+  # Under the current 2F-85 four-bar calibration this command yields an actual
+  # collision-pad gap of about 43.5 mm: roughly 0.6 mm hold per side on the
+  # scaled 44.7 mm lower body, without commanding a full-close penetration.
+  gripper_distance: 0.040
+
+robot:
+  type: "ur5e_robotiq"
+  position: [-0.40, 0, 0.71]
+
+collector:
+  type: "default"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true

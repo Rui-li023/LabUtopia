@@ -1,0 +1,85 @@
+# Level-1 pick with the ARX X5 arm.
+#
+# Same task_type/controller_type as level1_pick -- only the robot block and the
+# arm-specific grasp geometry differ.
+#
+# Placement and grasp pose come from an IK sweep over the three pick waypoints
+# (pre-grasp, grasp, lift), not from copying the Franka's numbers. ARX X5's elbow
+# joints are one-sided (joint2 [0, 3.66], joint3 [0, 3.14]) and its wrist is limited
+# to +/-1.57, so the horizontal side approach the Franka uses barely solves here.
+#
+# No object scaling: the X5 opens 88 mm against the beaker's 68.8 mm base, wider even
+# than the Franka's 80 mm.
+
+name: level1_pick_arx_x5
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 10
+
+task:
+  max_steps: 2000
+  obj_paths:
+    - path: "/World/beaker2"
+      # Pushed OUT, not in. Counter-intuitively the X5 tracks a near beaker worst: at
+      # x=0.16 RMPFlow settles 4.6-12.9 cm off the waypoints for every orientation
+      # tried, because the arm has to fold back on itself, while at x=0.22 the same
+      # sweep lands within 0.9 cm. The binding constraint here is folding, not reach.
+      position_range:
+        x: [0.20, 0.28]
+        y: [-0.06, 0.06]
+        z: [0.84, 0.84]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+grasp:
+  # A 30-degree downward approach, not the Franka's horizontal one. The tool-frame
+  # correction ([0,-90,0], see ArxX5) makes these eulers canonical, so Ry(120) tips the
+  # approach axis 30 degrees below horizontal and Rz(25) keeps the finger axis clear of
+  # the wrist.
+  #
+  # Chosen by tracking the ACTUAL pick waypoints through RMPFlow, not by an IK sweep.
+  # IK endorses the horizontal [0, 90, x] too, but the pre-grasp sits behind the object
+  # (backed off toward the base), and reaching that pose horizontally leaves the arm
+  # somewhere RMPFlow cannot descend from -- the same failure that held the UR5e at
+  # 0/43. Measured worst-waypoint error at x=0.22: 0.9 cm here against 2.2 cm at 90.
+  ee_euler_deg: [0, 120, 25]
+  # The Franka's 0.12 standoff is measured above the beaker's top, which for this arm
+  # puts the pre-grasp ~0.28 m above its own base -- outside what it can hold at that
+  # reach. Dropping it keeps the whole approach inside the X5's workspace.
+  pre_offset_z: 0.02
+
+robot:
+  type: "arx_x5"
+  position: [-0.30, 0, 0.71]
+
+collector:
+  type: "default"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true

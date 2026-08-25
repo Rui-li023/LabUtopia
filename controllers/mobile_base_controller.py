@@ -79,6 +79,15 @@ class MobileManipControllerBase(BaseController):
         self.all_subset = ArticulationSubset(
             robot, self.BASE_JOINT_NAMES + self.ARM_JOINT_NAMES + self.FINGER_JOINT_NAMES)
         self.waypoints_set = False
+        # Base-correction (data augmentation): after a wide-jitter dock, drive
+        # the base along the anchor->base line back to a validated reach before
+        # the manipulation phase — the demos then show the "arrived imperfectly
+        # -> nudge base -> manipulate" recovery a VLA needs (inference bases
+        # arrive across 0.58-1.10 m vs the 0.80 +/- 0.03 m scripted band).
+        self._corr_enabled = bool(getattr(task, "base_correction", False))
+        self._corr_target_reach = float(getattr(task, "correction_target_reach", 0.79))
+        self._nav_reached = False
+        self._corr_targeted = False
         # Navigation-progress metric (infer): per-episode fraction of the
         # spawn->dock distance closed, 1.0 = reached the dock.
         self._nav_progress_hist: list = []
@@ -227,6 +236,50 @@ class MobileManipControllerBase(BaseController):
                     f"dock_err={np.round(world_xy - dock[:2], 3).tolist()} "
                     f"obj={np.round(obj, 3).tolist()} "
                     f"reach_xy={float(np.linalg.norm(obj[:2] - world_xy)):.3f}")
+
+    def _base_correction_step(self, state: dict[str, Any], anchor_xy: Any,
+                              diag_dock: Any, target_reach: float | None = None,
+                              diag_label: str = "DOCK-DIAG",
+                              record_phase: int = PHASE_NAVIGATE) -> tuple[Any, bool]:
+        """One step of the base-correction nudge (see the ``_corr_enabled`` note
+        in ``__init__``): drive the base along the anchor->base line until it is
+        within ``target_reach`` of ``anchor_xy``, recorded as navigation.
+
+        Returns ``(action, done)`` — the caller owns the phase transition, and
+        must reset ``_corr_targeted`` between corrections in the same episode.
+        If the base is already close enough, returns done immediately.
+        """
+        reach_goal = float(target_reach if target_reach is not None
+                           else self._corr_target_reach)
+        anchor = np.asarray(anchor_xy, dtype=float)[:2]
+        pose = np.asarray(state["current_pose"], dtype=float)
+        world_xy = pose[:2] + np.asarray(self._state11()[:2], dtype=float)
+        reach = float(np.linalg.norm(world_xy - anchor))
+
+        if not self._corr_targeted:
+            if reach <= reach_goal + 0.005:
+                self._log_dock_diag(state, diag_dock, label=f"{diag_label}-NO-CORRECTION")
+                logger.info(f"No base correction needed (reach={reach:.3f})")
+                return None, True
+            direction = world_xy - anchor
+            direction /= (np.linalg.norm(direction) + 1e-6)
+            target = anchor + reach_goal * direction  # same approach line, closer
+            final_angle = float(state.get("final_nav_angle", np.pi / 2))
+            self.ridgebase_controller.set_waypoints(
+                [[float(target[0]), float(target[1]), final_angle]], final_angle)
+            self._corr_targeted = True
+            logger.info(f"Base correction: reach {reach:.3f} -> target {reach_goal:.3f}")
+
+        action, done = self.ridgebase_controller.get_action(state["current_pose"])
+        target_base = np.asarray(action.joint_positions, dtype=np.float32)
+        arm = np.asarray(self.franka_subset.get_joint_positions()[:7], dtype=np.float32)
+        action11 = np.concatenate(
+            [target_base, arm, [self._gripper_closedness()]]).astype(np.float32)
+        self._record_step(state, action11, record_phase)
+        if bool(done) or self.ridgebase_controller.is_path_complete():
+            self._log_dock_diag(state, diag_dock, label=diag_label)
+            return action, True
+        return action, False
 
     def _update_nav_progress(self, state: Dict[str, Any]) -> None:
         """Track the closest the base gets to the dock this episode (infer).
@@ -384,6 +437,8 @@ class MobileManipControllerBase(BaseController):
         self._finalize_nav_progress()
         super().reset()
         self.waypoints_set = False
+        self._nav_reached = False
+        self._corr_targeted = False
         self._replay_div_warned = False
         self._pick_min_ee_z = 1e9
         self._infer_frame = 0

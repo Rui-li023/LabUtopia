@@ -1,0 +1,58 @@
+# Level-1 physical pick with a Franka Research 3 and native Franka Hand.
+
+name: level1_pick_fr3
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 10
+seed: 7
+
+task:
+  max_steps: 1600
+  obj_paths:
+    - path: "/World/beaker2"
+      position_range:
+        x: [0.20, 0.30]
+        y: [-0.06, 0.06]
+        z: [0.84, 0.84]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+grasp:
+  ee_euler_deg: [0, 90, 25]
+
+robot:
+  type: "fr3"
+  position: [-0.4, 0, 0.71]
+
+collector:
+  type: "mock"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true
+action_randomization: false

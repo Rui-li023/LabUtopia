@@ -57,12 +57,11 @@ task:
       - "/World/beaker1"
       - "/World/beaker2"
       - "/World/beaker3"
-      - "/World/glass_rod"
       - "/World/graduated_cylinder_03"
-      - "/World/DryingBox_02"
-      - "/World/DryingBox_01"
-      - "/World/MuffleFurnace"
-    num_range: [5, 10]
+      # Do not use articulated devices as random distractors. Toggling root
+      # visibility and moving these prims during reset can make Isaac Sim 5.1's
+      # Hydra/Fabric scene delegate remove an Rprim twice and crash in C++.
+    num_range: [3, 4]
     placement_zones:
       # right side of table
       - { x: [-0.5, 0.10], y: [0.7, 1.25], z: [0.82, 0.82] }

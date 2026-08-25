@@ -1,0 +1,60 @@
+# Deterministic collect-mode Franka reference for multi-arm Pick regressions.
+
+name: level1_pick_franka_ref
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 10
+
+task:
+  max_steps: 1200
+  obj_paths:
+    - path: "/World/conical_bottle02"
+      position_range:
+        x: [0.24, 0.28]
+        y: [-0.02, 0.02]
+        z: [0.80, 0.80]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+robot:
+  type: "franka"
+  position: [-0.4, 0, 0.71]
+
+grasp:
+  ee_euler_deg: [0, 90, 25]
+  # Keep the regression deterministic. The legacy atomic controller adds an
+  # independent world-yaw perturbation that can make this exact pose locally
+  # unreachable even though the object placement itself remains reachable.
+  orientation_noise_deg: 0
+
+collector:
+  type: "default"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true

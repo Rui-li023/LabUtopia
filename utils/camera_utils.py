@@ -39,6 +39,21 @@ def process_single_type(camera, image_type):
         else:
             print("Warning: Depth data not available.")
             return None, None
+    elif image_type == "depth_raw":
+        # Metric depth in metres (H, W) float32 — NOT per-frame normalized like
+        # "depth" above, which loses absolute scale. Consumers that need true
+        # distances (e.g. the NavDP RGB-D navigation client) use this; the
+        # normalized "depth" type stays for visualization/recording.
+        depth = camera.get_depth()
+        if depth is not None:
+            depth_metric = np.asarray(depth, dtype=np.float32)
+            depth_for_display = cv2.applyColorMap(
+                cv2.normalize(depth_metric, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8),
+                cv2.COLORMAP_JET)
+            return depth_metric, depth_for_display
+        else:
+            print("Warning: Depth data not available.")
+            return None, None
     elif image_type == "segmentation":
         frame_dict = camera.get_current_frame()
         instance_id_seg = frame_dict.get('instance_segmentation')
@@ -91,12 +106,12 @@ def process_single_type(camera, image_type):
 def process_camera_image(camera, image_type):
     """
     Process camera image with support for combined types (e.g., 'rgb+pointcloud')
-    
+
     Args:
         camera: Camera instance
         image_type: String indicating the type(s) of image data to process
                    Can be single type or combined types with '+' (e.g., 'rgb+pointcloud')
-    
+
     Returns:
         tuple: (record_data, display_data) where each can be single item or dict
     """

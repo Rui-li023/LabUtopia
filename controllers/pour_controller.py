@@ -22,6 +22,7 @@ class PourTaskController(BaseController):
         self.initial_size = None
         self.task_utils = TaskUtils.get_instance()
         self.initial_quaternion = None
+        self._replay_peak_tilt = 0.0
         self.pour_timer = 0
         self.pour_complete = False
         self.return_complete = False
@@ -41,6 +42,12 @@ class PourTaskController(BaseController):
             events_dt=[0.002, 0.002, 0.005, 0.02, 0.05, 0.01, 0.02]
         )
 
+        # Position-controlled pour (see pick_pour_controller for the full
+        # rationale): the velocity pour recorded the integrated commanded velocity
+        # as the wrist action, which sat 13-24 deg BELOW the measured state across
+        # the whole return leg, so a closed-loop policy is never shown a "raise the
+        # wrist" command. Position pour records the command it actually sends and
+        # parks upright at the end.
         self.pour_controller = PourController(
             name="pour_controller",
             cspace_controller=RMPFlowController(
@@ -48,7 +55,9 @@ class PourTaskController(BaseController):
                 robot_articulation=robot,
                 use_default_config=False
             ),
-            events_dt=[0.006, 0.002, 0.012, 0.01, 0.008, 0.01]
+            events_dt=[0.006, 0.002, 0.012, 0.01, 0.008, 0.01],
+            position_pour=bool(getattr(getattr(cfg, "task", None), "position_pour", True)),
+            pour_angle_rad=float(getattr(getattr(cfg, "task", None), "pour_angle_rad", 1.2)),
         )
         self.active_controller = self.pick_controller
 
@@ -127,13 +136,42 @@ class PourTaskController(BaseController):
             # pour trajectory ends with the bottle back to roughly upright;
             # accept it as success once orientation is within 40° of the
             # post-pick reference (loose enough to tolerate PD lag).
-            still_tilted = self.task_utils.check_rotation_angle(
-                self._replay_initial_quaternion,
-                self.state['object_quaternion'],
-                threshold_degrees=40,
-            )
-            return not still_tilted
+            angle = float(self.task_utils.rotation_angle_deg(
+                self._replay_initial_quaternion, self.state['object_quaternion']))
+            # Require the pour to have HAPPENED before accepting "upright again".
+            # Without this the criterion is trivially true from the first frame
+            # (the source is still at the reference pose), so the 60-frame success
+            # counter filled during the pre-pour hover and replay reported success
+            # ~1 s in, having validated nothing but the grasp.
+            self._replay_peak_tilt = max(getattr(self, "_replay_peak_tilt", 0.0), angle)
+            if self._replay_peak_tilt < 50.0:
+                return False
+            return angle <= 40.0
         return self._check_phase_success()
+
+    def _scripted_pick(self, state):
+        """Scripted grasp of the pour source — IDENTICAL in collect / replay / infer.
+
+        The infer path used to omit the three offsets and use a 15 deg wrist yaw
+        instead of 30, so the policy took over from a pose ~35 cm lower than any
+        it saw in training (collect lifts to after_offset_z=0.5, infer inherited
+        PickController's 0.15 default). L1 only records the pour segment, so that
+        hand-off pose IS the policy's first observation: a hard distribution
+        shift, not a detail. One helper keeps the three paths from drifting again.
+        """
+        return self.pick_controller.forward(
+            picking_position=state['object_position'],
+            current_joint_positions=state['joint_positions'],
+            object_size=state['object_size'],
+            object_name=state['object_name'],
+            gripper_control=self.gripper_control,
+            gripper_position=state['gripper_position'],
+            end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
+            pre_offset_x=0.05,
+            pre_offset_z=0.05,
+            after_offset_z=0.5,
+            gripper_distances=self._source_grip_distance(state['object_name']),
+        )
 
     def _step_replay(self, state):
         """Run scripted pick first (not recorded); then replay pour actions.
@@ -142,19 +180,7 @@ class PourTaskController(BaseController):
         that _check_phase_success runs the pour-state machine during replay.
         """
         if not self.pick_controller.is_done():
-            action, _ = self.pick_controller.forward(
-                picking_position=state['object_position'],
-                current_joint_positions=state['joint_positions'],
-                object_size=state['object_size'],
-                object_name=state['object_name'],
-                gripper_control=self.gripper_control,
-                gripper_position=state['gripper_position'],
-                end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
-                pre_offset_x=0.05,
-                pre_offset_z=0.05,
-                after_offset_z=0.5,
-                gripper_distances=self._source_grip_distance(state['object_name']),
-            )
+            action, _ = self._scripted_pick(state)
             return action, False, False
         if self.current_phase != Phase.POURING:
             self.current_phase = Phase.POURING
@@ -219,12 +245,23 @@ class PourTaskController(BaseController):
                     }
                 return False
                 
-            # After pour complete, check if returned to original orientation
+            # After pour complete, check if returned to original orientation.
+            #
+            # The reference is captured at the pick->pour switch, BEFORE the atomic
+            # pour's hover re-orientation (events 0/1), which by itself rotates the
+            # source ~24 deg (p95 ~30). So "within 30 deg of the reference" really
+            # meant "within ~6 deg of the post-hover pose" — unreachable for a pour
+            # that returns the wrist exactly to its pre-tilt angle. The velocity
+            # pour only ever passed because its overshoot swept through the band;
+            # with the position pour 4/9 smoke episodes failed here despite a
+            # textbook return. 40 deg == within ~16 deg of the post-hover pose,
+            # comparable to the L2 margin, while a policy that never rights the
+            # source sits ~93 deg out and is still rejected.
             if not self.return_complete:
                 rotation_diff = self.task_utils.check_rotation_angle(
                     self.initial_quaternion,
                     current_quat,
-                    threshold_degrees=30  # smaller threshold for return position
+                    threshold_degrees=40
                 )
                 if not rotation_diff:
                     self.return_complete = True
@@ -299,19 +336,7 @@ class PourTaskController(BaseController):
         if not self.active_controller.is_done():
             action = None
             if self.current_phase == Phase.PICKING:
-                action, _ = self.pick_controller.forward(
-                    picking_position=state['object_position'],
-                    current_joint_positions=state['joint_positions'],
-                    object_size=state['object_size'],
-                    object_name=state['object_name'],
-                    gripper_control=self.gripper_control,
-                    gripper_position=state['gripper_position'],
-                    end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
-                    pre_offset_x=0.05,
-                    pre_offset_z=0.05,
-                    after_offset_z=0.5,
-                    gripper_distances=self._source_grip_distance(state['object_name']),
-                )
+                action, _ = self._scripted_pick(state)
             else:
                 action, record_array = self.pour_controller.forward(
                     articulation_controller=self.robot.get_articulation_controller(),
@@ -367,17 +392,7 @@ class PourTaskController(BaseController):
             return None, True, self._last_success
 
         if not self.pick_controller.is_done():
-            action = None
-            action, _ = self.pick_controller.forward(
-                    picking_position=state['object_position'],
-                    current_joint_positions=state['joint_positions'],
-                    object_size=state['object_size'],
-                    object_name=state['object_name'],
-                    gripper_control=self.gripper_control,
-                    gripper_position=state['gripper_position'],
-                    end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 15])).as_quat(),
-                    gripper_distances=self._source_grip_distance(state['object_name']),
-                )
+            action, _ = self._scripted_pick(state)
             
         else:
             state['language_instruction'] = self.get_language_instruction()

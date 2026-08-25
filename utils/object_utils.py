@@ -119,6 +119,38 @@ class ObjectUtils:
         position = transform.ExtractTranslation()
         return np.array(position)
 
+    def set_object_scale(self, object_path: str, scale) -> np.ndarray | None:
+        """Set the object's local scale. Scalar or per-axis ``(3,)``.
+
+        Writes ``xformOp:scale`` on the prim, reusing the existing op when there
+        is one — appending a second scale op would silently multiply with the
+        authored one and drift a little further every episode.
+
+        Note the collider does NOT re-cook: Isaac keeps the approximation built
+        at load time, so a scaled mesh grasps against slightly stale collision
+        geometry. Fine for the modest (~0.9x) squashes used to match a real
+        object's height; do not rely on it for large changes.
+        """
+        prim = self._stage.GetPrimAtPath(object_path)
+        if not prim.IsValid():
+            logger.warning(f"Object at path {object_path} not found; scale ignored.")
+            return None
+
+        s = np.asarray(scale, dtype=float).reshape(-1)
+        if s.size == 1:
+            s = np.repeat(s, 3)
+        if s.size != 3:
+            logger.warning(f"scale for {object_path} must be scalar or 3 values, got {s.tolist()}")
+            return None
+
+        xformable = UsdGeom.Xformable(prim)
+        for op in xformable.GetOrderedXformOps():
+            if op.GetOpType() == UsdGeom.XformOp.TypeScale:
+                op.Set(Gf.Vec3d(*s))
+                return s
+        xformable.AddScaleOp().Set(Gf.Vec3d(*s))
+        return s
+
     def set_object_position(self, object_path: str, position: np.ndarray, local_position: np.ndarray = None, position_offset: np.ndarray = None) -> None:
         """Set the object's position in world or local space."""
         prim = self._stage.GetPrimAtPath(object_path)

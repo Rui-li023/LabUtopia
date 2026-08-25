@@ -1,0 +1,76 @@
+# Level-1 pick with a UR10e carrying a Robotiq 2F-85.
+#
+# The arm and gripper are imported from one combined URDF/USD articulation. UR10e
+# shares the UR5e/UR3e joint and tool-frame conventions, while its longer reach uses
+# a separate Lula/RMPFlow description and a base position tuned for this bench.
+
+name: level1_pick_ur10e_robotiq
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 10
+
+task:
+  max_steps: 2000
+  obj_paths:
+    - path: "/World/beaker2"
+      # A full-size beaker rim is wider than the 2F-85's 85 mm opening. Keep the
+      # same physically graspable scale used by the validated UR5e task.
+      scale: 0.65
+      friction: 1.5
+      position_range:
+        x: [0.15, 0.28]
+        y: [-0.10, 0.10]
+        z: [0.84, 0.84]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+grasp:
+  # Keep both fingers level while following a shallow 10-degree diagonal ingress.
+  ee_euler_deg: [180, 10, 0]
+  orientation_noise_deg: 0
+  approach_along_tool: true
+  pre_offset_x: 0.009
+  adaptive_phase_completion: true
+  arrival_stable_steps: 5
+  require_pregrasp_xyz: true
+  pregrasp_position_threshold: 0.003
+  grasp_position_threshold: 0.003
+  lock_final_approach_target: true
+  gripper_distance: 0.040
+
+robot:
+  type: "ur10e_robotiq"
+  # Keep the beaker at a comfortable mid-reach radius for the longer UR10e arm.
+  position: [-0.55, 0, 0.71]
+
+collector:
+  type: "default"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true

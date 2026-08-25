@@ -27,6 +27,13 @@ class PressTask(BaseTask):
 
     def __init__(self, cfg: Any, world: Any, stage: Any, robot: Any) -> None:
         super().__init__(cfg, world, stage, robot)
+        # Optional per-episode instrument placement (``task.instrument_position_range``
+        # with x/y/z [lo, hi] lists). Without it the instrument sits at the single
+        # hard-coded spot for all 50 episodes, so every demo shows the buttons at the
+        # same place and only their y ordering ever changes — the position half of the
+        # task is not generalized at all.
+        task_cfg = getattr(cfg, "task", None)
+        self._instrument_range = getattr(task_cfg, "instrument_position_range", None) if task_cfg else None
         self.object_utils.set_object_position(
             object_path=self.cfg.instrument_path,
             position=self._INSTRUMENT_POSITION,
@@ -68,7 +75,29 @@ class PressTask(BaseTask):
                 f"will modify localPos{side}, base={self._joint_base_local_pos[jp]}"
             )
 
+    def _sample_instrument_position(self) -> np.ndarray:
+        """This episode's instrument placement, or the fixed spot if unconfigured."""
+        if self._instrument_range is None:
+            return self._INSTRUMENT_POSITION.copy()
+        base = self._INSTRUMENT_POSITION
+        return np.array(
+            [
+                random.uniform(*getattr(self._instrument_range, axis, (base[i], base[i])))
+                for i, axis in enumerate(("x", "y", "z"))
+            ],
+            dtype=np.float32,
+        )
+
     def reset(self) -> None:
+        # Move the instrument BEFORE world.reset() for the same reason as the
+        # joint anchors below: the buttons' prismatic joints are anchored to it,
+        # and PhysX only rebakes joint frames on simulation re-init.
+        instrument_position = self._sample_instrument_position()
+        self.object_utils.set_object_position(
+            object_path=self.cfg.instrument_path,
+            position=instrument_position,
+        )
+
         # Mutate joint anchors BEFORE world.reset() — PhysX rebakes joint
         # frames on simulation re-init, so the new USD values need to be in
         # place first.
@@ -98,6 +127,9 @@ class PressTask(BaseTask):
         # anchors only now. They ride in init_state extra (JSON) and are
         # restored by reset_with_init_state before world.reset() rebakes joints.
         self._episode_init_state["extra"]["button_joint_anchors"] = anchors
+        self._episode_init_state["extra"]["instrument_position"] = [
+            float(v) for v in instrument_position
+        ]
 
         for path in self.button_paths:
             self._record_object_pose(path)
@@ -108,6 +140,12 @@ class PressTask(BaseTask):
         # when PhysX rebakes joint frames from the USD values (same ordering
         # collect uses in reset()). An earlier attempt restored anchors with the
         # wrong timing and corrupted the buttons; the ordering is the fix.
+        instrument_position = init_state.get("extra", {}).get("instrument_position")
+        if instrument_position is not None:
+            self.object_utils.set_object_position(
+                object_path=self.cfg.instrument_path,
+                position=np.asarray(instrument_position, dtype=np.float32),
+            )
         anchors = init_state.get("extra", {}).get("button_joint_anchors") or {}
         for joint_path, lp in anchors.items():
             side = self._joint_anchor_side.get(joint_path)

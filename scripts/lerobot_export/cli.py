@@ -26,14 +26,20 @@ def main():
     ap.add_argument("--base-action", default="abs", choices=["abs", "body_delta"],
                     help="Mobile-base action dims (0:3): 'abs' = raw spawn-frame position "
                          "targets; 'body_delta' = per-step body-frame [forward, lateral, dtheta]")
+    ap.add_argument("--nav-only", action="store_true",
+                    help="Trim each episode to its leading navigation segment (phase == 0 "
+                         "prefix): state/action sliced, videos cut to the same frame count. "
+                         "For training dedicated navigation policies on mobile tasks.")
     args = ap.parse_args()
 
     if args.version == "v2.1":
         result = write_v21(args.src, args.dst, fps=args.fps, robot_type=args.robot,
-                           base_action=args.base_action)
+                           base_action=args.base_action, nav_only=args.nav_only)
     else:
         if args.base_action != "abs":
             raise SystemExit("--base-action body_delta is only implemented for v2.1")
+        if args.nav_only:
+            raise SystemExit("--nav-only is only implemented for v2.1")
         result = write_v30(args.src, args.dst, fps=args.fps, robot_type=args.robot)
     print(f"OK [{args.version}]: {result}  →  {args.dst}")
 

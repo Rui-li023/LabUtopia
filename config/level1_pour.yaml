@@ -32,6 +32,9 @@ infer:
   max_retries: 3
 
 task:
+  # Position-controlled pour (position_pour). L1 实测执行摆幅 72.3 deg；1.2 对 50 deg 成功门只剩 4.2 deg 余量，1.3 留 9.7 deg.
+  position_pour: true
+  pour_angle_rad: 1.3
   max_steps: 1500
   left_pos:
     x: [0.18, 0.33]

@@ -39,7 +39,9 @@ task:
     y: [0.55, 0.65]  # y>0.66 puts the dock inside the inflated A* grid (plan fails)
     z: [0.80, 0.80]
   dock_standoff: 0.75            # 0.70 pushed the dock into the inflated obstacle grid (A* end invalid); slip fixed via GRIP_SQUEEZE instead
-  dock_jitter: [0.03, 0.03]      # +-3cm dock generalization (VLA robustness)
+  dock_jitter: [0.12, 0.10]      # wide dock jitter: +/-12 cm x, +/-10 cm y
+  base_correction: true            # data-aug: nudge base closer after an imperfect dock
+  correction_target_reach: 0.79    # target base->object reach (m) before grasp
                                  # (~0.018 m grasp undershoot → beaker shoved out)
   spawn:
     mode: "near"

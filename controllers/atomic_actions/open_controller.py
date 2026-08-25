@@ -6,7 +6,7 @@ import typing
 from scipy.spatial.transform import Rotation as R, Slerp
 
 from .atomic_base_controller import AtomicBaseController
-from robots.base_robot import BaseRobot, GRIPPER_OPEN, GRIPPER_CLOSED
+from robots.base_robot import BaseRobot
 
 
 class OpenController(AtomicBaseController):
@@ -92,6 +92,20 @@ class OpenController(AtomicBaseController):
                 [0, 110, 0], degrees=True, extrinsic=False)
 
         self._ensure_randomization()
+
+        # Guard: the caller advances phases on its own success condition, so a
+        # state machine that runs out of events while the phase is still active
+        # keeps getting forward()ed. Indexing past _events_dt then raised
+        # IndexError *inside* the Isaac callback, which takes down the whole
+        # simulator with a SIGSEGV (this killed a full L4 open_transport_pour
+        # collect run). Hold the last pose instead and let the task's own
+        # max_steps decide the episode. Mirrors the same guard the pour atomic
+        # has had (atomic_actions/pour_controller.py:200).
+        if self._event >= len(self._events_dt):
+            action = self._null_action(n)
+            return action, self._build_record_array(
+                action, current_joint_positions,
+                gripper_state=self._current_gripper_state)
 
         self._t += self._events_dt[self._event]
 

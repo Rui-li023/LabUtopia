@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!-- Yaskawa Motoman HC10 with the project-standard Robotiq 2F-85. -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="yaskawa_hc10_labutopia_robotiq_2f_85">
+  <xacro:include filename="$(find motoman_hc10_support)/urdf/hc10_macro.xacro"/>
+  <xacro:include filename="$(find robotiq_description)/xacro/2F85.xacro"/>
+
+  <xacro:motoman_hc10 prefix=""/>
+  <xacro:Robotiq85 name=""/>
+
+  <joint name="hc10_tool0_to_gripper_base" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="tool0"/>
+    <child link="gripper_base"/>
+  </joint>
+
+  <link name="grasp_frame"/>
+  <joint name="gripper_base_to_grasp_frame" type="fixed">
+    <origin xyz="0 0 0.13" rpy="0 0 0"/>
+    <parent link="gripper_base"/>
+    <child link="grasp_frame"/>
+  </joint>
+</robot>

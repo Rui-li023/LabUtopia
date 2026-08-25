@@ -1,0 +1,69 @@
+# Level-1 physical pick with a Kinova Jaco2 native three-finger hand.
+
+name: level1_pick_jaco2
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 3
+seed: 7
+
+task:
+  max_steps: 2000
+  obj_paths:
+    - path: "/World/beaker2"
+      scale: 0.75
+      friction: 1.5
+      position_range:
+        x: [0.22, 0.24]
+        y: [-0.055, -0.04]
+        z: [0.84, 0.84]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+grasp:
+  # The native three-finger hand encloses a cylinder radially. Approach from
+  # above so no leading finger sweeps the beaker across the bench.
+  ee_euler_deg: [180, 0, 0]
+  bearing_gain: 0.0
+  approach_from_base: false
+  pre_offset_x: 0.0
+  pre_offset_z: 0.05
+  require_pregrasp_xyz: true
+  after_offset_z: 0.15
+  gripper_distance: 0.04
+
+robot:
+  type: "jaco2"
+  position: [-0.20, 0, 0.71]
+
+collector:
+  type: "default"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true
+action_randomization: false

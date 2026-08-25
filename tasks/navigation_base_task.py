@@ -148,6 +148,7 @@ class NavigationBaseTask(BaseTask):
             "current_pose":        np.array([position[0], position[1], euler[2]]),
             "waypoints":           self.current_path,
             "camera_data":         camera_data,
+            "camera_intrinsics":   self.get_camera_intrinsics(),
             "camera_display":      display_data,
             "done":                self.reset_needed,
             "frame_idx":           self.frame_idx,

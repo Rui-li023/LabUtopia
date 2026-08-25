@@ -1,8 +1,10 @@
-import os
-import sys
 import argparse
-from loguru import logger
+import os
+import random
+import sys
+
 from isaacsim import SimulationApp
+from loguru import logger
 
 logger.remove()
 logger.add(
@@ -26,6 +28,10 @@ def parse_args():
                        help='Configuration file name (without .yaml extension)')
     parser.add_argument('--config-dir', type=str, default='config',
                        help='Configuration directory path (default: config)')
+    parser.add_argument('--max-episodes', type=int,
+                       help='Override the configured episode count for this run')
+    parser.add_argument('--max-attempts', type=int,
+                       help='Stop after this many attempts, including failed episodes')
     return parser.parse_args()
 
 # Get command line arguments
@@ -33,7 +39,10 @@ args = parse_args()
 
 # Set up simulation app based on arguments
 simulation_config = {
-    "headless": False,
+    # Respect the CLI switch and allow remote/headless runners to opt in via
+    # an environment variable without needing a virtual X server.
+    "headless": args.headless or os.environ.get("LABUTOPIA_HEADLESS", "").lower()
+    in {"1", "true", "yes"},
     "extra_args": ["--/rtx/raytracing/fractionalCutoutOpacity=true"],
 }
 
@@ -75,7 +84,7 @@ def _convert_to_h264(src_path: str, is_success: bool):
     logger.info(f"Converting video to H264: {src_path}")
     ret = subprocess.run(
         [
-            "ffmpeg", "-y", "-i", src_path,
+            "ffmpeg", "-nostdin", "-y", "-i", src_path,
             "-vcodec", "libx264",
             "-pix_fmt", "yuv420p",
             "-crf", "18",
@@ -108,12 +117,46 @@ def release_and_convert(writer: cv2.VideoWriter, output_path: str, is_success: b
     t.start()
     _convert_threads.append(t)
 
+
+def _round_values(values):
+    try:
+        return [round(float(value), 4) for value in values]
+    except (TypeError, ValueError):
+        return values
+
+
+def _object_quaternion(state, task):
+    object_path = state.get("object_path")
+    if not object_path:
+        return None
+    pose = task.object_utils.get_world_pose(object_path)
+    if not pose:
+        return None
+    return [round(float(value), 3) for value in pose["orientation"]]
+
 def main():
     hydra.initialize(config_path=args.config_dir, job_name=args.config_name)
     cfg = hydra.compose(config_name=args.config_name)
+    if args.max_episodes is not None:
+        if args.max_episodes < 1:
+            raise ValueError("--max-episodes must be at least 1")
+        cfg.max_episodes = args.max_episodes
+    if args.max_attempts is not None and args.max_attempts < 1:
+        raise ValueError("--max-attempts must be at least 1")
     os.makedirs(cfg.multi_run.run_dir, exist_ok=True)
     OmegaConf.save(cfg, cfg.multi_run.run_dir + "/config.yaml")
     logger.info(f"Config loaded: {args.config_name}, run dir: {cfg.multi_run.run_dir}")
+
+    # Optional global RNG seed. Off unless the config sets `seed`, so existing
+    # runs are unchanged. With it, two runs of the same config draw the same
+    # object placements / material cycle / lighting samples — which is what makes
+    # an A/B (e.g. baseline vs unseen-lighting) a controlled comparison instead
+    # of a comparison of two different random scene sequences.
+    _seed = getattr(cfg, "seed", None)
+    if _seed is not None:
+        random.seed(int(_seed))
+        np.random.seed(int(_seed))
+        logger.info(f"[seed] global RNG seeded with {int(_seed)}")
 
     # Set backend based on command line arguments
     if args.backend == 'gpu':
@@ -129,13 +172,33 @@ def main():
         show_video = False
     else:
         save_video = True
-        show_video = True
+        # A headless run can still render and save camera frames, but OpenCV has no
+        # display server for imshow(). Keep remote diagnostics recording enabled
+        # without trying to create a GUI window.
+        show_video = not simulation_config["headless"]
+
+    # Scene BEFORE robot. A scene USD may already contain the arm we want to
+    # drive (the sim2real bench has both of its Frankas baked in); the robot
+    # constructor only binds to an existing prim if that prim is already on the
+    # stage, otherwise it references a fresh one and clobbers the authored base
+    # transform. No shipped scene contains a robot, so this reorder is a no-op
+    # for every pre-existing config.
+    stage = omni.usd.get_context().get_stage()
+    add_reference_to_stage(usd_path=os.path.abspath(cfg.usd_path), prim_path="/World")
 
     robot_kwargs = {"position": np.array(cfg.robot.position)}
     if hasattr(cfg.robot, "default_joint_positions"):
         robot_kwargs["default_joint_positions"] = np.array(cfg.robot.default_joint_positions)
+    if hasattr(cfg.robot, "usd_path"):
+        robot_kwargs["usd_path"] = str(cfg.robot.usd_path)
+    if hasattr(cfg.robot, "prim_path"):
+        # Bind to an arm that already exists in the scene instead of spawning one.
+        # Orientation is deliberately NOT passed: leaving it unset preserves the
+        # base yaw authored in the scene, which RMPFlowController then reads via
+        # get_world_pose() and feeds to set_robot_base_pose().
+        robot_kwargs["prim_path"] = str(cfg.robot.prim_path)
     robot = create_robot(cfg.robot.type, **robot_kwargs)
-    logger.info(f"Robot created: {cfg.robot.type}")
+    logger.info(f"Robot created: {cfg.robot.type} at {getattr(robot, 'prim_path', cfg.robot.get('prim_path', '/World/Franka'))}")
 
     # Configure gripper control mode if specified
     gripper_cfg = getattr(cfg.robot, "gripper", None)
@@ -150,9 +213,6 @@ def main():
                 closing_force=float(getattr(gripper_cfg, "closing_force", 20.0)),
                 closing_speed=float(getattr(gripper_cfg, "closing_speed", 0.2)),
             )
-    
-    stage = omni.usd.get_context().get_stage()
-    add_reference_to_stage(usd_path=os.path.abspath(cfg.usd_path), prim_path="/World")
     
     ObjectUtils.get_instance(stage)
     
@@ -195,6 +255,27 @@ def main():
     
     video_writer = None
     video_output_path = None
+    _replay_count_logged = False
+    # An episode can end two ways: the controller returns done (handled in the
+    # `if done:` branch below) or the task hits max_steps and only flips
+    # reset_needed. The latter used to skip the whole end-of-episode block, so
+    # timed-out episodes printed no failure reason and never cleared the
+    # per-episode robot diagnostics (they leaked into every later episode).
+    _episode_finalized = False
+    _steps_since_reset = 0
+    arm_diagnostics_enabled = bool(os.environ.get("LABUTOPIA_ARM_DIAGNOSTICS"))
+
+    def _reset_episode_diagnostics(rb) -> None:
+        if not arm_diagnostics_enabled:
+            return
+        _am = getattr(rb, "_argmax_diag", (None, None, None))
+        logger.info(f"[EP-ARM-ERR] mode={cfg.mode} ep={task_controller.episode_num} "
+                    f"max_arm_track_err={round(float(getattr(rb, '_ep_max_arm_err', 0.0)), 4)} "
+                    f"at_frame={_am[0]}/{getattr(rb, '_frame_diag', 0)} joint={_am[1]} per_joint_err={_am[2]}")
+        rb._ep_max_arm_err = 0.0
+        rb._frame_diag = 0
+        rb._argmax_diag = (None, None, None)
+        rb._closed_once = False
 
     _arm_stiffness_scale = float(getattr(cfg, "arm_stiffness_scale", 1.0))
 
@@ -218,8 +299,29 @@ def main():
         except Exception as e:
             logger.warning(f"[gains] failed to scale arm gains: {e}")
 
+    def _log_reset_object_poses(label: str) -> None:
+        if not os.environ.get("LABUTOPIA_RESET_DEBUG"):
+            return
+        root_path = getattr(task, "current_obj_path", None)
+        if not root_path:
+            return
+        poses = {}
+        for path in (root_path, f"{root_path}/mesh"):
+            pose = task.object_utils.get_world_pose(path)
+            if pose is not None:
+                poses[path] = np.round(pose["position"], 4).tolist()
+        logger.info(f"[reset-debug] {label} poses={poses}")
+
     task.reset()
     _apply_arm_gains()
+    if os.environ.get("LABUTOPIA_PICK_DEBUG"):
+        _debug_kp, _debug_kd = robot.get_articulation_controller().get_gains()
+        logger.info(
+            f"[ROBOT-DOF] names={list(robot.dof_names or [])} "
+            f"gripper_indices={list(robot.get_gripper_joint_indices())} "
+            f"kp={[round(float(v), 3) for v in _debug_kp]} "
+            f"kd={[round(float(v), 3) for v in _debug_kd]}"
+        )
 
     while simulation_app.is_running():
         world.step(render=True)
@@ -230,35 +332,131 @@ def main():
         if world.is_playing():
             if task_controller.need_reset() or task.need_reset():
                 if video_writer is not None:
-                    release_and_convert(video_writer, video_output_path, is_success)
+                    release_and_convert(
+                        video_writer,
+                        video_output_path,
+                        task_controller.is_success(),
+                    )
                     video_writer = None
                     video_output_path = None
 
-                # Determine how many episodes to run depending on mode
+                # Determine how many episodes to run depending on mode.
+                # Replay defaults to the whole dataset — the top-level
+                # `max_episodes` is a collect/infer knob and is NOT a cap here.
+                # Set `replay.max_episodes` to cap a replay run (or
+                # `replay.episode_indices` to pick a subset); the effective
+                # count is logged once so a run never silently differs from
+                # what the config appears to ask for.
                 if cfg.mode == "replay":
-                    max_episodes = len(task_controller._replay_loader)
+                    n_dataset = len(task_controller._replay_loader)
+                    _replay_cap = getattr(getattr(cfg, "replay", None), "max_episodes", None)
+                    max_episodes = min(n_dataset, int(_replay_cap)) if _replay_cap else n_dataset
+                    if not _replay_count_logged:
+                        source = ("replay.max_episodes" if _replay_cap
+                                  else f"whole dataset (top-level max_episodes={cfg.max_episodes} "
+                                       "does not apply to replay)")
+                        logger.info(f"[Replay] dataset has {n_dataset} episodes; running "
+                                    f"{max_episodes} — capped by {source}")
+                        _replay_count_logged = True
                 else:
                     max_episodes = cfg.max_episodes
 
-                # Check if we've completed all episodes BEFORE setting up the next one
-                if task_controller.episode_num >= max_episodes or getattr(task_controller, "_replay_done", False):
-                    logger.info(f"All {max_episodes} episodes completed. Shutting down.")
+                # An episode that ended on max_steps never reached the `if done:`
+                # branch, so finalize it here: report why it failed and clear the
+                # per-episode diagnostics before they leak into the next episode.
+                # `_steps_since_reset` guards the very first pass (scene setup, and
+                # replay's initial reset), where no episode has run yet — without it
+                # every run logged a spurious "Episode 0 failed" and every parsed
+                # stat came out one failure too high.
+                if not _episode_finalized and _steps_since_reset > 0:
+                    # Log the standard "failed" line too: a timed-out episode is a
+                    # failed one, and the campaign log parsers count these lines.
+                    logger.warning(f"Episode {task_controller.episode_num} failed. "
+                                   f"(ended on max_steps="
+                                   f"{getattr(getattr(cfg, 'task', None), 'max_steps', '?')})")
+                    _reset_episode_diagnostics(robot)
+                    task_controller.print_failure_reason()
+                episode_just_finished = _steps_since_reset > 0
+                _episode_finalized = False
+                _steps_since_reset = 0
+
+                # Check if we've completed all episodes BEFORE setting up the next one.
+                # In infer/replay `episode_num` is only incremented by reset(), which
+                # has not run yet for the episode that just ended — count it here, or
+                # the run does max_episodes+1 episodes and drops the last one from the
+                # stats. (In collect, `episode_num` is the data collector's count of
+                # WRITTEN episodes, which is already final.)
+                # Real collection deliberately caps SUCCESSFUL datasets, so failed
+                # attempts do not count. Smoke tests use MockCollector and need a
+                # finite attempt cap; its current failed attempt is not reflected in
+                # _episode_num until reset(), hence the explicit +1 here.
+                count_attempts = bool(
+                    getattr(getattr(task_controller, "data_collector", None), "counts_attempts", False)
+                )
+                current_episode = int(episode_just_finished)
+                episodes_done = (
+                    task_controller.episode_num + current_episode
+                    if cfg.mode != "collect" or count_attempts
+                    else task_controller.episode_num
+                )
+                attempts_done = task_controller._episode_num + current_episode
+                attempts_exhausted = (
+                    args.max_attempts is not None and attempts_done >= args.max_attempts
+                )
+                if (
+                    episodes_done >= max_episodes
+                    or attempts_exhausted
+                    or getattr(task_controller, "_replay_done", False)
+                ):
+                    if cfg.mode == "collect" and episode_just_finished:
+                        # A real collector reaches max_episodes as soon as the final
+                        # successful sample is written. Shutdown therefore happens
+                        # before reset(), which normally updates and prints the
+                        # controller's attempt statistics. Emit that missing final
+                        # line without resetting task/controller state during teardown.
+                        final_attempts = task_controller._episode_num + 1
+                        final_successes = task_controller.success_count + int(
+                            task_controller.is_success()
+                        )
+                        final_rate = final_successes / max(final_attempts, 1) * 100.0
+                        logger.info(
+                            "Episode Stats: Success Rate = "
+                            f"{final_successes}/{final_attempts} ({final_rate:.2f}%)"
+                        )
+                    if cfg.mode != "collect" and not getattr(task_controller, "_is_initial_replay_reset", False):
+                        # reset() is what counts the episode and prints "Episode Stats",
+                        # so the final episode is otherwise missing from the tally.
+                        task_controller.reset()
+                    if attempts_exhausted and episodes_done < max_episodes:
+                        logger.info(
+                            f"Attempt limit reached ({attempts_done}/{args.max_attempts}). "
+                            "Shutting down."
+                        )
+                    else:
+                        logger.info(f"All {max_episodes} episodes completed. Shutting down.")
                     task_controller.close()
-                    simulation_app.close()
-                    cv2.destroyAllWindows()
+                    # Join the ffmpeg transcode threads BEFORE tearing down the
+                    # app: closing first killed the last episode's conversion and
+                    # left a half-written *.tmp.mp4 instead of its video.
                     for t in _convert_threads:
                         t.join()
+                    simulation_app.close()
+                    cv2.destroyAllWindows()
                     break
 
                 # In replay mode: restore scene FIRST, then reset controller
                 # This ensures correct episode numbering and environment setup
                 if cfg.mode == "replay":
+                    _log_reset_object_poses("before task reset")
                     init_state = task_controller.get_current_init_state()
                     task.reset_with_init_state(init_state)
+                    _log_reset_object_poses("after task reset")
                     task_controller.reset()
                 else:
+                    _log_reset_object_poses("before task reset")
                     task_controller.reset()
                     task.reset()
+                    _log_reset_object_poses("after task reset")
                 _apply_arm_gains()
 
                 continue
@@ -268,6 +466,7 @@ def main():
                 continue
             
             action, done, is_success = task_controller.step(state)
+            _steps_since_reset += 1
             if action is not None:
                 # collect_position_only: apply the scripted action as a PURE joint
                 # POSITION command (drop RMPFlow's velocity/effort feed-forward), so
@@ -306,104 +505,113 @@ def main():
                             [None] * (len(action.joint_velocities) - 7)
                 robot.get_articulation_controller().apply_action(action)
             robot.apply_gripper_effort()
-            # CONSISTENCY-DIAG (no object binding): localize where collect vs
-            # replay diverge by checking (1) object position at the grasp and
-            # release instants, and (2) arm-tracking error every frame (actual
-            # vs commanded joints), reported as a per-episode max.
-            try:
-                def _round(v):
-                    try:
-                        return [round(float(x), 4) for x in v]
-                    except Exception:
-                        return v
-                def _oquat():
-                    try:
-                        _op = state.get('object_path')
-                        if _op:
-                            _q = task.object_utils.get_world_pose(_op).get('orientation')
-                            return [round(float(x), 3) for x in _q]
-                    except Exception:
-                        return None
-                    return None
-                # Per-frame arm-tracking error (arm-motion consistency). Track the
-                # frame & joint where the max occurs to localize the spike.
-                robot._frame_diag = getattr(robot, "_frame_diag", 0) + 1
-                if action is not None and getattr(action, "joint_positions", None) is not None \
-                        and len(action.joint_positions) >= 7:
-                    _cmd_arm = [float(v) for v in action.joint_positions[:7]]
-                    _act_arm = [float(v) for v in robot.get_joint_positions()[:7]]
-                    _perr = [abs(a - c) for a, c in zip(_act_arm, _cmd_arm)]
-                    _err = max(_perr)
-                    robot._last_err = _err
-                    if _err > getattr(robot, "_ep_max_arm_err", 0.0):
-                        robot._ep_max_arm_err = _err
-                        robot._argmax_diag = (robot._frame_diag, _perr.index(_err),
-                                              [round(e, 3) for e in _perr])
-                    # Approach trace: instantaneous error every 25 frames BEFORE the
-                    # first gripper close (shows how the arm converges to the grasp).
-                    if not getattr(robot, "_closed_once", False) and robot._frame_diag % 25 == 0:
-                        logger.info(
-                            f"[APPROACH] mode={cfg.mode} ep={task_controller.episode_num} "
-                            f"frame={robot._frame_diag} arm_err={round(_err, 4)} "
-                            f"max_joint={_perr.index(_err)} per_joint={[round(e, 3) for e in _perr]}"
-                        )
-                # Closed if EITHER the tracked gripper state says closed (collect &
-                # force-replay) OR the commanded finger target is closed (position
-                # replay, where the finger is in action.joint_positions[7]). The OR
-                # makes the grasp/release transitions fire in every mode.
-                _gs = 0
+            # Optional collect-vs-replay diagnostics. Disabled by default because
+            # the per-frame queries and traces are useful for debugging, not normal
+            # collection or evaluation.
+            if arm_diagnostics_enabled:
                 try:
-                    if int(robot.get_gripper_state()) == 1:
-                        _gs = 1
+                    # Per-frame arm-tracking error (arm-motion consistency). Track
+                    # the frame and joint where the maximum occurs.
+                    robot._frame_diag = getattr(robot, "_frame_diag", 0) + 1
+                    if action is not None and getattr(action, "joint_positions", None) is not None:
+                        _action_positions = list(action.joint_positions)
+                        _action_indices = getattr(action, "joint_indices", None)
+                        if _action_indices is None:
+                            _action_indices = range(len(_action_positions))
+                        _command_by_dof = {
+                            int(index): float(value)
+                            for index, value in zip(_action_indices, _action_positions)
+                            if value is not None
+                        }
+                        _arm_indices = robot.get_arm_joint_indices()
+                        _actual_positions = robot.get_joint_positions()
+                        _perr = [
+                            abs(float(_actual_positions[index]) - _command_by_dof[index])
+                            for index in _arm_indices
+                            if index in _command_by_dof
+                        ]
+                    else:
+                        _perr = []
+                    if _perr:
+                        _err = max(_perr)
+                        robot._last_err = _err
+                        if _err > getattr(robot, "_ep_max_arm_err", 0.0):
+                            robot._ep_max_arm_err = _err
+                            robot._argmax_diag = (
+                                robot._frame_diag,
+                                _perr.index(_err),
+                                [round(error, 3) for error in _perr],
+                            )
+                        if not getattr(robot, "_closed_once", False) and robot._frame_diag % 25 == 0:
+                            logger.info(
+                                f"[APPROACH] mode={cfg.mode} ep={task_controller.episode_num} "
+                                f"frame={robot._frame_diag} arm_err={round(_err, 4)} "
+                                f"max_joint={_perr.index(_err)} "
+                                f"per_joint={[round(error, 3) for error in _perr]}"
+                            )
+
+                    # Track grasp/release transitions in both position and effort
+                    # gripper modes.
+                    _gs = 0
+                    try:
+                        if int(robot.get_gripper_state()) == 1:
+                            _gs = 1
+                    except (TypeError, ValueError):
+                        pass
+                    if (
+                        action is not None
+                        and getattr(action, "joint_positions", None) is not None
+                        and len(action.joint_positions) >= 8
+                    ):
+                        _legacy_gripper_target = action.joint_positions[7]
+                        if _legacy_gripper_target is not None and float(_legacy_gripper_target) <= 0.02:
+                            _gs = 1
+                    _prev = getattr(robot, "_prev_gs_diag", 0)
+                    _ft = getattr(robot, "_finger_trace_left", 0)
+                    if _gs == 1 and _prev == 0:
+                        robot._finger_trace_left = 60
+                    elif _ft > 0:
+                        robot._finger_trace_left = _ft - 1
+                        if _ft % 5 == 0:
+                            _joint_positions = robot.get_joint_positions()
+                            _gripper_indices = robot.get_gripper_joint_indices()
+                            _fp = {
+                                str(robot.dof_names[index]): round(float(_joint_positions[index]), 4)
+                                for index in _gripper_indices
+                            }
+                            logger.info(
+                                f"[FINGER] mode={cfg.mode} ep={task_controller.episode_num} "
+                                f"t-close={60 - _ft} fingers={_fp}"
+                            )
+
+                    if _gs == 1 and _prev == 0:  # grasp instant
+                        robot._closed_once = True
+                        logger.info(
+                            f"[GRASP-DIAG] mode={cfg.mode} ep={task_controller.episode_num} "
+                            f"obj_pos={_round_values(state.get('object_position'))} "
+                            f"obj_quat={_object_quaternion(state, task)} "
+                            f"arm_err_now={round(float(getattr(robot, '_last_err', 0.0)), 4)} "
+                            f"arm_err_peak_approach={round(float(robot._ep_max_arm_err), 4)}"
+                        )
+                    elif _gs == 0 and _prev == 1:  # release instant
+                        logger.info(
+                            f"[RELEASE-DIAG] mode={cfg.mode} ep={task_controller.episode_num} "
+                            f"obj_pos={_round_values(state.get('object_position'))} "
+                            f"obj_quat={_object_quaternion(state, task)} "
+                            f"arm_err_max={round(float(getattr(robot, '_ep_max_arm_err', 0.0)), 4)}"
+                        )
+                    robot._prev_gs_diag = _gs
                 except Exception:
-                    pass
-                if action is not None and getattr(action, "joint_positions", None) is not None \
-                        and len(action.joint_positions) >= 8 and float(action.joint_positions[7]) <= 0.02:
-                    _gs = 1
-                _prev = getattr(robot, "_prev_gs_diag", 0)
-                # Finger-close trace: measured finger DOFs every 5 frames for 60
-                # frames after each close transition (collect vs replay contact).
-                _ft = getattr(robot, "_finger_trace_left", 0)
-                if _gs == 1 and _prev == 0:
-                    robot._finger_trace_left = 60
-                elif _ft > 0:
-                    robot._finger_trace_left = _ft - 1
-                    if _ft % 5 == 0:
-                        _fp = [round(float(v), 4) for v in robot.get_joint_positions()[7:9]]
-                        logger.info(f"[FINGER] mode={cfg.mode} ep={task_controller.episode_num} "
-                                    f"t-close={60 - _ft} fingers={_fp}")
-                if _gs == 1 and _prev == 0:  # grasp instant
-                    robot._closed_once = True
-                    logger.info(
-                        f"[GRASP-DIAG] mode={cfg.mode} ep={task_controller.episode_num} "
-                        f"obj_pos={_round(state.get('object_position'))} obj_quat={_oquat()} "
-                        f"arm_err_now={round(float(getattr(robot, '_last_err', 0.0)), 4)} "
-                        f"arm_err_peak_approach={round(float(robot._ep_max_arm_err), 4)}"
-                    )
-                elif _gs == 0 and _prev == 1:  # release instant
-                    logger.info(
-                        f"[RELEASE-DIAG] mode={cfg.mode} ep={task_controller.episode_num} "
-                        f"obj_pos={_round(state.get('object_position'))} obj_quat={_oquat()} "
-                        f"arm_err_max={round(float(getattr(robot, '_ep_max_arm_err', 0.0)), 4)}"
-                    )
-                robot._prev_gs_diag = _gs
-            except Exception:
-                pass
+                    logger.exception("Arm diagnostics failed")
             if done:
                 if is_success:
                     logger.success(f"Episode {task_controller.episode_num} succeeded.")
                 else:
                     logger.warning(f"Episode {task_controller.episode_num} failed.")
-                _am = getattr(robot, "_argmax_diag", (None, None, None))
-                logger.info(f"[EP-ARM-ERR] mode={cfg.mode} ep={task_controller.episode_num} "
-                            f"max_arm_track_err={round(float(getattr(robot, '_ep_max_arm_err', 0.0)), 4)} "
-                            f"at_frame={_am[0]}/{getattr(robot, '_frame_diag', 0)} joint={_am[1]} per_joint_err={_am[2]}")
-                robot._ep_max_arm_err = 0.0
-                robot._frame_diag = 0
-                robot._argmax_diag = (None, None, None)
-                robot._closed_once = False
+                _reset_episode_diagnostics(robot)
                 task_controller.print_failure_reason()
                 task.on_task_complete(is_success)
+                _episode_finalized = True
                 continue
             
             if save_video or show_video:

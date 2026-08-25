@@ -212,6 +212,10 @@ infer:
 replay:
   dataset_path: ""              # dir containing episode_*.h5
   episode_indices: []           # optional subset
+  max_episodes:                 # optional cap; the TOP-LEVEL max_episodes does
+                                # NOT apply in replay mode (replay defaults to
+                                # the whole dataset — the effective count is
+                                # logged as "[Replay] dataset has N episodes")
 ```
 
 ## Difficulty Levels
@@ -222,12 +226,13 @@ replay:
 | L2 | Multi-step composed | heat_liquid, pour_liquid, shake_beaker, stir_glassrod, transport_beaker, open_close, flask_to_cork, flask_to_triangle, stopper_to_flask, pipette_to_rack |
 | L3 | Generalization (OOD materials/objects) | pick, press, open, pour_liquid, heat_liquid, transport_beaker with `test_materials` |
 | L4 | Long-horizon sequences | clean_beaker, device_operation, liquid_mixing, open_transport_pour |
-| L5 | Mobile manipulation (Ridgebase) | navigation, close_pick, close_pick_place, far_pick, far_transport_place |
+| L5 | Mobile manipulation (Ridgebase) | navigation, close_pick, close_shake, close_pick_place, close_pour |
 
-### Level-5 status & design knobs (2026-07-09)
+### Level-5 status & design knobs (2026-07-18)
 
-All four L5 tasks collect at 100 episodes (attempt rate close_pick 87% / far_pick 95% /
-close_pick_place 78% / far_transport_place 88%); close_pick replays 94/100 in real physics.
+The current four-task manipulation suite is `close_pick`, `close_shake`, `close_pick_place`, and
+`close_pour`, each configured for 100 episodes. The older `far_pick` / `far_transport_place`
+experiment configs have been retired; `spawn.mode: far` remains an available task capability.
 Task-specific config keys (under `task:`), unique to the mobile tasks:
 
 - `spawn.mode`: `near` (close tasks) spawn ~1 m on the object→dock axis facing the object;
@@ -264,11 +269,11 @@ lingbot 0.71/15%, smolvla 0.84/10%, openpi 0.59/10%, gr00t 0.23/5%. Nav is learn
 
 - `scripts/lerobot_export/` — LeRobot v2.1/v3.0 export (`cli.py`, `merge_v21.py`,
   `verify_all.py`); one run dir per task, chunked episode layout.
-- `scripts/level345_collect/`, `scripts/level23_campaign/` — batch collect/replay campaign
-  runners; generate a temp Hydra config (`gen_config.py`) then run
-  `python main.py --config-name _autorun`.
-- `scripts/level23_eval/`, `scripts/level1_eval/` — remote VLA inference eval harnesses
-  (OpenPI, LingBot, SmolVLA, GR00T) incl. cluster serve/submit and tunnel scripts.
+- `scripts/urdf_to_usd/` — reproducible robot import pipeline; fetched source trees stay in
+  `third_party/`, while only the runtime USD and kinematic URDF closure is versioned.
+- `scripts/level23_eval/`, `scripts/level5_eval/` — remote VLA inference eval harnesses
+  (OpenPI, LingBot, SmolVLA, GR00T), including isolated temporary configs and tunnels.
+- `scripts/render_all_arm_picks.sh` — one-episode visual smoke runner for every registered arm.
 - `docs/` — local (non-shipped) reports on collect/replay/inference campaigns; check here
   first for prior findings before re-debugging a task. Start with `docs/PROJECT_OVERVIEW.md`
   (项目通识): consolidated project overview, level status, durable lessons, and an index of

@@ -27,6 +27,8 @@ from isaacsim.sensors.physics import ContactSensor
 from isaacsim.sensors.camera import Camera
 from loguru import logger
 
+import isaacsim.robot_motion.motion_generation as mg
+
 from robots.base_robot import BaseRobot, GRIPPER_OPEN, GRIPPER_CLOSED
 from utils.object_utils import ObjectUtils
 
@@ -189,6 +191,16 @@ class Franka(BaseRobot):
     def end_effector_prim_path(self) -> str:
         """USD prim path of the end effector."""
         return self._end_effector_prim_path
+
+    @property
+    def ik_end_effector_frame(self) -> str:
+        """Franka poses IK and c-space trajectories against the hand, not right_gripper."""
+        return "panda_hand"
+
+    @property
+    def motion_config(self) -> dict:
+        """Franka uses the Lula config shipped with Isaac Sim's motion_generation."""
+        return mg.interface_config_loader.load_supported_motion_policy_config("Franka", "RMPflow")
 
     @property
     def gripper_center_prim_path(self) -> str:

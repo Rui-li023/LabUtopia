@@ -1,11 +1,13 @@
+from typing import Any
+
+import numpy as np
 from isaacsim.core.utils.stage import get_stage_units
 from isaacsim.core.utils.types import ArticulationAction
-from isaacsim.core.utils.rotations import euler_angles_to_quat
-import numpy as np
-import typing
+from scipy.spatial.transform import Rotation as R
+
+from robots.base_robot import GRIPPER_CLOSED, GRIPPER_OPEN, BaseRobot
 
 from .atomic_base_controller import AtomicBaseController
-from robots.base_robot import BaseRobot, GRIPPER_CLOSED, GRIPPER_OPEN
 
 
 class PickController(AtomicBaseController):
@@ -21,14 +23,24 @@ class PickController(AtomicBaseController):
     """
 
     DEFAULT_DT = [0.004, 0.002, 0.005, 0.02, 0.05, 0.004, 0.006]
+    ARRIVAL_PHASES = frozenset({0, 1, 2, 5})
+    PHASE_NAMES = {
+        0: "move_above",
+        1: "pregrasp",
+        2: "grasp",
+        3: "settle",
+        4: "close",
+        5: "lift",
+        6: "done",
+    }
 
     def __init__(
         self,
         name: str,
-        cspace_controller: typing.Any,
-        events_dt: typing.Optional[typing.List[float]] = None,
+        cspace_controller: Any,
+        events_dt: list[float] | None = None,
         position_threshold: float = 0.01,
-        robot: typing.Optional[BaseRobot] = None,
+        robot: BaseRobot | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -42,9 +54,28 @@ class PickController(AtomicBaseController):
         self.object_size = None
         self._robot_position = None
 
+        # Opt-in arrival-driven scheduling. The legacy scheduler treats events_dt as
+        # a duration and advances even when the TCP never reaches its target. With
+        # this enabled, motion phases advance only after a stable arrival; events_dt
+        # becomes the per-phase timeout instead.
+        self.adaptive_phase_completion = False
+        self.arrival_stable_steps = 1
+        self._arrival_steps = 0
+        self._transitioned_this_step = False
+        self._phase_failure_reason = ""
+        self._last_target = None
+        self._last_gripper_position = None
+        self._last_position_error = None
+        # Opt-in for physical grasps where the fingers can bump the object during
+        # ingress. Once the final descent starts, keep commanding the last observed
+        # object centre instead of chasing an object that contact already displaced.
+        self.lock_final_approach_target = False
+        self._locked_picking_position = None
+
         # Per-episode noise (sampled lazily)
         self._pre_offset_z_noise = 0.0
         self._after_offset_z_noise = 0.0
+        self.orientation_noise_deg = 15.0
         self._orientation_angle_deg = 0.0
 
     def set_robot_position(self, position) -> None:
@@ -64,7 +95,7 @@ class PickController(AtomicBaseController):
         self._after_offset_z_noise = self._uniform(0.0, 0.04)
         # Yaw noise around the WORLD vertical: varies grasp heading while
         # keeping the held object level (tool-Z rotation tilts side grasps).
-        self._orientation_angle_deg = self._noisy(0.0, 15.0)
+        self._orientation_angle_deg = self._noisy(0.0, self.orientation_noise_deg)
 
     # ── Forward ──────────────────────────────────────────────────
 
@@ -76,12 +107,12 @@ class PickController(AtomicBaseController):
         object_size: np.ndarray,
         gripper_control,
         gripper_position: np.ndarray,
-        end_effector_orientation: typing.Optional[np.ndarray] = None,
+        end_effector_orientation: np.ndarray | None = None,
         pre_offset_z: float = 0.12,
         after_offset_z: float = 0.15,
         pre_offset_x: float = 0.1,
-        gripper_distances: float = None,
-    ) -> typing.Tuple[ArticulationAction, np.ndarray]:
+        gripper_distances: float | None = None,
+    ) -> tuple[ArticulationAction, np.ndarray]:
         self.object_size = object_size
         n = current_joint_positions.shape[0]
 
@@ -91,42 +122,119 @@ class PickController(AtomicBaseController):
         if picking_position is None or object_size is None:
             action = self._null_action(n)
             return action, self._build_record_array(
-                action, current_joint_positions,
-                gripper_state=self._current_gripper_state)
+                action, current_joint_positions, gripper_state=self._current_gripper_state
+            )
 
         # First call: open gripper
         if self._start:
             self._start = False
             self._open_gripper()
             action = self._null_action(n)
-            return action, self._build_record_array(action, current_joint_positions,
-                                                    gripper_state=GRIPPER_OPEN)
+            return action, self._build_record_array(action, current_joint_positions, gripper_state=GRIPPER_OPEN)
 
         if end_effector_orientation is None:
-            end_effector_orientation = euler_angles_to_quat(np.array([0, np.pi, 0]))
+            # xyzw, to match _grasp_quat/GraspFrame -- everything from here to the
+            # RMPFlow boundary (_quat_multiply, _apply_world_yaw) is scipy-ordered.
+            # Isaac's euler_angles_to_quat returns wxyz and used to be fed straight
+            # into that xyzw math.
+            end_effector_orientation = R.from_euler("xyz", [0.0, np.pi, 0.0]).as_quat()
 
         self._ensure_randomization()
 
         # Apply per-episode noise
         pre_offset_z = max(0.0, pre_offset_z + self._pre_offset_z_noise)
         after_offset_z = max(0.0, after_offset_z + self._after_offset_z_noise)
-        end_effector_orientation = self._apply_world_yaw(
-            end_effector_orientation, self._orientation_angle_deg)
+        end_effector_orientation = self._apply_world_yaw(end_effector_orientation, self._orientation_angle_deg)
 
+        target_position = np.asarray(picking_position, dtype=float)
+        if self.lock_final_approach_target and self._event >= 2:
+            if self._locked_picking_position is None:
+                self._locked_picking_position = target_position.copy()
+            target_position = self._locked_picking_position.copy()
+
+        self._transitioned_this_step = False
         action = self._execute_phase(
-            picking_position, end_effector_orientation,
-            current_joint_positions, object_name, gripper_control,
-            gripper_position, pre_offset_z, after_offset_z, pre_offset_x,
-            gripper_distances)
+            target_position,
+            end_effector_orientation,
+            current_joint_positions,
+            object_name,
+            gripper_control,
+            gripper_position,
+            pre_offset_z,
+            after_offset_z,
+            pre_offset_x,
+            gripper_distances,
+        )
 
         self._advance_state()
         return action, self._build_record_array(
-            action, current_joint_positions,
-            gripper_state=self._current_gripper_state)
+            action, current_joint_positions, gripper_state=self._current_gripper_state
+        )
+
+    # ── Adaptive phase scheduling ────────────────────────────────
+
+    def _next_event(self):
+        super()._next_event()
+        self._arrival_steps = 0
+        self._transitioned_this_step = True
+
+    def _advance_if_arrived(self, reached, gripper_position, target) -> None:
+        """Advance after a configurable number of consecutive in-tolerance steps."""
+        gripper_position = np.asarray(gripper_position, dtype=float)
+        target = np.asarray(target, dtype=float)
+        self._last_gripper_position = gripper_position.copy()
+        self._last_target = target.copy()
+        self._last_position_error = float(np.linalg.norm(gripper_position - target))
+
+        if not reached:
+            self._arrival_steps = 0
+            return
+        self._arrival_steps += 1
+        required_steps = self.arrival_stable_steps if self.adaptive_phase_completion else 1
+        if self._arrival_steps >= required_steps:
+            self._next_event()
+
+    def _advance_state(self):
+        if not self.adaptive_phase_completion:
+            super()._advance_state()
+            return
+        if self._transitioned_this_step:
+            return
+        if self._event not in self.ARRIVAL_PHASES:
+            super()._advance_state()
+            return
+        if self._event >= len(self._events_dt):
+            return
+
+        self._t += self._events_dt[self._event]
+        if self._t < 1.0:
+            return
+
+        phase_name = self.PHASE_NAMES.get(self._event, str(self._event))
+        error = f"{self._last_position_error:.3f} m" if self._last_position_error is not None else "unknown"
+        target = np.round(self._last_target, 3).tolist() if self._last_target is not None else None
+        actual = np.round(self._last_gripper_position, 3).tolist() if self._last_gripper_position is not None else None
+        self._phase_failure_reason = (
+            f"Pick phase {self._event} ({phase_name}) timed out before stable TCP "
+            f"arrival: error={error}, target={target}, actual={actual}"
+        )
+        self._is_done = True
+
+    def get_failure_reason(self) -> str:
+        return self._phase_failure_reason
 
     # ── Phase execution ──────────────────────────────────────────
 
-    def _calculate_approach_direction(self, picking_position):
+    def _calculate_approach_direction(self, picking_position, orientation=None):
+        if self.approach_along_tool and orientation is not None:
+            # The controlled frame's local +Z points into the grasp. Back the
+            # pre-grasp waypoint away along its horizontal projection so the open
+            # fingers enter the object gap without sweeping sideways through it.
+            tool_axis = R.from_quat(np.asarray(orientation, dtype=float)).as_matrix()[:, 2]
+            tool_axis[2] = 0.0
+            norm = np.linalg.norm(tool_axis)
+            if norm > 1e-6:
+                return -tool_axis / norm
         if self._robot_position is None:
             return np.array([-1, 0, 0])
         h = picking_position[:2] - self._robot_position[:2]
@@ -137,39 +245,91 @@ class PickController(AtomicBaseController):
         # form crashed mobile pick with a (3,)+(2,) shape mismatch).
         return np.array([-h[0] / n, -h[1] / n, 0.0])
 
-    def _execute_phase(self, pos, orient, jpos, obj_name, grip_ctrl,
-                       grip_pos, pre_z, after_z, pre_x, grip_dist):
-        approach = self._calculate_approach_direction(pos)
+    # Opt-in per robot; world-up lift stays the default so every existing level is
+    # unaffected.
+    lift_along_tool: bool = False
+    lift_offset_xyz: np.ndarray | None = None
+    approach_along_tool: bool = False
+    require_pregrasp_xyz: bool = False
+    pregrasp_position_threshold: float | None = None
+    grasp_position_threshold: float | None = None
+
+    @staticmethod
+    def _to_isaac_quat(orient) -> np.ndarray:
+        """scipy xyzw -> Isaac wxyz, for handoff to the motion policy.
+
+        RMPFlow runs the target orientation through ``quats_to_rot_matrices``, which
+        reads (w, x, y, z); ``GraspFrame.quat`` and this class's quaternion helpers
+        produce scipy's (x, y, z, w). Passing one for the other is not a small error --
+        it is a different rotation entirely, and it silently replaced the configured
+        grasp pose on every pick.
+
+        It went unnoticed because RMPFlow weights position roughly 250x above
+        orientation (target_rmp.min_metric_scalar 2500 vs axis_target_rmp.metric_scalar
+        10), so a roomy arm still reaches the point and grasps: the Franka scores 90-100%
+        either way. An arm with a +/-1.57 wrist does not get that slack -- the ARX X5 was
+        driven into a joint-limit attractor 0.28 m off target and failed every episode.
+        ``open_controller``/``close_controller`` already convert (``[:, [3,0,1,2]]``);
+        this path did not.
+        """
+        q = np.asarray(orient, dtype=np.float64)
+        return q[[3, 0, 1, 2]]
+
+    def _execute_phase(self, pos, orient, jpos, obj_name, grip_ctrl, grip_pos, pre_z, after_z, pre_x, grip_dist):
+        approach = self._calculate_approach_direction(pos, orient)
         n = jpos.shape[0]
         su = get_stage_units()
+        # `orient` stays xyzw below (event 4 hands it to the gripper attachment);
+        # only the motion-policy calls take the Isaac ordering.
+        orient_wxyz = self._to_isaac_quat(orient)
 
         if self._event == 0:
             target = pos + approach * (pre_x / su)
             target[2] += self.object_size[2] + pre_z
             action = self._cspace_controller.forward(
-                target_end_effector_position=target,
-                target_end_effector_orientation=orient)
-            if self._xy_reached(grip_pos, target):
-                self._next_event()
+                target_end_effector_position=target, target_end_effector_orientation=orient_wxyz
+            )
+            reached = (
+                self._xyz_reached(grip_pos, target)
+                if self.adaptive_phase_completion
+                else self._xy_reached(grip_pos, target)
+            )
+            self._advance_if_arrived(reached, grip_pos, target)
             return action
 
         elif self._event == 1:
             target = pos + approach * (pre_x / su)
             target[2] += self.get_pickprez_offset(obj_name) / su
             action = self._cspace_controller.forward(
-                target_end_effector_position=target,
-                target_end_effector_orientation=orient)
-            if self._xy_reached(grip_pos, target):
-                self._next_event()
+                target_end_effector_position=target, target_end_effector_orientation=orient_wxyz
+            )
+            reached = (
+                self._xyz_reached(
+                    grip_pos,
+                    target,
+                    threshold=self.pregrasp_position_threshold,
+                )
+                if self.require_pregrasp_xyz or self.adaptive_phase_completion
+                else self._xy_reached(
+                    grip_pos,
+                    target,
+                    threshold=self.pregrasp_position_threshold,
+                )
+            )
+            self._advance_if_arrived(reached, grip_pos, target)
             return action
 
         elif self._event == 2:
             pos[2] += self.get_pickz_offset(obj_name) / su
             action = self._cspace_controller.forward(
-                target_end_effector_position=pos,
-                target_end_effector_orientation=orient)
-            if self._xyz_reached(grip_pos, pos):
-                self._next_event()
+                target_end_effector_position=pos, target_end_effector_orientation=orient_wxyz
+            )
+            reached = self._xyz_reached(
+                grip_pos,
+                pos,
+                threshold=self.grasp_position_threshold,
+            )
+            self._advance_if_arrived(reached, grip_pos, pos)
             return action
 
         elif self._event == 3:
@@ -188,25 +348,36 @@ class PickController(AtomicBaseController):
             else:
                 self._close_gripper()
             self._lift_target = pos.copy()
-            self._lift_target[2] += after_z / su
+            if self.lift_offset_xyz is not None:
+                self._lift_target = self._lift_target + self.lift_offset_xyz / su
+            elif self.lift_along_tool:
+                # Retract along the tool's own approach axis instead of straight up.
+                # A short arm grasping near its own base height has very little vertical
+                # room there: RMPFlow is a local policy and simply stalls a few cm up
+                # (Piper: +3.8 cm against the +10 cm the task needs) because reaching
+                # higher would require reconfiguring the elbow. Retracting moves back
+                # toward the base, where there is room, and still lifts the object.
+                # orient is xyzw (scipy convention, as produced by _grasp_quat).
+                approach_axis = R.from_quat(np.asarray(orient)).as_matrix()[:, 2]
+                self._lift_target = self._lift_target - approach_axis * (after_z / su)
+            else:
+                self._lift_target[2] += after_z / su
             if "glass" in obj_name:
                 # Attach the PARENT prim, not the Cylinder mesh: the world-space
                 # follow in grapper_manager writes the prim's translate op, which
                 # for the parent equals its world origin. The mesh child's
                 # translate is in parent-LOCAL units (scaled), so attaching it
-                # moves the rod by ~scale× too little and it never reaches the
+                # moves the rod by ~scale x too little and it never reaches the
                 # beaker (rod stayed at the pick spot, xy≈0.5 vs <0.04 needed).
-                grip_ctrl.add_object_to_gripper(
-                    "/World/glass_rod",
-                    self._robot.gripper_center_prim_path)
+                grip_ctrl.add_object_to_gripper("/World/glass_rod", self._robot.gripper_center_prim_path)
             return self._null_action(n)
 
         elif self._event == 5:
             action = self._cspace_controller.forward(
-                target_end_effector_position=self._lift_target,
-                target_end_effector_orientation=orient)
-            if self._xyz_reached(grip_pos, self._lift_target):
-                self._next_event()
+                target_end_effector_position=self._lift_target, target_end_effector_orientation=orient_wxyz
+            )
+            reached = self._xyz_reached(grip_pos, self._lift_target)
+            self._advance_if_arrived(reached, grip_pos, self._lift_target)
             return action
 
         else:
@@ -216,29 +387,51 @@ class PickController(AtomicBaseController):
 
     def get_gripper_distance(self, item_name):
         table = {
-            "rod": 0.003, "tube": 0.01, "beaker": 0.022,
+            "rod": 0.003,
+            "tube": 0.01,
+            "beaker": 0.022,
             # beaker_03/04/05 (liquid_mixing only): NO grip-distance value makes
             # the triple-pour reproduce open-loop. 0.022 = zero margin → flung
             # during pour; 0.020 = ejects-on-grasp (lift 0.007). The pour-tilt
             # slip is irreducible with position-grip here. Kept at 0.022 (best
             # collect); liquid_mixing replay needs force-mode or attach (TODO).
-            "beaker_l": 0.03, "beaker_04": 0.022, "beaker_05": 0.022,
-            "beaker_03": 0.022, "Erlenmeyer flask": 0.018,
-            "pipette": 0.008, "microscope slide": 0.002,
-            "graduated_cylinder_01": 0.005, "graduated_cylinder_02": 0.018,
+            "beaker_l": 0.03,
+            "beaker_04": 0.022,
+            "beaker_05": 0.022,
+            "beaker_03": 0.022,
+            "Erlenmeyer flask": 0.018,
+            "pipette": 0.008,
+            "microscope slide": 0.002,
+            "graduated_cylinder_01": 0.005,
+            "graduated_cylinder_02": 0.018,
             "graduated_cylinder_04": 0.030,
         }
         return table.get(item_name.lower(), 0.0)
 
     def get_pickz_offset(self, item_name):
+        # Per-run override, set by the task controller from `grasp.pick_z_offset`.
+        # The table below is shared by every L1-L5 task, so a scene that wants a
+        # different grasp height must NOT edit it -- set the override instead.
+        if getattr(self, "pick_z_offset_override", None) is not None:
+            return self.pick_z_offset_override
         table = {
-            "conical_bottle02": 0.065, "conical_bottle03": 0.07,
-            "conical_bottle04": 0.08, "beaker": 0.0, "beaker_04": 0.0,
-            "beaker_05": 0.0, "beaker_03": 0.0, "beaker2": 0.0,
-            "beaker_2": 0.0, "beaker_l": 0.02,
-            "graduated_cylinder_01": 0.0, "graduated_cylinder_02": 0.0,
-            "graduated_cylinder_03": 0.0, "graduated_cylinder_04": 0.0,
-            "volume_flask": 0.05, "glass_rod": 0.02, "round_bottomflask": 0.03,
+            "conical_bottle02": 0.065,
+            "conical_bottle03": 0.07,
+            "conical_bottle04": 0.08,
+            "beaker": 0.0,
+            "beaker_04": 0.0,
+            "beaker_05": 0.0,
+            "beaker_03": 0.0,
+            "beaker2": 0.0,
+            "beaker_2": 0.0,
+            "beaker_l": 0.02,
+            "graduated_cylinder_01": 0.0,
+            "graduated_cylinder_02": 0.0,
+            "graduated_cylinder_03": 0.0,
+            "graduated_cylinder_04": 0.0,
+            "volume_flask": 0.05,
+            "glass_rod": 0.02,
+            "round_bottomflask": 0.03,
             "round_bottom_flask": 0.025,
             "pipette": 0.0,
         }
@@ -252,11 +445,16 @@ class PickController(AtomicBaseController):
 
     def get_pickprez_offset(self, item_name):
         table = {
-            "volume_flask": 0, "beaker2": 0.05, "round_bottomflask": 0.04,
+            "volume_flask": 0,
+            "beaker2": 0.05,
+            "round_bottomflask": 0.04,
             "round_bottom_flask": 0.03,
-            "conical_bottle03": 0.07, "conical_bottle04": 0.08,
-            "graduated_cylinder_01": 0.05, "graduated_cylinder_02": 0.03,
-            "graduated_cylinder_03": 0.03, "graduated_cylinder_04": 0.03,
+            "conical_bottle03": 0.07,
+            "conical_bottle04": 0.08,
+            "graduated_cylinder_01": 0.05,
+            "graduated_cylinder_02": 0.03,
+            "graduated_cylinder_03": 0.03,
+            "graduated_cylinder_04": 0.03,
             "pipette": 0.0,
         }
         item_lower = item_name.lower()
@@ -271,8 +469,17 @@ class PickController(AtomicBaseController):
 
     def reset(self, events_dt=None):
         super().reset(events_dt)
+        if hasattr(self, "_is_done"):
+            del self._is_done
         self.object_size = None
         self._robot_position = None
+        self._arrival_steps = 0
+        self._transitioned_this_step = False
+        self._phase_failure_reason = ""
+        self._last_target = None
+        self._last_gripper_position = None
+        self._last_position_error = None
+        self._locked_picking_position = None
         self._pre_offset_z_noise = 0.0
         self._after_offset_z_noise = 0.0
         self._orientation_angle_deg = 0.0

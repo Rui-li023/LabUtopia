@@ -71,11 +71,21 @@ class MobilePickController(MobileManipControllerBase):
                     "object_name": state.get("object_name", "unknown"),
                     "spawn_mode": str(getattr(spawn, "mode", "far")) if spawn is not None else "far",
                 })
-        action, nav_done, action11 = self._nav_step(state)
-        self._record_step(state, action11, PHASE_NAVIGATE)
-        if nav_done:
-            self._log_dock_diag(state, state["dock_point"])
-            logger.info("Navigation complete — starting pick phase")
+        if not self._nav_reached:
+            action, nav_done, action11 = self._nav_step(state)
+            self._record_step(state, action11, PHASE_NAVIGATE)
+            if nav_done:
+                if not self._corr_enabled:
+                    self._log_dock_diag(state, state["dock_point"])
+                    logger.info("Navigation complete — starting pick phase")
+                    self.navigation_done = True
+                else:
+                    self._nav_reached = True
+            return action, False, False
+        action, corr_done = self._base_correction_step(
+            state, state["object_position"], state["dock_point"])
+        if corr_done:
+            logger.info("Base correction done — starting pick phase")
             self.navigation_done = True
         return action, False, False
 

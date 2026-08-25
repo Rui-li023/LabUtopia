@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<!-- Kinova Gen3 arm with the project-standard Robotiq 2F-85. -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="gen3_labutopia_robotiq_2f_85">
+  <xacro:include filename="$(find kortex_description)/robots/kortex_robot.xacro"/>
+  <xacro:include filename="$(find robotiq_description)/xacro/2F85.xacro"/>
+
+  <xacro:load_robot
+    arm="gen3"
+    gripper=""
+    dof="7"
+    vision="false"
+    sim="false"
+    prefix=""/>
+  <xacro:Robotiq85 name=""/>
+
+  <joint name="tool_to_gripper_base" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 1.5707963267948966"/>
+    <parent link="tool_frame"/>
+    <child link="gripper_base"/>
+  </joint>
+
+  <link name="grasp_frame"/>
+  <joint name="gripper_base_to_grasp_frame" type="fixed">
+    <origin xyz="0 0 0.13" rpy="0 0 0"/>
+    <parent link="gripper_base"/>
+    <child link="grasp_frame"/>
+  </joint>
+</robot>

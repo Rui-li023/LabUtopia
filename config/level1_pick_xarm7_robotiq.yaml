@@ -1,0 +1,71 @@
+# Level-1 pick with a UFACTORY xArm7 carrying a Robotiq 2F-85.
+#
+# xArm7 and the gripper are composed into one USD articulation. The xArm arm has
+# seven c-space joints; its Robotiq driver/mimics use the same width mapping as the
+# UR3e/UR5e/UR10e adapters.
+
+name: level1_pick_xarm7_robotiq
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 8
+seed: 7
+
+task:
+  max_steps: 2000
+  obj_paths:
+    - path: "/World/beaker2"
+      position_range:
+        # The horizontal grasp has a repeatable wrist/gripper dead zone around
+        # y=[-0.02, 0.00]. This measured region completed 8/8 remote attempts.
+        x: [0.22, 0.28]
+        y: [-0.08, -0.04]
+        z: [0.84, 0.84]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+grasp:
+  # A level horizontal wrist keeps the open fingers clear of the beaker wall.
+  ee_euler_deg: [0, 90, 0]
+  bearing_gain: 1.0
+  approach_from_base: true
+  pick_z_offset: 0.045
+  # Full 2F-85 opening in metres. Binary full-close ejected the beaker; 55 mm
+  # closes the driver to about 0.286 rad and keeps the object through the lift.
+  gripper_distance: 0.055
+
+robot:
+  type: "xarm7_robotiq"
+  position: [-0.35, 0, 0.71]
+
+collector:
+  type: "default"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true
+action_randomization: false

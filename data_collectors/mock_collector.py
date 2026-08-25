@@ -7,6 +7,10 @@ from .data_collector import DataCollector
 class MockCollector(DataCollector):
     """Mock data collector for testing — same interface as DataCollector but does nothing."""
 
+    # Unlike real collection, smoke tests cap attempted episodes so a broken task
+    # terminates after max_episodes failures instead of waiting for successes forever.
+    counts_attempts = True
+
     def __init__(self, camera_configs: List[dict], save_dir="output", max_episodes=10, max_workers=4, compression=None):
         self.save_dir = save_dir
         self.max_episodes = max_episodes

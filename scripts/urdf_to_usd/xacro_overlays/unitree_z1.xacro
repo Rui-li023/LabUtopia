@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!-- Unitree Z1 with its native one-DOF gripper. -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="unitree_z1_labutopia">
+  <xacro:include filename="$(find z1_description)/xacro/robot.xacro"/>
+
+  <!-- Canonical +Z follows the wrist +X approach axis; canonical +Y follows
+       the native gripper's +Z opening axis. -->
+  <link name="grasp_frame"/>
+  <joint name="z1_gripper_to_grasp_frame" type="fixed">
+    <origin xyz="0.12 0 0.012" rpy="1.5707963267948966 0 1.5707963267948966"/>
+    <parent link="gripperStator"/>
+    <child link="grasp_frame"/>
+  </joint>
+</robot>

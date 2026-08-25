@@ -15,21 +15,21 @@ except ModuleNotFoundError:
 class RemoteInferenceEngine(BaseInferenceEngine):
     """
     Remote inference engine using OpenPI client
-    
+
     Connects to OpenPI server for remote inference using WebSocket communication
     """
-    
+
     def _get_n_obs_steps(self) -> int:
         """Get observation steps from configuration"""
         return self.cfg.infer.n_obs_steps
-    
+
     def _init_inference_engine(self):
         """Initialize OpenPI client connection"""
         # Get server connection parameters
         self.host = getattr(self.cfg.infer, 'host', '0.0.0.0')
         self.port = getattr(self.cfg.infer, 'port', None)
         self.api_key = getattr(self.cfg.infer, 'api_key', None)
-        
+
         # Initialize OpenPI WebSocket client.
         # NB: openpi-client's WebsocketClientPolicy._wait_for_server only retries
         # ConnectionRefusedError. Behind an SSH -L tunnel the local listener always
@@ -59,20 +59,20 @@ class RemoteInferenceEngine(BaseInferenceEngine):
                 time.sleep(10)
         logger.error(f"Failed to initialize OpenPI client after 15 attempts: {last_err}")
         raise last_err
-    
+
     def _prepare_observation(self, obs_dict: Dict[str, torch.Tensor]) -> Dict:
         """
         Prepare observation data for OpenPI client
-        
+
         Args:
             obs_dict: Dictionary containing observation tensors
-            
+
         Returns:
             Dictionary formatted for OpenPI inference
         """
         observation = {}
         n_obs_steps = self._get_n_obs_steps()
-        
+
         # Process each observation in the dictionary
         # Note: base_inference_engine only adds a batch dim when shape[0] != 1,
         # so for n_obs_steps==1 arrays are (1, ...) (time dim, no batch dim),
@@ -114,22 +114,23 @@ class RemoteInferenceEngine(BaseInferenceEngine):
                     processed_images = []
                     for img in images:
                         if img.dtype != np.uint8:
-                            img = (img * 255).astype(np.uint8)                        
+                            img = (img * 255).astype(np.uint8)
                         processed_images.append(img)
                     observation[obs_key] = np.stack(processed_images, axis=0)
-        
+
         return observation
-    
+
     def _predict_action(self, obs_dict: Dict[str, torch.Tensor], language_instruction: str = "") -> np.ndarray:
         """
         Predict action using OpenPI client
-        
+
         Args:
             obs_dict: Dictionary containing observation tensors
-            
+
         Returns:
             Predicted action array
         """
+        observation = None
         try:
             # Prepare observation data
             observation = self._prepare_observation(obs_dict)
@@ -170,21 +171,69 @@ class RemoteInferenceEngine(BaseInferenceEngine):
                 else:
                     raise ValueError(f"No action found in server response. Available keys: {list(result.keys())}")
 
+            # 夹爪维单独记：闭合发生在轨迹 70-80% 处，只记前 3 次调用根本看不到。
+            _g = action[:, 7] if action.ndim > 1 else action[7:8]
+            if self._infer_call_count <= 3 or _g.max() > 0.2 or self._infer_call_count % 10 == 0:
+                logger.info(
+                    f"[grip#{self._infer_call_count}] gripper chunk: "
+                    f"min={_g.min():.3f} max={_g.max():.3f} mean={_g.mean():.3f} "
+                    f"state_g={float(obs_dict.get('gripper_state', -1)) if isinstance(obs_dict, dict) else -1:.4f}"
+                )
             if self._infer_call_count <= 3:
-                a_min = action.min(axis=0) if action.ndim > 1 else action
-                a_max = action.max(axis=0) if action.ndim > 1 else action
                 logger.info(
                     f"[act#{self._infer_call_count}] shape={action.shape} dtype={action.dtype} "
                     f"first={np.array2string(action[0] if action.ndim>1 else action, precision=3)} "
                     f"last={np.array2string(action[-1] if action.ndim>1 else action, precision=3)}"
                 )
+            # A successful call ends any failure streak. Without this reset the
+            # counter accumulated across the whole run, so five *scattered*
+            # failures aborted the eval as if they had been consecutive.
+            self._consecutive_failures = 0
+            self._last_action = action
             return action
-            
+
         except Exception as e:
-            logger.error(f"OpenPI inference failed: {e}")
-            # Return zero action as fallback
-            return np.zeros((8, 8))  # Default action shape
-    
+            # 断线可恢复：隧道/服务端偶发断开时重建 client 重发同一份 observation。
+            # 旧行为是直接返回全零动作继续跑，结果整轮评测"成功完成"但每步都是空动作，
+            # 成功率恒为 0 且毫无提示 —— 这种静默失败比直接报错危险得多。
+            import time as _t
+            # `observation` stays None when _prepare_observation itself raised —
+            # retrying then would die on NameError and mask the real error.
+            retries = int(getattr(self.cfg.infer, "max_retries", 3))
+            for attempt in range(1, retries + 1) if observation is not None else ():
+                try:
+                    _t.sleep(min(2 * attempt, 5))
+                    self.client = WebsocketClientPolicy(host=self.host, port=self.port, api_key=self.api_key)
+                    result = self.client.infer(observation)
+                    action = np.array(result.get('action', result.get('actions')))
+                    logger.success(f"OpenPI 重连成功（第 {attempt} 次重试）")
+                    self._consecutive_failures = 0
+                    self._last_action = action
+                    return action
+                except Exception as e2:
+                    logger.warning(f"  重试 {attempt}/{retries} 失败: {e2}")
+            self._consecutive_failures = getattr(self, "_consecutive_failures", 0) + 1
+            logger.error(
+                f"OpenPI 推理连续失败 {self._consecutive_failures} 次（3 次重连均失败）: {e}"
+            )
+            if self._consecutive_failures >= 5:
+                raise RuntimeError(
+                    f"远程推理连续 {self._consecutive_failures} 次失败，中止评测以免产出无效结果"
+                ) from e
+            # Hold the last commanded pose. The old fallback returned zeros, which
+            # in this ABSOLUTE joint-position action space is not "do nothing" —
+            # it slams the arm to the all-zero configuration and opens the
+            # gripper, dropping whatever is held.
+            last = getattr(self, "_last_action", None)
+            if last is not None:
+                hold = np.asarray(last)
+                hold = hold[-1:] if hold.ndim > 1 else hold[np.newaxis, :]
+                logger.warning("远程推理失败: 保持上一条动作 (旧行为是甩到全零构型)")
+                return np.repeat(hold, 8, axis=0)
+            raise RuntimeError(
+                "远程推理在第一次调用就失败, 没有可保持的上一条动作; 中止而不是发送零动作"
+            ) from e
+
     def close(self):
         """Close OpenPI client connection"""
         try:

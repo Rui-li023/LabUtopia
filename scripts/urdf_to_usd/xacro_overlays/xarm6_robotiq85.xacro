@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<!-- UFACTORY xArm6 with the project-standard Robotiq 2F-85. -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="xarm6_labutopia_robotiq_2f_85">
+  <xacro:include filename="$(find xarm_description)/urdf/xarm_device_macro.xacro"/>
+  <xacro:include filename="$(find robotiq_description)/xacro/2F85.xacro"/>
+
+  <xacro:xarm_device
+    prefix=""
+    dof="6"
+    robot_type="xarm"
+    add_gripper="false"
+    add_vacuum_gripper="false"
+    add_bio_gripper="false"
+    load_gazebo_plugin="false"
+    attach_to="world"
+    attach_xyz="0 0 0"
+    attach_rpy="0 0 0"/>
+  <xacro:Robotiq85 name=""/>
+
+  <joint name="link_eef_to_gripper_base" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="link_eef"/>
+    <child link="gripper_base"/>
+  </joint>
+
+  <!-- Pad plane measured on the composed 2F-85: 130 mm from gripper_base. -->
+  <link name="tool_frame"/>
+  <joint name="gripper_base_to_tool_frame" type="fixed">
+    <origin xyz="0 0 0.13" rpy="0 0 0"/>
+    <parent link="gripper_base"/>
+    <child link="tool_frame"/>
+  </joint>
+</robot>

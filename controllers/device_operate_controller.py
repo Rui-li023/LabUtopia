@@ -44,6 +44,10 @@ class DeviceOperateController(BaseController):
         self.initial_beaker3_position = None
         self.initial_button_position = None
         self._max_button_press = 0.0
+        # Must init here (not only in reset()): _step_infer reads end_handle_position
+        # every step (OPEN_DOOR capture), and the first _step_infer can run before the
+        # first reset() in infer mode -> AttributeError -> Isaac crash on device_operation.
+        self.end_handle_position = None
 
     def _init_collect_mode(self, cfg, robot):
         """Initialize controller for data collection mode."""
@@ -182,7 +186,10 @@ class DeviceOperateController(BaseController):
             distance = abs(np.linalg.norm(np.array(current_pos) - self.initial_handle_position))
             return distance > 0.13 and end_effector_distance > 0.04
         elif self.current_phase == Phase.MOVE_HIGHER:
-            return state['gripper_position'][2] - self.end_handle_position[2] > 0.15
+            gp = state.get('gripper_position')
+            if gp is None or self.end_handle_position is None:
+                return False
+            return gp[2] - self.end_handle_position[2] > 0.15
         elif self.current_phase == Phase.PICK_BEAKER:
             object_pos = state['beaker_position']
             return object_pos[2] > self.initial_beaker_position[2] + 0.05  
@@ -410,6 +417,12 @@ class DeviceOperateController(BaseController):
         if self.current_phase != Phase.FINISHED:
             success = self._check_phase_success(state)
             if success:
+                # Infer never runs _get_phase_action (the collect-only scripted open that
+                # sets end_handle_position), so capture it here the moment OPEN_DOOR is
+                # detected — before advancing to MOVE_HIGHER, whose check reads it. Without
+                # this the MOVE_HIGHER branch dereferences None and crashes Isaac.
+                if self.current_phase == Phase.OPEN_DOOR and self.end_handle_position is None:
+                    self.end_handle_position = state.get('door_handle_position')
                 print(f"Inference: {self.current_phase.value} success!")
                 self.success_steps.add(self.current_phase)
                 self._advance_to_next_phase()

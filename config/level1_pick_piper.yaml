@@ -1,0 +1,104 @@
+# Level-1 pick with the Agilex Piper arm instead of the Franka.
+#
+# Exists to prove the shared pick controller is arm-agnostic: same task_type and
+# controller_type as level1_pick, only the robot block differs.
+#
+# Base placement is NOT copied from the Franka config. Piper reaches ~0.57 m against
+# the Franka's ~0.85 m, so at the Franka's x=-0.4 the beaker sits ~0.68 m away --
+# outside Piper's workspace, and every grasp would fail as an IK miss rather than a
+# controller problem. The base is moved forward to put the beaker mid-workspace.
+
+name: level1_pick_piper
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 10
+
+task:
+  max_steps: 2500
+  obj_paths:
+    - path: "/World/beaker2"
+      # 0.75x. At full size this beaker is 68.8 mm across at its base against Piper's
+      # 70 mm maximum opening -- about 1 mm of clearance, so the fingers catch the wall
+      # and shove the beaker instead of closing around it. Franka has 11 mm to spare,
+      # which is why the same task and controller succeed there unscaled.
+      scale: 0.70
+      # Centred on Piper's workspace at the configured [-0.20, -0.15, 0.80] base pose.
+      # An IK sweep over the three pick waypoints (pre-grasp, grasp, lift) puts the
+      # feasible region at x in [0.00, 0.28], y in [-0.34, 0.02]; this box sits
+      # comfortably inside it.
+      # Centred on the highest joint-limit-margin cells from an IK sweep that scores
+      # pre-grasp, grasp AND a +12 cm lift together. Reaching the beaker is not the
+      # binding constraint -- the lift is: further out the arm grasps but can only raise
+      # it ~4 cm, and closer in it folds and closes on nothing. This band solves all
+      # three waypoints with ~0.8 rad to spare on every joint.
+      position_range:
+        x: [0.15, 0.21]
+        y: [-0.20, -0.06]
+        z: [0.84, 0.84]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+robot:
+  type: "piper"
+  # BaseRobot now re-applies configured poses after reset, including fixed-base USDs.
+  # Keep Piper at the authored lab pose; [0,0,0] puts the z=0.75 beaker beyond this
+  # arm's ~0.57 m reach and makes every phase converge to an unreachable local minimum.
+  position: [-0.20, -0.15, 0.80]
+
+# Piper cannot use the Franka's side-approach grasp. Its joints are far more limited
+# (joint2 [0, pi], joint3 [-2.7, 0], joint5 +/-1.22), and an IK sweep at the beaker's
+# height shows every side-approach target unsolvable while a 45-degree diagonal
+# approach solves for both the grasp and the pre-grasp pose.
+#   Ry(135) maps the tool's approach axis to [0.707, 0, -0.707] -- forward and down --
+#   keeping the finger axis horizontal so the fingers still straddle the beaker.
+grasp:
+  # 150 deg, not steeper: at 170 the approach is nearly vertical and the arm can no
+  # longer reach the beaker at all (measured 0/6). This is the best of the sweep.
+  ee_euler_deg: [0, 150, 0]
+  orientation_noise_deg: 0
+  # Longer approach and lift windows. Piper is slower through its workspace than the
+  # Franka these defaults were tuned for; with the stock lift budget it is still only
+  # ~3 cm up when the phase ends.
+  events_dt: [0.003, 0.0015, 0.006, 0.02, 0.05, 0.0012, 0.008]
+  adaptive_phase_completion: true
+  arrival_stable_steps: 5
+  require_pregrasp_xyz: true
+  pregrasp_position_threshold: 0.015
+  # The diagonal ingress stops when the pads contact the cup. Treat that physical
+  # contact pose as arrival instead of asking the abstract TCP to penetrate it.
+  grasp_position_threshold: 0.04
+  lift_along_tool: true
+  # NOTE: approach_from_base was tried and made things worse (the gripper still swept
+  # the beaker away, from a different angle); left off deliberately.
+
+collector:
+  type: "default"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true

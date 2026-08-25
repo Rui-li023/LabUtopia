@@ -18,6 +18,9 @@ replay:
   dataset_path: ""
   # episode_indices: [0, 1, 2]
 
+task:
+  max_steps: 2000
+
 infer:
   type: "local"
   obs_names: {"image": 'camera_1_rgb', "image_2": 'camera_2_rgb'}

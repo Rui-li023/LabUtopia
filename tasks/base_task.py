@@ -2,14 +2,15 @@ import glob
 import os
 import random
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Dict
 
 import numpy as np
+from isaacsim.core.prims import SingleRigidPrim
 from isaacsim.core.utils.prims import set_prim_visibility
 from isaacsim.core.utils.semantics import add_update_semantics
 from isaacsim.sensors.camera import Camera
 from loguru import logger
-from pxr import Gf, Sdf, UsdLux, UsdShade
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux, UsdPhysics, UsdShade
 from scipy.spatial.transform import Rotation
 
 from utils.camera_utils import process_camera_image
@@ -204,7 +205,7 @@ class BaseTask(ABC):
             camera.initialize()
             image_types = cam_cfg.image_type.split("+") if "+" in cam_cfg.image_type else [cam_cfg.image_type]
             for image_type in image_types:
-                if image_type == "depth":
+                if image_type in ("depth", "depth_raw"):
                     camera.add_distance_to_image_plane_to_frame()
                 elif image_type == "pointcloud":
                     camera.add_distance_to_image_plane_to_frame()
@@ -235,6 +236,26 @@ class BaseTask(ABC):
                 display_data[cam_cfg.name] = display
         return camera_data, display_data
 
+    def get_camera_intrinsics(self) -> Dict[str, Any]:
+        """Return ``{camera_name: 3x3 intrinsic matrix (list)}``, cached.
+
+        Consumed by RGB-D navigation clients (NavDP) that need the pinhole
+        model to project/interpret camera-frame trajectories. Cached because the
+        intrinsics are fixed once the cameras are built.
+        """
+        if getattr(self, "_camera_intrinsics_cache", None) is not None:
+            return self._camera_intrinsics_cache
+        intrinsics: Dict[str, Any] = {}
+        for camera, cam_cfg in zip(self.cameras, self.cfg.cameras):
+            try:
+                intrinsics[cam_cfg.name] = np.asarray(
+                    camera.get_intrinsics_matrix(), dtype=float).tolist()
+            except Exception as exc:
+                logger.warning(f"[camera] intrinsics unavailable for "
+                               f"{cam_cfg.name}: {exc}")
+        self._camera_intrinsics_cache = intrinsics
+        return intrinsics
+
     # -------------------------------------------------------------------------
     # Object & material setup
     # -------------------------------------------------------------------------
@@ -253,6 +274,116 @@ class BaseTask(ABC):
                     })
                 else:
                     self.obj_configs.append(obj)
+
+        self._apply_object_scales()
+        self._apply_object_physics_overrides()
+        self._capture_object_rigid_body_offsets()
+
+    def _capture_object_rigid_body_offsets(self) -> None:
+        """Cache each rigid descendant's authored transform relative to its object root."""
+        self._object_rigid_body_offsets: dict[str, list[tuple[str, Gf.Matrix4d]]] = {}
+        for obj in self.obj_configs:
+            object_path = str(obj["path"])
+            root = self.stage.GetPrimAtPath(object_path)
+            if not root.IsValid():
+                continue
+            root_world = UsdGeom.Xformable(root).ComputeLocalToWorldTransform(
+                Usd.TimeCode.Default()
+            )
+            root_world_inverse = root_world.GetInverse()
+            offsets = []
+            for candidate in Usd.PrimRange(root):
+                if not candidate.HasAPI(UsdPhysics.RigidBodyAPI):
+                    continue
+                rigid_world = UsdGeom.Xformable(candidate).ComputeLocalToWorldTransform(
+                    Usd.TimeCode.Default()
+                )
+                offsets.append(
+                    (str(candidate.GetPath()), rigid_world * root_world_inverse)
+                )
+            self._object_rigid_body_offsets[object_path] = offsets
+
+    def _sync_object_rigid_bodies(self, object_path: str) -> None:
+        """Teleport live rigid descendants to the object's newly authored root pose."""
+        offsets = getattr(self, "_object_rigid_body_offsets", {}).get(object_path, [])
+        if not offsets:
+            return
+        root = self.stage.GetPrimAtPath(object_path)
+        if not root.IsValid():
+            return
+        root_world = UsdGeom.Xformable(root).ComputeLocalToWorldTransform(
+            Usd.TimeCode.Default()
+        )
+        for rigid_path, relative_transform in offsets:
+            try:
+                desired_world = relative_transform * root_world
+                transform = Gf.Transform(desired_world)
+                rotation = transform.GetRotation().GetQuat()
+                imaginary = rotation.GetImaginary()
+                rigid_prim = SingleRigidPrim(
+                    prim_path=rigid_path,
+                    reset_xform_properties=False,
+                )
+                rigid_prim.initialize()
+                rigid_prim.set_world_pose(
+                    position=np.asarray(transform.GetTranslation(), dtype=np.float32),
+                    orientation=np.asarray(
+                        [rotation.GetReal(), imaginary[0], imaginary[1], imaginary[2]],
+                        dtype=np.float32,
+                    ),
+                )
+                rigid_prim.set_linear_velocity(np.zeros(3, dtype=np.float32))
+                rigid_prim.set_angular_velocity(np.zeros(3, dtype=np.float32))
+            except Exception as exc:
+                logger.debug(f"Deferred rigid-body pose sync for {rigid_path}: {exc}")
+
+    def _apply_object_physics_overrides(self) -> None:
+        """Apply optional contact parameters from each ``task.obj_paths`` entry."""
+        for obj in self.obj_configs:
+            friction = obj.get("friction", None) if hasattr(obj, "get") else None
+            if friction is None:
+                continue
+            self.object_utils.set_physics_friction(
+                obj["path"],
+                static_friction=float(friction),
+                dynamic_friction=float(friction),
+            )
+
+    def _apply_object_scales(self) -> None:
+        """Apply an optional per-object ``scale`` from the task config.
+
+        Labware in the shared lab scene is sized for the Franka's 80 mm gripper. A
+        smaller arm needs smaller glassware: beaker2 is 68.8 mm across at its base,
+        which leaves the Agilex Piper (70 mm maximum opening) about 1 mm of clearance
+        -- the fingers hit the wall instead of straddling it and the beaker is pushed
+        across the bench. Scaling the prim keeps the same task and controller while
+        matching the object to the arm.
+
+        Multiplies the authored scale rather than overwriting it, because asset scales
+        often already carry a unit conversion.
+        """
+        for obj in self.obj_configs:
+            # Duck-typed: task configs arrive as OmegaConf DictConfig, which is NOT a
+            # dict subclass, so an isinstance(obj, dict) guard silently skips every entry.
+            scale = obj.get("scale", None) if hasattr(obj, "get") else None
+            if not scale:
+                continue
+            factor = np.array([scale] * 3, dtype=float) if np.isscalar(scale) else np.asarray(scale, dtype=float)
+            prim = self.stage.GetPrimAtPath(obj["path"])
+            if not prim.IsValid():
+                logger.warning(f"[scale] prim not found, skipping: {obj['path']}")
+                continue
+            xformable = UsdGeom.Xformable(prim)
+            scale_op = next(
+                (op for op in xformable.GetOrderedXformOps() if op.GetOpType() == UsdGeom.XformOp.TypeScale),
+                None,
+            )
+            current = np.asarray(scale_op.Get(), dtype=float) if scale_op is not None else np.ones(3)
+            new_scale = current * factor
+            if scale_op is None:
+                scale_op = xformable.AddScaleOp()
+            scale_op.Set(Gf.Vec3d(*new_scale.tolist()))
+            logger.info(f"[scale] {obj['path']}: {np.round(current, 4)} -> {np.round(new_scale, 4)}")
 
     def setup_materials(self) -> None:
         """Parse material configuration from ``cfg.task.material_paths``.
@@ -485,7 +616,13 @@ class BaseTask(ABC):
                     position_range=position_range,
                 )
             else:
-                intensity_range = tuple(getattr(cfg, "intensity_range", [500.0, 5000.0]))
+                # randomize_intensity: false keeps each light's authored intensity
+                # and varies only exposure (a power-of-2 multiplier), so a scene
+                # calibrated against a real rig keeps its relative light balance.
+                if bool(getattr(cfg, "randomize_intensity", True)):
+                    intensity_range = tuple(getattr(cfg, "intensity_range", [500.0, 5000.0]))
+                else:
+                    intensity_range = None
                 exposure_range = tuple(getattr(cfg, "exposure_range", [-2.0, 4.0]))
                 color_temp_range = tuple(getattr(cfg, "color_temp_range", [2700.0, 6500.0]))
                 self._lighting_randomizer.randomize_all(
@@ -1029,6 +1166,7 @@ class BaseTask(ABC):
             )
 
         self.object_utils.set_object_position(object_path=obj_path, position=position)
+        self._sync_object_rigid_bodies(obj_path)
         self._register_occupied_region(obj_path=obj_path, position=position)
         self._record_object_pose(obj_path)
         return position
@@ -1065,6 +1203,7 @@ class BaseTask(ABC):
             if i == current_obj_idx:
                 if fixed_position is not None:
                     self.object_utils.set_object_position(object_path=obj_path, position=np.array(fixed_position))
+                    self._sync_object_rigid_bodies(obj_path)
                 else:
                     self.randomize_object_position(obj_path, obj_cfg["position_range"])
                 set_prim_visibility(prim, True)
@@ -1072,6 +1211,7 @@ class BaseTask(ABC):
                 angle = 2 * np.pi * i / len(self.obj_configs)
                 far_pos = np.array([far_distance * np.cos(angle), far_distance * np.sin(angle), 0.1])
                 self.object_utils.set_object_position(object_path=obj_path, position=far_pos)
+                self._sync_object_rigid_bodies(obj_path)
                 set_prim_visibility(prim, False)
         return self.obj_configs[current_obj_idx]["path"]
 
@@ -1163,6 +1303,7 @@ class BaseTask(ABC):
             self.object_utils.set_object_position(
                 object_path=path, position=np.asarray(world_position) - offset
             )
+        self._sync_object_rigid_bodies(path)
 
     def _has_xform_pivot(self, path: str) -> bool:
         """True if the prim's xform stack uses a pivot (so orientation can't be

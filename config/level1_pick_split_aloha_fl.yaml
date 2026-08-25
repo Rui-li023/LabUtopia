@@ -1,0 +1,79 @@
+# Level-1 physical pick with Split/Mobile ALOHA's front-left arm.
+
+name: level1_pick_split_aloha_fl
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 10
+seed: 7
+
+task:
+  max_steps: 2000
+  obj_paths:
+    - path: "/World/beaker2"
+      scale: 0.75
+      friction: 1.5
+      position_range:
+        # Keep the cup just inside the table's x=-0.924 edge while the complete
+        # mobile platform remains outside. Robot and cup are shifted together,
+        # preserving the already validated front-left-arm reach geometry.
+        x: [-0.80, -0.76]
+        y: [-0.05, -0.03]
+        z: [0.84, 0.84]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [0.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  # The second half of the video is always the complete mobile manipulator. A tight
+  # top view made the platform look like a missing single arm after video tiling.
+  - prim_path: "/World/SplitAlohaOverviewCamera"
+    name: "camera_2"
+    translation: [0.7, -1.8, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.79070, 0.45495, 0.20430, 0.35508]
+    image_type: "rgb"
+
+grasp:
+  ee_euler_deg: [0, 90, 0]
+  # The full 42-DOF articulation settles more slowly than a standalone arm.
+  # Do not let the fixed phase timer start the final approach before the TCP
+  # reaches the low pre-grasp waypoint, and leave up to 500 frames for ingress.
+  require_pregrasp_xyz: true
+  pregrasp_position_threshold: 0.01
+  grasp_position_threshold: 0.01
+  pre_offset_z: 0.02
+  after_offset_z: 0.15
+  pre_offset_x: 0.05
+  events_dt: [0.004, 0.002, 0.002, 0.02, 0.05, 0.002, 0.008]
+  pick_z_offset: 0.0
+
+robot:
+  type: "split_aloha_fl"
+  # Table bounds begin at x=-0.924. At this pose the complete platform occupies
+  # x=[-2.031,-0.977], leaving about 5 cm of clearance; only the front-left arm
+  # reaches over the edge. The 0.15 m root height keeps all wheels on the floor.
+  position: [-1.45, -0.30, 0.15]
+
+collector:
+  type: "default"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true
+action_randomization: false

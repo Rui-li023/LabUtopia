@@ -234,9 +234,16 @@ class LightingRandomizer:
         self._set_bool_attr(prim, "inputs:enableColorTemperature", True)
         self._set_float_attr(prim, "inputs:colorTemperature", kelvin)
 
-        # Also set color directly for renderers that ignore colorTemperature
-        rgb = color_temperature_to_rgb(kelvin)
-        self._set_color_attr(prim, "inputs:color", rgb)
+        # ``inputs:color`` must be reset to white, NOT to the Planckian RGB.
+        # It used to be set to the same RGB "for renderers that ignore
+        # colorTemperature", but Isaac's RTX renderer honours the attribute
+        # above, so the tint landed twice: at 9000 K the Planckian RGB is
+        # ~(0.79, 0.85, 1.00) and squaring it gives ~(0.62, 0.72, 1.00) — a
+        # scene rendered essentially monochrome blue. Both ends also darkened,
+        # because every channel of that RGB is <= 1. Measured on a level1/pick
+        # pilot: frame luma swung 41 to 172 across episodes, with the dark end
+        # too dark to make out the bottle at all.
+        self._set_color_attr(prim, "inputs:color", (1.0, 1.0, 1.0))
 
         return kelvin
 
@@ -546,7 +553,7 @@ class LightingRandomizer:
 
     def randomize_all(
         self,
-        intensity_range: Tuple[float, float] = (500.0, 5000.0),
+        intensity_range: Optional[Tuple[float, float]] = (500.0, 5000.0),
         exposure_range: Tuple[float, float] = (-2.0, 4.0),
         color_temp_range: Union[Tuple[float, float], str] = (2700.0, 6500.0),
         position_range: Optional[Dict[str, Tuple[float, float]]] = None,
@@ -573,7 +580,14 @@ class LightingRandomizer:
         results: Dict[str, Dict] = {}
         for path in light_paths:
             result: Dict = {}
-            result["intensity"] = self.randomize_intensity(path, intensity_range)
+            # intensity_range=None means "leave intensity alone". Needed by any
+            # scene whose lights are photometrically calibrated against a real
+            # rig: writing one absolute range over lights that legitimately span
+            # 60 to 785000 would flatten them to the same value and destroy the
+            # calibration. Exposure below is a power-of-2 MULTIPLIER, so it varies
+            # the level while preserving every light's relative contribution.
+            if intensity_range is not None:
+                result["intensity"] = self.randomize_intensity(path, intensity_range)
             result["exposure"] = self.randomize_exposure(path, exposure_range)
             result["color_temperature"] = self.randomize_color_temperature(path, color_temp_range)
             if randomize_position_flag and position_range:

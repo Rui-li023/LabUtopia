@@ -4,6 +4,7 @@ from controllers.open_controller import OpenTaskController
 from controllers.pick_pour_controller import PickPourTaskController
 from controllers.place_press_controller import PlacePressTaskController
 from controllers.pick_controller import PickTaskController
+from controllers.pick_wide_controller import PickWideTaskController
 from controllers.pour_controller import PourTaskController
 from controllers.place_controller import PlaceTaskController
 from controllers.press_controller import PressTaskController
@@ -20,6 +21,8 @@ from controllers.close_controller import CloseTaskController
 from controllers.open_close_controller import OpenCloseTaskController
 from controllers.navigation_controller import NavigationController
 from controllers.mobile_pick_controller import MobilePickController
+from controllers.mobile_pour_controller import MobilePourController
+from controllers.mobile_shake_controller import MobileShakeController
 from controllers.mobile_transport_place_controller import MobileTransportPlaceController
 
 _controller_registry: Dict[str, Type[BaseController]] = {}
@@ -37,6 +40,7 @@ register_controller("open", OpenTaskController)
 register_controller("close", CloseTaskController)
 register_controller("open_close", OpenCloseTaskController)
 register_controller("pick", PickTaskController)
+register_controller("pick_wide", PickWideTaskController)
 register_controller("pour", PourTaskController)
 register_controller("place", PlaceTaskController)
 register_controller("pick_place", PickPlaceTaskController)
@@ -52,6 +56,8 @@ register_controller("open_transport_pour", OpenTransportPourController)
 register_controller("liquid_mixing", LiquidMixingController)
 register_controller("navigation", NavigationController)
 register_controller("mobile_pick", MobilePickController)
+register_controller("mobile_pour", MobilePourController)
+register_controller("mobile_shake", MobileShakeController)
 register_controller("mobile_transport_place", MobileTransportPlaceController)
 
 from controllers.flask_to_cork_controller import FlaskToCorkTaskController

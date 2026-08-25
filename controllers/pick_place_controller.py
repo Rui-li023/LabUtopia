@@ -3,11 +3,12 @@ from enum import Enum
 from typing import Optional
 
 import numpy as np
-from scipy.spatial.transform import Rotation as R
+from loguru import logger
 
 from .atomic_actions.pick_controller import PickController
 from .atomic_actions.place_controller import PlaceController
 from .base_controller import BaseController
+from .grasp_frame import GraspFrame, resolve_pick_z_offset
 
 
 class Phase(Enum):
@@ -58,7 +59,23 @@ class PickPlaceTaskController(BaseController):
             gripper=robot.gripper,
             robot=robot,
         )
-        
+
+        # Both phases used to command a hard-coded world-frame wrist pose, which
+        # only works for a beaker and a target plate straight ahead of the base.
+        # With `grasp.bearing_gain: 1.0` each frame follows the bearing of the
+        # thing it is reaching for -- the beaker while picking, the target plate
+        # while placing -- which is what lets the two spawn ranges be widened.
+        # Defaults reproduce the historical fixed poses exactly.
+        grasp_cfg = getattr(cfg, "grasp", None)
+        self._pick_frame = GraspFrame(grasp_cfg, robot, (0.0, 90.0, 30.0), label="grasp/pick")
+        self._place_frame = GraspFrame(
+            grasp_cfg, robot, (0.0, 90.0, 20.0), prefix="place_", label="grasp/place"
+        )
+        pick_z_offset = resolve_pick_z_offset(grasp_cfg)
+        if pick_z_offset is not None:
+            self.pick_controller.pick_z_offset_override = pick_z_offset
+            logger.info(f"[grasp] pick_z_offset override = {pick_z_offset:.3f} m above the object origin")
+
         self.active_controller = self.pick_controller
 
     def reset(self):
@@ -74,6 +91,8 @@ class PickPlaceTaskController(BaseController):
             self.active_controller = self.pick_controller
             self.pick_controller.reset()
             self.place_controller.reset()
+            self._pick_frame.new_episode()
+            self._place_frame.new_episode()
         elif self.mode == "infer":
             self.inference_engine.reset()
 
@@ -152,7 +171,7 @@ class PickPlaceTaskController(BaseController):
                     object_name=state['object_name'],
                     gripper_control=self.gripper_control,
                     gripper_position=state['gripper_position'],
-                    end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
+                    end_effector_orientation=self._pick_frame.quat(state['object_position']),
                     pre_offset_x=0.05,
                     pre_offset_z=0.05
                 )
@@ -161,7 +180,7 @@ class PickPlaceTaskController(BaseController):
                     place_position = state['target_position'],
                     current_joint_positions=state['joint_positions'],
                     gripper_control=self.gripper_control,
-                    end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 20])).as_quat(),
+                    end_effector_orientation=self._place_frame.quat(state['target_position']),
                     gripper_position=state['gripper_position']
                 )
 

@@ -25,6 +25,13 @@ class Episode:
     video_paths: dict[str, Path]            # camera_key → existing .mp4 path
     length: int
     spawn_yaw: float = 0.0                  # base world yaw at spawn (mobile tasks)
+    video_trim: int | None = None           # keep only the first N video frames
+    # Per-frame instruction. Multi-phase tasks (pick_pour, open_transport_pour,
+    # clean_beaker, liquid_mixing) switch the instruction mid-episode; keeping
+    # only the first frame's label — as this reader used to — silently trained
+    # every pour frame under the *pick* sentence and left the exported vocabulary
+    # with no pour verb at all.
+    frame_tasks: list[str] | None = None
 
 
 def discover_run(data_dir: Path) -> dict:
@@ -70,21 +77,42 @@ def load_task_map(data_dir: Path) -> dict[int, str]:
     return {int(k): v for k, v in json.loads(mp.read_text()).items()}
 
 
-def iter_episodes(data_dir: Path):
-    """Yield Episode for every episode_*/episode_*.h5 in deterministic order."""
+def iter_episodes(data_dir: Path, nav_only: bool = False):
+    """Yield Episode for every episode_*/episode_*.h5 in deterministic order.
+
+    nav_only: trim each episode to its leading navigation segment (the
+    contiguous ``phase == 0`` prefix recorded by the mobile collectors) —
+    state/action are sliced and ``video_trim`` tells the writer to cut the
+    videos to the same frame count. Episodes without a phase array or with a
+    trivially short nav prefix (< 30 frames) are skipped.
+    """
     info = discover_run(data_dir)
     task_map = load_task_map(data_dir)
-    for new_idx, ep_dir in enumerate(info["episode_dirs"]):
+    new_idx = -1
+    for ep_dir in info["episode_dirs"]:
         h5_path = ep_dir / f"{ep_dir.name}.h5"
         if not h5_path.exists():
             continue
         with h5py.File(h5_path, "r") as f:
             state = np.asarray(f["agent_pose"][()], dtype=np.float32)
             action = np.asarray(f["actions"][()], dtype=np.float32)
+            trim = None
+            if nav_only:
+                if "phase" not in f:
+                    continue
+                phase = np.asarray(f["phase"][()])
+                nonnav = np.nonzero(phase != 0)[0]
+                n0 = int(nonnav[0]) if nonnav.size else int(phase.shape[0])
+                if n0 < 30:
+                    continue
+                state, action, trim = state[:n0], action[:n0], n0
+            frame_tasks = None
             if "task_index" in f:
-                ti = f["task_index"][()]
-                ti_val = int(np.asarray(ti).flat[0])
+                ti = np.asarray(f["task_index"][()]).reshape(-1)
+                ti_val = int(ti.flat[0])
                 task = task_map.get(ti_val, "")
+                if ti.size == state.shape[0] or (trim is not None and ti.size >= state.shape[0]):
+                    frame_tasks = [task_map.get(int(x), "") for x in ti[:state.shape[0]]]
             elif "language_instruction" in f:
                 v = f["language_instruction"][()]
                 task = v.decode("utf-8") if isinstance(v, bytes) else str(v)
@@ -105,6 +133,7 @@ def iter_episodes(data_dir: Path):
                 except Exception:
                     pass
         videos = {cam: ep_dir / f"{cam}.mp4" for cam in info["cameras"]}
+        new_idx += 1
         yield Episode(
             index=new_idx,
             state=state,
@@ -114,6 +143,8 @@ def iter_episodes(data_dir: Path):
             video_paths=videos,
             length=int(state.shape[0]),
             spawn_yaw=spawn_yaw,
+            video_trim=trim,
+            frame_tasks=frame_tasks,
         )
 
 

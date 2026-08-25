@@ -26,6 +26,8 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+labutopia_assets/*
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
@@ -224,10 +226,18 @@ local/
 # Local working artifacts (not for the public repo):
 # knowledge-base notes, generated configs, machine-specific campaign scripts/logs
 /docs/
-config/_autorun.yaml
+/config/_*.yaml
+/scratchlogs/
 scripts/level1_eval/
 scripts/level23_campaign/
 scripts/level2_flask/
 scripts/level345_collect/
 scripts/lerobot_export/_run_all.sh
 scripts/patch_level1_infer.py
+
+# URDF source repos fetched for asset conversion (not committed)
+/third_party/
+
+# NVIDIA source assets fetched by scripts/urdf_to_usd/fetch_official.py.
+# LabUtopia commits only the converted runtime closure referenced by robot configs.
+/assets/robots/official/

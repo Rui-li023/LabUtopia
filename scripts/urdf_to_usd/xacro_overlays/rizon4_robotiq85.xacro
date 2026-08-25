@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!-- Flexiv Rizon4 arm with the project-standard Robotiq 2F-85. -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="rizon4_labutopia_robotiq_2f_85">
+  <xacro:include filename="$(find flexiv_description)/urdf/common/flexiv_robot.xacro"/>
+  <xacro:include filename="$(find robotiq_description)/xacro/2F85.xacro"/>
+
+  <xacro:flexiv_robot
+    robot_type="Rizon4"
+    robot_sn=""
+    joint_limits_parameters_file="$(find flexiv_description)/config/Rizon4/joint_limits.yaml"
+    kinematics_parameters_file="$(find flexiv_description)/config/Rizon4/default_kinematics.yaml"
+    inertia_parameters_file="$(find flexiv_description)/config/Rizon4/inertia_parameters.yaml"
+    visual_parameters_file="$(find flexiv_description)/config/Rizon4/visual_parameters.yaml"
+    load_gripper="false"
+    load_mounted_ft_sensor="false"/>
+  <xacro:Robotiq85 name=""/>
+
+  <joint name="rizon4_flange_to_gripper_base" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="flange"/>
+    <child link="gripper_base"/>
+  </joint>
+
+  <link name="grasp_frame"/>
+  <joint name="gripper_base_to_grasp_frame" type="fixed">
+    <!-- The authored eef is at 150 mm; the pad contact centre is at 130 mm. -->
+    <origin xyz="0 0 0.13" rpy="0 0 0"/>
+    <parent link="gripper_base"/>
+    <child link="grasp_frame"/>
+  </joint>
+</robot>

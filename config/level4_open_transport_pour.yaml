@@ -29,6 +29,9 @@ infer:
   is_test_material: False
 
 task:
+  # Position-controlled pour, calibrated to about 107 deg of executed wrist motion.
+  position_pour: true
+  pour_angle_rad: 1.87
   max_steps: 4000
   # Realistic gripper<->glassware friction so the near-zero-squeeze grasp holds
   # the beaker/conical through transport+pour (and reproduces in open-loop replay)
