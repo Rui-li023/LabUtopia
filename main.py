@@ -84,7 +84,7 @@ def _convert_to_h264(src_path: str, is_success: bool):
     logger.info(f"Converting video to H264: {src_path}")
     ret = subprocess.run(
         [
-            "ffmpeg", "-y", "-i", src_path,
+            "ffmpeg", "-nostdin", "-y", "-i", src_path,
             "-vcodec", "libx264",
             "-pix_fmt", "yuv420p",
             "-crf", "18",
