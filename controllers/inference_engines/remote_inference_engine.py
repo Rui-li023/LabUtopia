@@ -15,21 +15,21 @@ except ModuleNotFoundError:
 class RemoteInferenceEngine(BaseInferenceEngine):
     """
     Remote inference engine using OpenPI client
-    
+
     Connects to OpenPI server for remote inference using WebSocket communication
     """
-    
+
     def _get_n_obs_steps(self) -> int:
         """Get observation steps from configuration"""
         return self.cfg.infer.n_obs_steps
-    
+
     def _init_inference_engine(self):
         """Initialize OpenPI client connection"""
         # Get server connection parameters
         self.host = getattr(self.cfg.infer, 'host', '0.0.0.0')
         self.port = getattr(self.cfg.infer, 'port', None)
         self.api_key = getattr(self.cfg.infer, 'api_key', None)
-        
+
         # Initialize OpenPI WebSocket client.
         # NB: openpi-client's WebsocketClientPolicy._wait_for_server only retries
         # ConnectionRefusedError. Behind an SSH -L tunnel the local listener always
@@ -59,20 +59,20 @@ class RemoteInferenceEngine(BaseInferenceEngine):
                 time.sleep(10)
         logger.error(f"Failed to initialize OpenPI client after 15 attempts: {last_err}")
         raise last_err
-    
+
     def _prepare_observation(self, obs_dict: Dict[str, torch.Tensor]) -> Dict:
         """
         Prepare observation data for OpenPI client
-        
+
         Args:
             obs_dict: Dictionary containing observation tensors
-            
+
         Returns:
             Dictionary formatted for OpenPI inference
         """
         observation = {}
         n_obs_steps = self._get_n_obs_steps()
-        
+
         # Process each observation in the dictionary
         # Note: base_inference_engine only adds a batch dim when shape[0] != 1,
         # so for n_obs_steps==1 arrays are (1, ...) (time dim, no batch dim),
@@ -114,19 +114,19 @@ class RemoteInferenceEngine(BaseInferenceEngine):
                     processed_images = []
                     for img in images:
                         if img.dtype != np.uint8:
-                            img = (img * 255).astype(np.uint8)                        
+                            img = (img * 255).astype(np.uint8)
                         processed_images.append(img)
                     observation[obs_key] = np.stack(processed_images, axis=0)
-        
+
         return observation
-    
+
     def _predict_action(self, obs_dict: Dict[str, torch.Tensor], language_instruction: str = "") -> np.ndarray:
         """
         Predict action using OpenPI client
-        
+
         Args:
             obs_dict: Dictionary containing observation tensors
-            
+
         Returns:
             Predicted action array
         """
@@ -233,7 +233,7 @@ class RemoteInferenceEngine(BaseInferenceEngine):
             raise RuntimeError(
                 "远程推理在第一次调用就失败, 没有可保持的上一条动作; 中止而不是发送零动作"
             ) from e
-    
+
     def close(self):
         """Close OpenPI client connection"""
         try:

@@ -106,12 +106,12 @@ def process_single_type(camera, image_type):
 def process_camera_image(camera, image_type):
     """
     Process camera image with support for combined types (e.g., 'rgb+pointcloud')
-    
+
     Args:
         camera: Camera instance
         image_type: String indicating the type(s) of image data to process
                    Can be single type or combined types with '+' (e.g., 'rgb+pointcloud')
-    
+
     Returns:
         tuple: (record_data, display_data) where each can be single item or dict
     """
