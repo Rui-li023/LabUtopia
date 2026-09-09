@@ -1,0 +1,10 @@
+# @package _global_
+# Development only: does not enable the fixture-only RRT approach.
+# Wider ingress passed one fixed-scene approach/close/lift diagnostic, not
+# full placement or randomized collect/replay acceptance.
+defaults:
+  - pipette_grip_candidate
+  - _self_
+
+task:
+  gripper_opening_width: 0.080

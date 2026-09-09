@@ -45,8 +45,8 @@ from loguru import logger
 from pxr import Gf, Usd, UsdGeom
 
 TARGETS = [
-    ("assets/robots/arx_x5.usd", "robots/arx_x5/arx_x5.urdf"),
-    ("assets/robots/arx_r5.usd", "robots/arx_r5/arx_r5.urdf"),
+    ("experiments/robots/assets/robots/arx_x5.usd", "experiments/robots/definitions/arx_x5/arx_x5.urdf"),
+    ("experiments/robots/assets/robots/arx_r5.usd", "experiments/robots/definitions/arx_r5/arx_r5.urdf"),
 ]
 CAMERA_PRIM = "/ARX_5/camera"
 CAMERA_JOINT = "/ARX_5/joints/camera_fixed"

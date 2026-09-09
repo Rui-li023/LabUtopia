@@ -1,0 +1,14 @@
+# @package _global_
+# Camera-only override: compose with a task or a recorded replay configuration.
+# Preserve the recording's physics/model settings; this is not a physics preset.
+# A fresh camera avoids retaining the close-up Camera1 transform in the lab USD.
+# Eye [1.2, 1.4, 1.7], target [-0.08, 0.2, 1.0], world Z up.
+cameras:
+  - prim_path: /World/PipetteOverviewCamera
+    name: image
+    translation: [1.2, 1.4, 1.7]
+    orientation: [0.32908144299453423, 0.22301309252142584, 0.514765959357071, 0.7595963214285989]
+    focal_length: 2.3
+    resolution: [960, 720]
+    clipping_range: [0.05, 200.0]
+    image_type: rgb

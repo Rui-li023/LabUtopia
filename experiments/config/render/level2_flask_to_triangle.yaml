@@ -1,0 +1,22 @@
+# @package _global_
+defaults:
+  - /level2_flask_to_triangle
+  - _self_
+
+name: level2_flask_to_triangle_original_replay
+mode: replay
+max_episodes: 1
+replay:
+  dataset_path: ${oc.env:LABUTOPIA_FLASK_DATASET,''}
+  episode_indices: [0]
+
+# Camera-only change. Preserve the matching recording's physics and geometry.
+cameras:
+  - prim_path: /World/FlaskOverviewCamera
+    name: image
+    translation: [0.9, -0.75, 1.45]
+    orientation: [0.8008960423636468, 0.43937216017571346, 0.19567984181732798, 0.3566889873476901]
+    focal_length: 2.3
+    resolution: [960, 720]
+    clipping_range: [0.05, 200.0]
+    image_type: rgb

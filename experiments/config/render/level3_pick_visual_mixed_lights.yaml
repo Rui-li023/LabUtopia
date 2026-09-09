@@ -1,0 +1,92 @@
+# @package _global_
+# Multi-source lighting stress cases. Existing authored lights are preserved,
+# then three replayable local lights with distinct temperatures are added.
+# Select with LABUTOPIA_MIXED_LIGHT_CASE=warm_cool|hard_split.
+defaults:
+  - /level3_pick
+  - _self_
+
+visual_case: ${oc.env:LABUTOPIA_MIXED_LIGHT_CASE,warm_cool}
+name: level3_pick_mixed_lights_${visual_case}
+seed: 31
+max_episodes: 1
+
+mixed_light_cases:
+  warm_cool:
+    hdrs: [assets/hdr/lab_019/environment.exr]
+    background_color: [[0.72, 0.82, 1.0]]
+    background_rotation: [115.0, 115.0]
+    material: [/World/Looks/Material3_plastic_dark_green]
+    temperatures: [1800.0, 3000.0, 8500.0, 12000.0]
+    intensity: [650.0, 900.0]
+    exposure: [-0.1, 0.15]
+
+  hard_split:
+    hdrs: [assets/hdr/lab_019/environment.exr]
+    background_color: [[0.65, 0.65, 0.65]]
+    background_rotation: [115.0, 115.0]
+    background_intensity: [80.0, 80.0]
+    background_exposure: [-2.0, -2.0]
+    material: [/World/Looks/Material7_stainless]
+    temperatures: [1800.0, 2000.0, 10000.0, 12000.0]
+    colors:
+      - [1.0, 0.28, 0.08]
+      - [1.0, 0.40, 0.15]
+      - [0.08, 0.28, 1.0]
+      - [0.15, 0.42, 1.0]
+    intensity: [3000.0, 4500.0]
+    exposure: [0.25, 0.5]
+
+visual_randomization:
+  enabled: true
+  seed: ${seed}
+  split: train
+
+  background:
+    enabled: true
+    dome_light_path: /World/VisualRandomization/Background
+    hdrs: ${mixed_light_cases.${visual_case}.hdrs}
+    colors: ${mixed_light_cases.${visual_case}.background_color}
+    intensity_range: ${oc.select:mixed_light_cases.${visual_case}.background_intensity,[250.0,250.0]}
+    exposure_range: ${oc.select:mixed_light_cases.${visual_case}.background_exposure,[-1.0,-1.0]}
+    rotation_range: ${mixed_light_cases.${visual_case}.background_rotation}
+
+  surfaces:
+    - path: /World/table/surface
+      materials: ${mixed_light_cases.${visual_case}.material}
+
+  lighting:
+    enabled: true
+    num_additional_lights: 3
+    parent_path: /World/VisualRandomization/MixedLights
+    light_types: [SphereLight]
+    randomize_intensity: true
+    intensity_range: ${mixed_light_cases.${visual_case}.intensity}
+    shared_exposure: false
+    exposure_range: ${mixed_light_cases.${visual_case}.exposure}
+    exposure_jitter_range: [0.0, 0.0]
+    shared_color_temperature: false
+    color_temp_range: [1800.0, 12000.0]
+    color_temp_candidates: ${mixed_light_cases.${visual_case}.temperatures}
+    color_candidates: ${oc.select:mixed_light_cases.${visual_case}.colors,[]}
+    randomize_position: false
+    position_range:
+      x: [-0.75, 0.65]
+      y: [-0.85, 0.85]
+      z: [1.05, 1.85]
+    randomize_rotation: false
+    geometry_ranges:
+      radius: [0.12, 0.22]
+
+task:
+  max_steps: 60
+
+collector:
+  type: mock
+
+hydra:
+  run:
+    dir: outputs/visual_randomization_gallery/${visual_case}
+
+multi_run:
+  run_dir: outputs/visual_randomization_gallery/${visual_case}

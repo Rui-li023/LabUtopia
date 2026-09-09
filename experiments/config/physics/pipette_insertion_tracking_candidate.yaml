@@ -1,0 +1,9 @@
+# @package _global_
+# Development-only controller comparison with the baseline physical contact.
+# Does not enable fixture RRT, change opening width, or relax success guards.
+defaults:
+  - pipette_grip_candidate
+  - _self_
+
+task:
+  pipette_track_insertion_axis: true

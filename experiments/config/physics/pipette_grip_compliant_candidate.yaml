@@ -1,0 +1,12 @@
+# @package _global_
+# Development-only force-based pad compliance. Not measured material calibration.
+# At the 35 N per-finger cap, F/k = 0.35 mm for a single static contact;
+# transient penetration and relative rotation must be measured in simulation.
+# Does not enable RRT, change grasp width, or alter success/collision checks.
+defaults:
+  - pipette_grip_candidate
+  - _self_
+
+task:
+  gripper_pad_contact_stiffness: 100000.0 # N/m
+  gripper_pad_contact_damping: 100.0 # N s/m

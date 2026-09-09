@@ -102,6 +102,7 @@ for entry in "${arms[@]}"; do
     mkdir -p "${robot_dir}"
     printf 'START\t%s\t%s\n' "${robot}" "${config}"
     timeout "${timeout_seconds}" "${python_bin}" experiments/main.py \
+        --config-dir experiments/robots/config \
         --config-name="${config}" \
         --max-episodes 1 \
         --max-attempts "${max_attempts}" \

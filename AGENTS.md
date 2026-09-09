@@ -23,16 +23,16 @@ lingbot-vla、openpi），训练在各子模块内部完成。历史遗留的树
 
 ## 2. 目录速览
 
-- `config/`：任务 YAML 配置，按 Level 1-5 组织
+- `config/`：正式 benchmark 的任务 YAML 配置，按 Level 1-5 组织
 - `tasks/`：任务环境，负责场景、物体、相机、观测
 - `controllers/`：控制逻辑，负责动作生成、成功判定、数据采集/推理/回放调度
 - `factories/`：task/controller/robot/collector 注册与构造
-- `robots/`：Franka、Ridgebase、Piper 等机器人定义
+- `robots/`：正式运行使用的 Franka、Ridgebase、Piper 机器人定义
 - `data_collectors/`：HDF5 采集逻辑
 - `policy/`：策略训练（git 子模块：Isaac-GR00T、lerobot、lingbot-vla、openpi）
 - `packages/openpi-client/`：内置的远程推理 client 子包
 - `scripts/`：数据导出、评测和可复用的转换工具
-- `experiments/`：一次性渲染、诊断、资产构建脚本及其专项测试
+- `experiments/`：一次性渲染、诊断、资产构建、多机械臂兼容测试及其专项配置
 - `assets/`：USD 场景和机器人资源，体积大且容易误伤
 - `utils/`：`ObjectUtils`、相机处理、回放加载、A* 等工具
 
@@ -94,6 +94,8 @@ lingbot-vla、openpi），训练在各子模块内部完成。历史遗留的树
 - `factories/collector_factory.py`
 
 新增 task/controller/robot/collector 时，除了写类本身，还必须注册到对应 factory。
+仅用于兼容性测试的机器人放在 `experiments/robots/`，通过其中的 opt-in registry 注册，
+不要加入生产 `robot_factory.py`。
 
 配置里的键必须是已注册的 key，而且区分大小写。
 

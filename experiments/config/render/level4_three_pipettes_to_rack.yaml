@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - /level4_three_pipettes_to_rack
+  - _self_
+
+name: level4_three_pipettes_to_rack_replay
+mode: replay
+max_episodes: 1
+replay:
+  dataset_path: ${oc.env:LABUTOPIA_PIPETTE_DATASET,''}
+  episode_indices: [0]

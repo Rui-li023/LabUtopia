@@ -238,6 +238,6 @@ scripts/patch_level1_infer.py
 # URDF source repos fetched for asset conversion (not committed)
 /third_party/
 
-# NVIDIA source assets fetched by scripts/urdf_to_usd/fetch_official.py.
+# NVIDIA source assets fetched by experiments/urdf_to_usd/fetch_official.py.
 # LabUtopia commits only the converted runtime closure referenced by robot configs.
-/assets/robots/official/
+/experiments/robots/assets/robots/official/

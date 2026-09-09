@@ -190,8 +190,10 @@ from factories.controller_factory import create_controller
 from robots.franka.rmpflow_controller import RMPFlowController
 from controllers.atomic_actions.atomic_base_controller import AtomicBaseController
 from experiments.paper.keyframes import KeyframeRecorder, frame_to_bgr
+from experiments.robots.registry import register_experimental_robots
 from experiments.support.physics_scene_steps import synchronize_physics_scene_steps
 
+register_experimental_robots()
 
 
 def _convert_to_h264(src_path: str, is_success: bool):
@@ -459,8 +461,15 @@ def _run_camera_probe(specs: list[str], world, task, output_dir: str | None, cam
 
 
 def main():
-    hydra.initialize(config_path=args.config_dir, job_name=args.config_name)
-    cfg = hydra.compose(config_name=args.config_name)
+    config_dir = Path(args.config_dir)
+    if not config_dir.is_absolute():
+        config_dir = REPO_ROOT / config_dir
+    hydra.initialize_config_dir(config_dir=str(config_dir), job_name=args.config_name)
+    compose_overrides = []
+    production_config_dir = REPO_ROOT / "config"
+    if config_dir.resolve() != production_config_dir.resolve():
+        compose_overrides.append(f"hydra.searchpath=[file://{production_config_dir}]")
+    cfg = hydra.compose(config_name=args.config_name, overrides=compose_overrides)
     if (args.paper_lighting or args.paper_camera or args.seed is not None
             or args.paper_fixed_phase_order):
         # Some legacy level-1 configs are structured DictConfigs without a

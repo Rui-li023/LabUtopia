@@ -269,11 +269,11 @@ lingbot 0.71/15%, smolvla 0.84/10%, openpi 0.59/10%, gr00t 0.23/5%. Nav is learn
 
 - `scripts/lerobot_export/` — LeRobot v2.1/v3.0 export (`cli.py`, `merge_v21.py`,
   `verify_all.py`); one run dir per task, chunked episode layout.
-- `scripts/urdf_to_usd/` — reproducible robot import pipeline; fetched source trees stay in
+- `experiments/urdf_to_usd/` — experimental robot import pipeline; fetched source trees stay in
   `third_party/`, while only the runtime USD and kinematic URDF closure is versioned.
 - `scripts/level23_eval/`, `scripts/level5_eval/` — remote VLA inference eval harnesses
   (OpenPI, LingBot, SmolVLA, GR00T), including isolated temporary configs and tunnels.
-- `experiments/paper/render_all_arm_picks.sh` — one-episode visual smoke runner for every registered arm.
+- `experiments/robots/render_all_arm_picks.sh` — one-episode visual smoke runner for the experimental arms.
 - `docs/` — local (non-shipped) reports on collect/replay/inference campaigns; check here
   first for prior findings before re-debugging a task. Start with `docs/PROJECT_OVERVIEW.md`
   (项目通识): consolidated project overview, level status, durable lessons, and an index of

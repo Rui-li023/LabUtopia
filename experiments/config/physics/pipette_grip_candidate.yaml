@@ -1,0 +1,26 @@
+# @package _global_
+# Development candidate, not a claim of zero slip or held-out acceptance.
+# Dry pad friction is an engineering estimate, not measured calibration.
+robot:
+  gripper:
+    control_mode: force
+    # Drive force cap, not measured force at each pad. The second finger is
+    # passive/mimic in the physical articulation; do not infer 70 N total grip.
+    closing_force: 35.0
+    closing_speed: 0.02 # m/s per finger
+    opening_speed: 0.05 # retain prompt release independently of slow closure
+task:
+  force_gripper_servo: true
+  gripper_force_servo_mode: velocity
+  gripper_pad_friction: true
+  gripper_pad_static_friction: 1.0
+  gripper_pad_dynamic_friction: 0.8
+  gripper_pad_contact_stiffness: 0.0
+  gripper_pad_contact_damping: 0.0
+  gripper_pad_contact_offset: 0.0 # preserve authored offsets
+  rack_contact: {static_friction: 0.3, dynamic_friction: 0.3} # acrylic only; feet unchanged
+  pipette_object_aligned_grasp: true
+  pipette_require_pick_orientation: false
+  pipette_preflight_joint_margin: 0.10
+  pipette_enforce_runtime_joint_margin: true
+  pipette_insertion_depth_offset: 0.002

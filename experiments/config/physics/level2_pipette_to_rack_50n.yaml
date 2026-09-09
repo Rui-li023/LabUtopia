@@ -1,0 +1,6 @@
+# @package _global_
+# Explicit development candidate; not the accepted Level2 35 N baseline.
+defaults:
+  - /level2_pipette_to_rack
+  - pipette_single_actuator_50n_candidate
+  - _self_

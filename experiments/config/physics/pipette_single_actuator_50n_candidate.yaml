@@ -1,0 +1,12 @@
+# @package _global_
+# Development-only, calibrated at 240 Hz. Keeps original physical geometry,
+# material friction, velocities and success tests; does not add a finger drive.
+defaults:
+  - pipette_insertion_tracking_candidate
+  - _self_
+
+physics_substeps: 4
+robot:
+  gripper:
+    closing_force: 50.0
+    force_semantics: single_mimic_drive

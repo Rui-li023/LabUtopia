@@ -1,0 +1,22 @@
+# @package _global_
+defaults:
+  - /level2_stopper_to_flask
+  - _self_
+
+name: level2_stopper_to_flask_close_replay
+mode: replay
+max_episodes: 1
+replay:
+  dataset_path: ${oc.env:LABUTOPIA_STOPPER_DATASET,''}
+  episode_indices: [0]
+
+# Camera-only inspection preset. Preserve the recording's physics and geometry.
+cameras:
+  - prim_path: /World/StopperInsertionCamera
+    name: image
+    translation: [0.58, -0.65, 1.13]
+    orientation: [0.8157237990114053, 0.4724585898045915, 0.16726457491796054, 0.28879080079492003]
+    focal_length: 2.7
+    resolution: [960, 720]
+    clipping_range: [0.03, 200.0]
+    image_type: rgb

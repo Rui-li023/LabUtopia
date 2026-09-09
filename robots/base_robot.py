@@ -77,7 +77,7 @@ class BaseRobot(Robot, ABC):
         self.prim_path_str = prim_path
         # Remembered so post_reset() can re-apply it. A fix-base articulation is anchored
         # by a root fixed joint at its AUTHORED transform, so the constructor's position
-        # silently does nothing -- both converted arms (piper, arx_x5) come up welded at
+        # silently does nothing -- converted fixed-base arms can come up welded at
         # their asset origin. set_world_pose() after the world reset does move them.
         self._requested_position = None if position is None else np.asarray(position, dtype=float)
         self._requested_orientation = None if orientation is None else np.asarray(orientation, dtype=float)

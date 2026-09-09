@@ -14,7 +14,7 @@ import yaml
 from loguru import logger
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-REPOS_YAML = os.path.join(REPO_ROOT, "scripts", "urdf_to_usd", "robots.yaml")
+REPOS_YAML = os.path.join(REPO_ROOT, "experiments", "urdf_to_usd", "robots.yaml")
 DEFAULT_DAE_ROOT = "third_party/urdf"
 
 
@@ -46,5 +46,5 @@ def require_vendor_tree(vendor: str, dae_root: str) -> str | None:
         "third_party/ is gitignored -- the vendor description packages are cloned, not shipped. Fetch this one with:"
     )
     logger.error(f"    {clone_hint(vendor, dae_root)}")
-    logger.error("See scripts/urdf_to_usd/README.md, and robots.yaml for every repo this pipeline uses.")
+    logger.error("See experiments/urdf_to_usd/README.md, and robots.yaml for every repo this pipeline uses.")
     return None

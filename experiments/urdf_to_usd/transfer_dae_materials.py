@@ -244,7 +244,7 @@ def main() -> None:
     for robot, vendor in ROBOTS.items():
         if args.robot and args.robot != robot:
             continue
-        usd_path = f"assets/robots/{robot}.usd"
+        usd_path = f"experiments/robots/assets/robots/{robot}.usd"
         stage = Usd.Stage.Open(usd_path)
         if stage is None:
             logger.error(f"{robot}: could not open {usd_path}")

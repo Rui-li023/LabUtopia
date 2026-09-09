@@ -1,0 +1,16 @@
+# @package _global_
+# Set LABUTOPIA_PIPETTE_DATASET to a collected dataset/ directory.
+defaults:
+  - /level2_pipette_to_rack
+  - _self_
+
+name: level2_pipette_to_rack_replay
+mode: replay
+# Replay must use the same geometry as its recording. Set this explicitly for
+# historical 220 mm datasets; new collect config uses the 260 mm variant.
+usd_path: ${oc.env:LABUTOPIA_PIPETTE_ASSET,assets/chemistry_lab/lab_002/realistic_pipette_260mm_tall_wide_guide36/lab_002_pipette.usda}
+max_episodes: 1
+replay:
+  dataset_path: ${oc.env:LABUTOPIA_PIPETTE_DATASET,''}
+  episode_indices: [0]
+  max_episodes: 1

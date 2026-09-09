@@ -51,6 +51,7 @@ for entry in "${arms[@]}"; do
     mkdir -p "${robot_dir}"
     echo "Rendering ${robot} (${config}) -> ${robot_dir}"
     timeout "${timeout_seconds}" "${python_bin}" experiments/main.py \
+        --config-dir experiments/robots/config \
         --config-name="${config}" \
         --max-episodes 1 \
         --max-attempts 1 \

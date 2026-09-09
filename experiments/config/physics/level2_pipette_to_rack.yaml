@@ -1,0 +1,5 @@
+# @package _global_
+defaults:
+  - /level2_pipette_to_rack
+  - pipette_grip_candidate
+  - _self_

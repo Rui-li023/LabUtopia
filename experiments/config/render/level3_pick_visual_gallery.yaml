@@ -1,0 +1,98 @@
+# @package _global_
+# Fixed, high-contrast visual layouts for inspecting the randomization range.
+# Select a case with LABUTOPIA_VISUAL_CASE=cool|warm|clinical.
+defaults:
+  - /level3_pick
+  - _self_
+
+visual_case: ${oc.env:LABUTOPIA_VISUAL_CASE,cool}
+name: level3_pick_visual_${visual_case}
+seed: 23
+max_episodes: 1
+
+visual_cases:
+  cool:
+    hdrs: [assets/hdr/lab_017/environment.exr]
+    colors: [[0.45, 0.70, 1.0]]
+    background_intensity: [950.0, 950.0]
+    background_exposure: [0.6, 0.6]
+    background_rotation: [70.0, 70.0]
+    materials: [/World/Looks/Material7_stainless]
+    light_exposure: [0.8, 0.8]
+    color_temperature: [9500.0, 9500.0]
+    light_rotation_x: [-18.0, -18.0]
+    light_rotation_y: [12.0, 12.0]
+    light_rotation_z: [70.0, 70.0]
+
+  warm:
+    hdrs: [assets/hdr/suburban_garden_4k.exr]
+    colors: [[1.0, 0.55, 0.28]]
+    background_intensity: [650.0, 650.0]
+    background_exposure: [-0.4, -0.4]
+    background_rotation: [220.0, 220.0]
+    materials: [/World/Looks/Material2_wood]
+    light_exposure: [-0.35, -0.35]
+    color_temperature: [2200.0, 2200.0]
+    light_rotation_x: [16.0, 16.0]
+    light_rotation_y: [-15.0, -15.0]
+    light_rotation_z: [220.0, 220.0]
+
+  clinical:
+    hdrs: [assets/hdr/lab_003/environment.exr]
+    colors: [[1.0, 1.0, 1.0]]
+    background_intensity: [1200.0, 1200.0]
+    background_exposure: [1.0, 1.0]
+    background_rotation: [0.0, 0.0]
+    materials: [/World/Looks/Material4_plastic_light_white]
+    light_exposure: [1.2, 1.2]
+    color_temperature: [6500.0, 6500.0]
+    light_rotation_x: [0.0, 0.0]
+    light_rotation_y: [0.0, 0.0]
+    light_rotation_z: [0.0, 0.0]
+
+visual_randomization:
+  enabled: true
+  seed: ${seed}
+  split: train
+
+  background:
+    enabled: true
+    dome_light_path: /World/VisualRandomization/Background
+    hdrs: ${visual_cases.${visual_case}.hdrs}
+    colors: ${visual_cases.${visual_case}.colors}
+    intensity_range: ${visual_cases.${visual_case}.background_intensity}
+    exposure_range: ${visual_cases.${visual_case}.background_exposure}
+    rotation_range: ${visual_cases.${visual_case}.background_rotation}
+
+  surfaces:
+    - path: /World/table/surface
+      materials: ${visual_cases.${visual_case}.materials}
+
+  lighting:
+    enabled: true
+    scenario: standard_lab
+    randomize_intensity: false
+    shared_exposure: true
+    exposure_range: ${visual_cases.${visual_case}.light_exposure}
+    exposure_jitter_range: [0.0, 0.0]
+    shared_color_temperature: true
+    color_temp_range: ${visual_cases.${visual_case}.color_temperature}
+    randomize_position: false
+    randomize_rotation: true
+    rotation_range:
+      x: ${visual_cases.${visual_case}.light_rotation_x}
+      y: ${visual_cases.${visual_case}.light_rotation_y}
+      z: ${visual_cases.${visual_case}.light_rotation_z}
+
+task:
+  max_steps: 60
+
+collector:
+  type: mock
+
+hydra:
+  run:
+    dir: outputs/visual_randomization_gallery/${visual_case}
+
+multi_run:
+  run_dir: outputs/visual_randomization_gallery/${visual_case}

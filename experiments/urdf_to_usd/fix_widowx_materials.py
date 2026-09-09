@@ -43,10 +43,10 @@ from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade
 
 from experiments.urdf_to_usd.upstream import clone_hint
 
-USD_PATH = "assets/robots/widowx_vx300s.usd"
+USD_PATH = "experiments/robots/assets/robots/widowx_vx300s.usd"
 # Where the upstream texture is vendored to, so the asset's provenance lives in
 # the repo instead of in a fetched tree.
-TEXTURE_DEST = "assets/robots/textures/interbotix_black.png"
+TEXTURE_DEST = "experiments/robots/assets/robots/textures/interbotix_black.png"
 MATERIAL_PATH = "/vx300s/Looks/interbotix_black"
 UPSTREAM_TEXTURE = (
     "third_party/urdf/interbotix/interbotix_ros_xsarms/interbotix_xsarm_descriptions/meshes/interbotix_black.png"

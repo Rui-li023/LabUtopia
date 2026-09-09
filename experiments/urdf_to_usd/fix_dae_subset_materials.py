@@ -44,7 +44,7 @@ TRAVERSE = Usd.TraverseInstanceProxies(Usd.PrimDefaultPredicate)
 
 ROBOTS = {
     "yaskawa_hc10_robotiq85": {
-        "usd": "assets/robots/yaskawa_hc10_robotiq85.usd",
+        "usd": "experiments/robots/assets/robots/yaskawa_hc10_robotiq85.usd",
         "looks": "/yaskawa_hc10_labutopia_robotiq_2f_85/Looks",
         # Relative to --dae-root. Link name -> DAE stem; here they are identical.
         "dae_subdir": "motoman/motoman_hc10_support/meshes/hc10/visual",

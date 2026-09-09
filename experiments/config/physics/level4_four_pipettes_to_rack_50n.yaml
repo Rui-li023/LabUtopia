@@ -1,0 +1,6 @@
+# @package _global_
+# Explicit physical candidate; does not enable the development fixture planner.
+defaults:
+  - /level4_four_pipettes_to_rack
+  - pipette_single_actuator_50n_candidate
+  - _self_

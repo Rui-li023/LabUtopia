@@ -1,0 +1,81 @@
+# @package _global_
+# Level-1 pick with the stock Franka Panda grasping the beaker.
+#
+# `level1_pick_franka_ref` deliberately keeps the conical bottle so it stays a
+# byte-comparable regression baseline. The publication gallery needs every arm
+# holding the SAME vessel, so this variant swaps in /World/beaker2.
+#
+# The object placement and the (absent) grasp block are copied from
+# `level2_transport_beaker`, whose Franka picks this exact unscaled beaker in a
+# validated collect campaign. Do NOT graft the FR3's `ee_euler_deg: [0, 90, 25]`
+# in here: the two arms expose different tool frames, and that euler sends the
+# Panda's fingers into the beaker's 111 mm rim, which its 80 mm stroke cannot
+# clear. The default grasp frame approaches the 68.8 mm lower body instead.
+
+name: level1_pick_franka_beaker
+
+task_type: "pick"
+controller_type: "pick"
+
+mode: "collect"
+usd_path: "assets/chemistry_lab/lab_001/lab_001.usd"
+max_episodes: 10
+seed: 7
+
+task:
+  max_steps: 2000
+  obj_paths:
+    - path: "/World/beaker2"
+      # The Panda hand opens 80 mm; the unscaled beaker measures 111 mm at the
+      # rim, so the fingers cannot straddle it. At 75% the grip band is ~67 mm.
+      scale: 0.75
+      friction: 1.5
+      position_range:
+        # franka_ref's exact validated placement band -- the only proven
+        # reach envelope for this arm at this base pose.
+        x: [0.24, 0.28]
+        y: [-0.02, 0.02]
+        z: [0.80, 0.80]
+
+cameras:
+  - prim_path: "/World/Camera1"
+    name: "camera_1"
+    translation: [1.6, 0, 1.85]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: "rgb"
+
+  - prim_path: "/World/Camera2"
+    name: "camera_2"
+    translation: [0.17, 0, 2.3]
+    resolution: [256, 256]
+    focal_length: 4
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: "rgb"
+
+grasp:
+  # `PickController.get_gripper_distance` looks its table up by EXACT prim name,
+  # and the table has "beaker" but not "beaker2" -- so this object silently falls
+  # through to 0.0, i.e. a full close, which ejects the rigid glass cup instead of
+  # holding it. Command the half-opening explicitly: the Panda finger joint is a
+  # direct half-gap, so 0.029 leaves a ~58 mm pad gap on the ~67 mm grip band.
+  gripper_distance: 0.029
+
+robot:
+  type: "franka"
+  position: [-0.4, 0, 0.71]
+
+collector:
+  type: "mock"
+  compression: gzip
+
+hydra:
+  run:
+    dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+multi_run:
+  run_dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+
+collect_position_only: true
+action_randomization: false

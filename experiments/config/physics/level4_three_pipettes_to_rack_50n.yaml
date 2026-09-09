@@ -1,0 +1,6 @@
+# @package _global_
+# Explicit candidate, not a validated new default or an enabled fixture planner.
+defaults:
+  - /level4_three_pipettes_to_rack
+  - pipette_single_actuator_50n_candidate
+  - _self_
