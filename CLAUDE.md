@@ -273,7 +273,7 @@ lingbot 0.71/15%, smolvla 0.84/10%, openpi 0.59/10%, gr00t 0.23/5%. Nav is learn
   `third_party/`, while only the runtime USD and kinematic URDF closure is versioned.
 - `scripts/level23_eval/`, `scripts/level5_eval/` — remote VLA inference eval harnesses
   (OpenPI, LingBot, SmolVLA, GR00T), including isolated temporary configs and tunnels.
-- `scripts/render_all_arm_picks.sh` — one-episode visual smoke runner for every registered arm.
+- `experiments/paper/render_all_arm_picks.sh` — one-episode visual smoke runner for every registered arm.
 - `docs/` — local (non-shipped) reports on collect/replay/inference campaigns; check here
   first for prior findings before re-debugging a task. Start with `docs/PROJECT_OVERVIEW.md`
   (项目通识): consolidated project overview, level status, durable lessons, and an index of

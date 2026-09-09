@@ -3,15 +3,15 @@ Standalone HDR panorama capture script for Isaac Sim 4.x / 5.x.
 
 Usage:
     # headless, default settings
-    ./python.sh capture_hdr.py --usd /path/to/scene.usd
+    ./python.sh experiments/hdr/capture_hdr.py --usd /path/to/scene.usd
 
     # GUI, custom position and output
-    ./python.sh capture_hdr.py --usd /path/to/scene.usd \
+    ./python.sh experiments/hdr/capture_hdr.py --usd /path/to/scene.usd \
         --out ./hdr_output --pos 0 0 1.2 \
         --face-size 2048 --mode PathTracing
 
     # multiple capture positions in one run
-    ./python.sh capture_hdr.py --usd /path/to/scene.usd \
+    ./python.sh experiments/hdr/capture_hdr.py --usd /path/to/scene.usd \
         --pos 0 0 1.5   --pos 1.0 0 1.5   --pos -1.0 0 1.5
 """
 
@@ -79,7 +79,7 @@ simulation_app = SimulationApp({"headless": args.headless})
 
 # ── 2. Make project utilities importable ────────────────────────────────────
 
-_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
@@ -88,7 +88,7 @@ if _PROJECT_ROOT not in sys.path:
 import carb  # noqa: E402
 from omni.isaac.core.utils.stage import add_reference_to_stage  # noqa: E402
 
-from utils.hdr_capture_utils import capture_hdr_panorama  # noqa: E402
+from experiments.hdr.hdr_capture_utils import capture_hdr_panorama  # noqa: E402
 
 # ── 4. RTX render mode ───────────────────────────────────────────────────────
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from utils.hdr_capture_utils import _CUBE_FACES, _stitch, _write_exr
+from experiments.hdr.hdr_capture_utils import _CUBE_FACES, _stitch, _write_exr
 
 
 class HDRCaptureUtilsTest(unittest.TestCase):

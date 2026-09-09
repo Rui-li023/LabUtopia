@@ -31,6 +31,8 @@ lingbot-vla、openpi），训练在各子模块内部完成。历史遗留的树
 - `data_collectors/`：HDF5 采集逻辑
 - `policy/`：策略训练（git 子模块：Isaac-GR00T、lerobot、lingbot-vla、openpi）
 - `packages/openpi-client/`：内置的远程推理 client 子包
+- `scripts/`：数据导出、评测和可复用的转换工具
+- `experiments/`：一次性渲染、诊断、资产构建脚本及其专项测试
 - `assets/`：USD 场景和机器人资源，体积大且容易误伤
 - `utils/`：`ObjectUtils`、相机处理、回放加载、A* 等工具
 
@@ -180,7 +182,7 @@ mypy .
 
 说明：
 
-- 顶层 `ruff` / `mypy` 默认排除了 `packages/`、`assets/`、`outputs/`
+- 顶层 `ruff` / `mypy` 默认排除了 `packages/`、`assets/`、`outputs/`、`experiments/`
 - 如果你改了 `packages/openpi-client/`，请额外对该子包做定向检查
 
 仿真相关烟雾测试（需要 Isaac Sim 环境）：

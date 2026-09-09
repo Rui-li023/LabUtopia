@@ -269,5 +269,5 @@ Robotiq 2F-85 资产。
 烟雾配置，不应计入 benchmark 成功率。可用以下命令逐个生成单 episode 结果清单：
 
 ```bash
-PYTHON_BIN=/path/to/isaac-python bash scripts/render_all_arm_picks.sh
+PYTHON_BIN=/path/to/isaac-python bash experiments/paper/render_all_arm_picks.sh
 ```

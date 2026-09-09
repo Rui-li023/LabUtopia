@@ -2,7 +2,7 @@
 
 set -uo pipefail
 
-repo_dir="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+repo_dir="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 run_dir="${RUN_DIR:-${repo_dir}/test_outputs/all_arm_pick_$(date +%Y%m%d)}"
 python_bin="${PYTHON_BIN:-python}"
 timeout_seconds="${TIMEOUT_SECONDS:-900}"

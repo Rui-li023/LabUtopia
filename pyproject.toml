@@ -16,6 +16,7 @@ exclude = [
     "packages/",
     "outputs/",
     "assets/",
+    "experiments/",
     ".claude/",
 ]
 
@@ -52,6 +53,9 @@ known-first-party = [
 ]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
+[tool.ruff.lint.per-file-ignores]
+"main.py" = ["E402"] # Isaac modules must load after SimulationApp starts.
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
@@ -65,4 +69,8 @@ ignore_missing_imports = true
 exclude = [
     "packages/",
     "outputs/",
+    "experiments/",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
