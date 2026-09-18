@@ -157,16 +157,20 @@ class MobileManipControllerBase(BaseController):
         self.data_collector.cache_step(
             camera_images=state["camera_data"],
             joint_angles=self._state11(),
-            action=np.asarray(action11, dtype=np.float32),
+            action=np.asarray(action11, dtype=self._record_action_dtype()),
             language_instruction=self.get_language_instruction(),
             phase=phase,
         )
 
     def _arm_record_to_11(self, record8: np.ndarray) -> np.ndarray:
         """Prepend the current base pose to an atomic 8-dim record array."""
-        base = np.asarray(self.base_subset.get_joint_positions(), dtype=np.float32)
-        rec = np.asarray(record8, dtype=np.float32)
-        return np.concatenate([base, rec[:7], rec[7:8]]).astype(np.float32)
+        dtype = self._record_action_dtype()
+        base = np.asarray(self.base_subset.get_joint_positions(), dtype=dtype)
+        rec = np.asarray(record8, dtype=dtype)
+        return np.concatenate([base, rec[:7], rec[7:8]])
+
+    def _record_action_dtype(self):
+        return np.float64 if bool(getattr(self.cfg.collector, "record_precise_replay_actions", False)) else np.float32
 
     # ── Navigation helpers ───────────────────────────────────────────────
 
@@ -410,7 +414,15 @@ class MobileManipControllerBase(BaseController):
         else:
             self.check_success_counter = 0
 
-        if self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS:
+        success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
+        if success:
+            self._replay_reached_success = True
+        actions_remain = (self._current_actions is not None
+                          and self._current_action_step < len(self._current_actions))
+        # replay_run_to_end: play the whole recording rather than stopping at the
+        # first sustained success. Shake/pour continue well past the lift the gate
+        # watches, so a figure strip needs the tail too.
+        if success and not (self.replay_run_to_end and actions_remain):
             self._last_failure_reason = ""
             self._last_success = True
             self.reset_needed = True
@@ -420,6 +432,13 @@ class MobileManipControllerBase(BaseController):
 
         actions_exhausted = (self._current_actions is None
                              or self._current_action_step >= len(self._current_actions))
+        if actions_exhausted and self.replay_run_to_end and self._replay_reached_success:
+            self._last_failure_reason = ""
+            self._last_success = True
+            self.reset_needed = True
+            self._advance_replay_episode()
+            logger.success("[Replay] Task success (whole recording played).")
+            return None, True, True
         if actions_exhausted and action is None:
             settle_budget = max(self.REQUIRED_SUCCESS_STEPS * 4, 240)
             self._replay_settle_used = getattr(self, "_replay_settle_used", 0) + 1

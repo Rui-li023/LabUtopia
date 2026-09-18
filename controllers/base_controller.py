@@ -59,6 +59,13 @@ class BaseController(ABC):
         self.check_success_counter = 0
         self._last_failure_reason = ""
         self._instruction_cache: dict[str, str] = {}
+        # Replay normally stops the moment the success gate has held long enough.
+        # A publication figure needs the WHOLE recorded motion instead: level-5
+        # shake and pour keep moving long after the lift their gate watches, so
+        # the gate-truncated prefix would omit the action the figure is about.
+        # Set by experiments/main.py --paper-replay-full; off everywhere else.
+        self.replay_run_to_end = False
+        self._replay_reached_success = False
 
         rmp_controller_cls = self._select_rmp_controller_cls(robot)
         self.rmp_controller = rmp_controller_cls(
@@ -105,7 +112,7 @@ class BaseController(ABC):
         init["robot_world_position"] = np.array(self.robot.get_world_pose()[0], dtype=np.float32)
         self.data_collector.set_init_state(init)
         self._init_state_captured = True
-        logger.info(f"Set init state for episode {init}")
+        logger.info("Captured episode init state: {} objects; extra keys={}", len(init.get("object_poses", {})), list(init.get("extra", {})))
 
     @property
     def language_instruction(self) -> str | None:
@@ -189,12 +196,19 @@ class BaseController(ABC):
 
     def _init_collect_mode(self, cfg, robot=None):
         """Initialize the controller for collect mode."""
+        collector_kwargs = {}
+        if bool(getattr(cfg.collector, "record_precise_replay_actions", False)):
+            if cfg.collector.type in {"default", "mobile"}:
+                collector_kwargs["record_precise_replay_actions"] = True
+            elif cfg.collector.type != "mock":
+                raise ValueError("Precise replay actions require the default or mobile collector")
         self.data_collector = create_collector(
             cfg.collector.type,
             camera_configs=cfg.cameras,
             save_dir=cfg.multi_run.run_dir,
             max_episodes=cfg.max_episodes,
             compression=cfg.collector.compression,
+            **collector_kwargs,
         )
 
     def _init_replay_mode(self, cfg, robot=None):
@@ -289,6 +303,7 @@ class BaseController(ABC):
         self.check_success_counter = 0
         self.reset_needed = False
         self._last_success = False
+        self._replay_reached_success = False
         self._last_failure_reason = ""
         self._instruction_cache = {}
         self._language_instruction = ""
@@ -458,6 +473,14 @@ class BaseController(ABC):
 
         success = self.check_success_counter >= self.REQUIRED_SUCCESS_STEPS
         if success:
+            self._replay_reached_success = True
+        # get_next_action() advances its cursor before main applies the result.
+        # A just-returned final action is still pending, not yet exhausted.
+        actions_remain = action is not None or (
+            self._current_actions is not None
+            and self._current_action_step < len(self._current_actions)
+        )
+        if success and not (self.replay_run_to_end and actions_remain):
             self._last_failure_reason = ""
             self._last_success = True
             self.reset_needed = True
@@ -465,10 +488,19 @@ class BaseController(ABC):
             logger.success("[Replay] Task success!")
             return None, True, True
 
-        actions_exhausted = self._current_actions is None or (
-            self._current_action_step >= len(self._current_actions)
-            and self.trajectory_controller.is_trajectory_complete()
+        actions_exhausted = action is None and (
+            self._current_actions is None or (
+                self._current_action_step >= len(self._current_actions)
+                and self.trajectory_controller.is_trajectory_complete()
+            )
         )
+        if actions_exhausted and self.replay_run_to_end and self._replay_reached_success:
+            self._last_failure_reason = ""
+            self._last_success = True
+            self.reset_needed = True
+            self._advance_replay_episode()
+            logger.success("[Replay] Task success (whole recording played).")
+            return None, True, True
         if actions_exhausted:
             # Settling window: PD-tracked replay often lags collect by a few
             # frames, so the recorded final pose may not yet satisfy the

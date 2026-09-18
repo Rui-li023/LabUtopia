@@ -168,11 +168,13 @@ def _write_episode_data(
 
 
 class DataCollector:
-    def __init__(self, camera_configs: List[dict], save_dir="output", max_episodes=10, max_workers=4, compression=None):
+    def __init__(self, camera_configs: List[dict], save_dir="output", max_episodes=10, max_workers=4, compression=None,
+                 record_precise_replay_actions: bool = False):
         """Initialize the data collector with multiprocessing support."""
         self.save_dir = save_dir
         self.max_episodes = max_episodes
         self.compression = compression
+        self.record_precise_replay_actions = record_precise_replay_actions
         self.session_dir = os.path.join(save_dir, "dataset")
         self.mate_dir = os.path.join(self.session_dir, "meta")
         self.episode_file_path = os.path.join(self.mate_dir, "episode.jsonl")
@@ -271,7 +273,12 @@ class DataCollector:
         self.temp_agent_pose.append(joint_angles_state)
 
         if action is not None:
-            act = np.asarray(action, dtype=np.float32).copy()
+            # Keep the ordinary float32 policy dataset, but optionally preserve
+            # commands before serialization rounds the normalized gripper value.
+            # A float32 closedness -> distance round-trip can change the PhysX
+            # finger target by one ULP and amplify at marginal grasp contacts.
+            action_dtype = np.float64 if self.record_precise_replay_actions else np.float32
+            act = np.asarray(action, dtype=action_dtype).copy()
             # RMPFlow IK can return joint targets shifted by ±2π for the
             # redundant wrist (j7, index 6). Wrap the action back to within
             # ±π of the actual joint state so it stays physically meaningful.
@@ -288,6 +295,13 @@ class DataCollector:
 
     def _extra_datasets(self) -> Optional[dict]:
         """Hook for subclasses to append per-episode datasets to the h5 file."""
+        if self.record_precise_replay_actions:
+            if not self.temp_actions or len(self.temp_actions) != len(self.temp_agent_pose):
+                raise ValueError("Precise replay requires a recorded command for every observation")
+            return {
+                "replay_actions": np.asarray(self.temp_actions, dtype=np.float64),
+                "replay_action_version": np.int32(1),
+            }
         return None
 
     def write_cached_data(self, final_joint_positions=None):

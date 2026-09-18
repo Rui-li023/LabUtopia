@@ -1,5 +1,3 @@
-from typing import Optional
-
 import numpy as np
 
 from .data_collector import DataCollector
@@ -21,22 +19,34 @@ class MobileDataCollector(DataCollector):
     """
 
     GRIPPER_INDEX = 10  # finger joint in the 11-dim state layout
-    WRIST_INDEX = 9     # panda_joint7 in the 11-dim layout
+    WRIST_INDEX = 9  # panda_joint7 in the 11-dim layout
 
-    def __init__(self, camera_configs, save_dir="output", max_episodes=10,
-                 max_workers=4, compression=None):
-        super().__init__(camera_configs, save_dir=save_dir,
-                         max_episodes=max_episodes, max_workers=max_workers,
-                         compression=compression)
+    def __init__(
+        self,
+        camera_configs,
+        save_dir="output",
+        max_episodes=10,
+        max_workers=4,
+        compression=None,
+        record_precise_replay_actions: bool = False,
+    ):
+        super().__init__(
+            camera_configs,
+            save_dir=save_dir,
+            max_episodes=max_episodes,
+            max_workers=max_workers,
+            compression=compression,
+            record_precise_replay_actions=record_precise_replay_actions,
+        )
         self.temp_phases: list[int] = []
 
     def cache_step(
         self,
         camera_images: dict,
         joint_angles: np.ndarray,
-        action: Optional[np.ndarray] = None,
-        language_instruction: Optional[str] = None,
-        task_index: Optional[int] = None,
+        action: np.ndarray | None = None,
+        language_instruction: str | None = None,
+        task_index: int | None = None,
         phase: int = 0,
     ) -> None:
         """Cache one step in the 11-dim mobile layout with a phase label."""
@@ -54,7 +64,8 @@ class MobileDataCollector(DataCollector):
         self.temp_agent_pose.append(state)
 
         if action is not None:
-            act = np.asarray(action, dtype=np.float32).copy()
+            dtype = np.float64 if self.record_precise_replay_actions else np.float32
+            act = np.asarray(action, dtype=dtype).copy()
             # Wrap the redundant wrist (panda_joint7, index 9 here) back to
             # within +-pi of the measured joint, mirroring the base collector's
             # index-6 handling for the 8-dim layout.
@@ -70,8 +81,8 @@ class MobileDataCollector(DataCollector):
         self.temp_task_indices.append(-1 if task_index is None else int(task_index))
         self.temp_phases.append(int(phase))
 
-    def _extra_datasets(self) -> Optional[dict]:
-        return {"phase": np.asarray(self.temp_phases, dtype=np.int32)}
+    def _extra_datasets(self) -> dict | None:
+        return {**(super()._extra_datasets() or {}), "phase": np.asarray(self.temp_phases, dtype=np.int32)}
 
     def write_cached_data(self, final_joint_positions=None) -> None:
         """Write the episode; every cached step must carry an explicit action.
@@ -84,7 +95,8 @@ class MobileDataCollector(DataCollector):
             raise ValueError(
                 "MobileDataCollector requires an explicit action for every cached "
                 f"step (got {len(self.temp_actions)} actions vs "
-                f"{len(self.temp_agent_pose)} states)")
+                f"{len(self.temp_agent_pose)} states)"
+            )
         super().write_cached_data(None)
         self.temp_phases = []
 

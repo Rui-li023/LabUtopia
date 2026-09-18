@@ -6,6 +6,10 @@ from typing import List, Dict, Optional
 from loguru import logger
 
 
+class ReplayIntegrityError(ValueError):
+    """A versioned replay record is corrupt; do not silently skip its episode."""
+
+
 class EpisodeData:
     """Container for a single replayed episode's data."""
 
@@ -24,6 +28,8 @@ class ReplayDataLoader:
     Each episode lives in  <dataset_path>/episode_XXXX/episode_XXXX.h5
     Expected H5 layout per episode:
         /actions                           float32 [T, n_joints]
+        /replay_actions                    optional float64 [T, n_joints]
+        /replay_action_version             optional scalar 1 (requires replay_actions)
         /agent_pose                        float32 [T, n_joints]
         /init_state/object_init_position   float32 [3]
         /init_state/robot_init_joint_positions float32 [n_joints]
@@ -95,6 +101,15 @@ class ReplayDataLoader:
                     return None
 
                 actions = f["actions"][:]
+                if "replay_actions" in f:
+                    if "replay_action_version" not in f or int(f["replay_action_version"][()]) != 1:
+                        raise ReplayIntegrityError("Unsupported precise replay action version")
+                    precise_actions = f["replay_actions"][:]
+                    if (precise_actions.dtype != np.dtype("float64")
+                            or precise_actions.shape != actions.shape
+                            or not np.all(np.isfinite(precise_actions))):
+                        raise ReplayIntegrityError("Precise replay actions must be finite float64 and match actions")
+                    actions = precise_actions
                 agent_pose = f["agent_pose"][:] if "agent_pose" in f else None
 
                 init_state: Dict[str, np.ndarray] = {}
@@ -112,6 +127,8 @@ class ReplayDataLoader:
 
             return EpisodeData(ep_idx, actions, init_state, agent_pose)
 
+        except ReplayIntegrityError:
+            raise
         except Exception as e:
             logger.error(f"Error loading {h5_path}: {e}")
             return None

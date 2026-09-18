@@ -277,14 +277,24 @@ class AtomicBaseController:
     ) -> np.ndarray:
         """Build 8-dim record: 7 arm joints + 1 gripper state."""
         jp = action.joint_positions
+        fallback = current_joint_positions[:7].copy()
+        if self._last_record_positions is not None:
+            fallback = self._last_record_positions[:7].copy()
+        elif self._robot is not None:
+            # A startup no-op holds the existing DRIVE targets, not the measured
+            # joints (which already moved during warmup). Recording the latter
+            # introduces a different first command in replay, even after an
+            # exact reset. The same rule covers partially commanded actions.
+            applied = self._robot.get_applied_action()
+            targets = getattr(applied, "joint_positions", None)
+            if targets is not None:
+                targets = np.asarray(targets, dtype=np.float64)
+                if targets.ndim == 1 and targets.size >= 7:
+                    valid = np.isfinite(targets[:7])
+                    fallback[valid] = targets[:7][valid]
         if jp is None:
-            arm = (self._last_record_positions[:7].copy()
-                   if self._last_record_positions is not None
-                   else current_joint_positions[:7].copy())
+            arm = fallback.copy()
         else:
-            fallback = (self._last_record_positions[:7]
-                        if self._last_record_positions is not None
-                        else current_joint_positions[:7])
             arm = fallback.copy().astype(np.float64)
             for i in range(min(len(jp), 7)):
                 if jp[i] is not None:
