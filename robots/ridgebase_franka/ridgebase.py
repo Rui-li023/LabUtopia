@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# Modified by the LabUtopia authors: structure adapted from Isaac Sim's Franka example; extended to the Ridgeback mobile base plus Panda arm as one 12-DoF articulation.
 
 """Ridgebase mobile platform robot with Franka arm.
 

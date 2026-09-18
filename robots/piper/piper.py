@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# Modified by the LabUtopia authors: structure adapted from Isaac Sim's Franka example; the kinematics, gripper and tool frame are AgileX Piper's.
 
 """Agilex Piper Robot - 6-DOF robotic arm with parallel gripper."""
 
