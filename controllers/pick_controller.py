@@ -90,6 +90,17 @@ class PickTaskController(BaseController):
             cspace_controller=self.rmp_controller,
             events_dt=events_dt,
         )
+        # Which quaternion convention this config's grasp euler was tuned against.
+        # Opt-in, because it cannot be inferred: the `_v2` configs carry their own
+        # ee_euler_deg but it is the *historical* value, tuned against the unpermuted
+        # handoff, while the multi-arm sweep picked arm-specific eulers by tracking
+        # waypoints through RMPFlow with the permutation active. Only the sweep's
+        # configs set this. See PickController._to_isaac_quat.
+        self.pick_controller.legacy_orientation_handoff = not bool(
+            getattr(self._grasp_cfg, "isaac_orientation_handoff", False)
+        )
+        if not self.pick_controller.legacy_orientation_handoff:
+            logger.info("[grasp] using the Isaac (w,x,y,z) orientation handoff")
         self.pick_controller.adaptive_phase_completion = bool(
             getattr(self._grasp_cfg, "adaptive_phase_completion", False)
         )
