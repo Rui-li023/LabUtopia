@@ -2,7 +2,7 @@ import math
 import unittest
 import xml.etree.ElementTree as ET
 
-from scripts.urdf_to_usd.prepare_urdf import _rpy_matrix, rotate_visual_origins
+from experiments.urdf_to_usd.prepare_urdf import _rpy_matrix, rotate_visual_origins
 
 
 class RotateVisualOriginsTest(unittest.TestCase):
