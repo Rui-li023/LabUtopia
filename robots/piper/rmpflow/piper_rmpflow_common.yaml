@@ -1,6 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
+# RMPFlow gains copied from Isaac's Franka config -- a known-good baseline.
 # RMPflow configuration for Agilex Piper
 
 # Joint limit buffers for 6 arm joints (gripper joints are fixed)
