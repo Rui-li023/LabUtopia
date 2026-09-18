@@ -131,15 +131,32 @@ def _sample_lighting(
     intensity_range = options.get("intensity_range")
     exposure_range = _range(options.get("exposure_range"), (-2.0, 4.0))
     temperature_range = _range(options.get("color_temp_range"), (2700.0, 6500.0))
+    temperature_candidates = [float(value) for value in options.get("color_temp_candidates") or []]
+    color_candidates = [list(color) for color in options.get("color_candidates") or []]
+    for color in color_candidates:
+        if len(color) != 3:
+            raise ValueError(f"Light color must contain three values, got {color!r}")
+    if temperature_candidates and color_candidates and len(temperature_candidates) == len(color_candidates):
+        candidate_order = list(range(len(temperature_candidates)))
+        rng.shuffle(candidate_order)
+        temperature_candidates = [temperature_candidates[index] for index in candidate_order]
+        color_candidates = [color_candidates[index] for index in candidate_order]
+    else:
+        rng.shuffle(temperature_candidates)
+        rng.shuffle(color_candidates)
     exposure_jitter_range = _range(options.get("exposure_jitter_range"), (0.0, 0.0))
     shared_exposure = rng.uniform(*exposure_range) if options.get("shared_exposure", False) else None
     shared_temperature = rng.uniform(*temperature_range) if options.get("shared_color_temperature", False) else None
 
-    paths = sorted(str(path) for path in light_paths)
-    create_lights = not paths
-    if create_lights:
-        parent = str(options.get("parent_path", "/World/VisualRandomization"))
-        paths = [f"{parent}/Light_{index}" for index in range(int(options.get("num_lights", 3)))]
+    existing_paths = sorted(str(path) for path in light_paths)
+    additional_count = max(0, int(options.get("num_additional_lights", 0)))
+    generated_count = additional_count
+    if not existing_paths and generated_count == 0:
+        generated_count = int(options.get("num_lights", 3))
+    parent = str(options.get("parent_path", "/World/VisualRandomization"))
+    generated_paths = [f"{parent}/Light_{index}" for index in range(generated_count)]
+    generated_path_set = set(generated_paths)
+    paths = existing_paths + generated_paths
 
     allowed_types = list(options.get("light_types") or ["RectLight", "SphereLight"])
     position_ranges = _axis_ranges(
@@ -152,27 +169,33 @@ def _sample_lighting(
     )
 
     lights: list[dict[str, Any]] = []
-    for path in paths:
+    for light_index, path in enumerate(paths):
+        is_generated = path in generated_path_set
         exposure = shared_exposure
         if exposure is None:
             exposure = rng.uniform(*exposure_range)
         exposure += rng.uniform(*exposure_jitter_range)
         temperature = shared_temperature
         if temperature is None:
-            temperature = rng.uniform(*temperature_range)
+            if temperature_candidates:
+                temperature = temperature_candidates[light_index % len(temperature_candidates)]
+            else:
+                temperature = rng.uniform(*temperature_range)
 
         item: dict[str, Any] = {
             "path": path,
             "exposure": exposure,
             "color_temperature": temperature,
         }
+        if color_candidates:
+            item["color"] = [float(channel) for channel in color_candidates[light_index % len(color_candidates)]]
         if intensity_range is not None:
             item["intensity"] = rng.uniform(*_range(intensity_range, (500.0, 5000.0)))
-        if options.get("randomize_position", False) or create_lights:
+        if options.get("randomize_position", False) or is_generated:
             item["position"] = [rng.uniform(*position_ranges[axis]) for axis in ("x", "y", "z")]
-        if options.get("randomize_rotation", False) or create_lights:
+        if options.get("randomize_rotation", False) or is_generated:
             item["rotation"] = [rng.uniform(*rotation_ranges[axis]) for axis in ("x", "y", "z")]
-        if create_lights:
+        if is_generated:
             item["type"] = str(rng.choice(allowed_types))
             item["intensity"] = item.get(
                 "intensity",

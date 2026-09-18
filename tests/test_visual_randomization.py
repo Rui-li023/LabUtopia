@@ -140,6 +140,43 @@ def test_empty_scene_layout_creates_replayable_typed_lights():
         assert prim.GetAttribute("inputs:length").HasAuthoredValueOpinion()
 
 
+def test_existing_scene_can_add_replayable_mixed_temperature_lights():
+    lighting = {
+        "enabled": True,
+        "num_additional_lights": 2,
+        "parent_path": "/World/Generated",
+        "light_types": ["SphereLight"],
+        "intensity_range": [800.0, 800.0],
+        "created_intensity_range": [800.0, 800.0],
+        "exposure_range": [0.0, 0.0],
+        "color_temp_range": [1800.0, 12000.0],
+        "color_temp_candidates": [1800.0, 5000.0, 12000.0],
+        "color_candidates": [[1.0, 0.3, 0.1], [1.0, 1.0, 1.0], [0.1, 0.3, 1.0]],
+    }
+    layout = sample_visual_layout(VISUAL_CONFIG, 0, ["/World/Existing"], lighting)
+
+    lights = layout["lighting"]["lights"]
+    assert [light["path"] for light in lights] == [
+        "/World/Existing",
+        "/World/Generated/Light_0",
+        "/World/Generated/Light_1",
+    ]
+    assert {light["color_temperature"] for light in lights} == {1800.0, 5000.0, 12000.0}
+    assert {tuple(light["color"]) for light in lights} == {
+        (1.0, 0.3, 0.1),
+        (1.0, 1.0, 1.0),
+        (0.1, 0.3, 1.0),
+    }
+    assert {(light["color_temperature"], tuple(light["color"])) for light in lights} == {
+        (1800.0, (1.0, 0.3, 0.1)),
+        (5000.0, (1.0, 1.0, 1.0)),
+        (12000.0, (0.1, 0.3, 1.0)),
+    }
+    assert "type" not in lights[0]
+    assert all(light["type"] == "SphereLight" for light in lights[1:])
+    assert all("position" in light for light in lights[1:])
+
+
 def test_sampled_layout_can_be_applied_and_restored_on_usd_stage():
     stage = Usd.Stage.CreateInMemory()
     stage.DefinePrim("/World", "Xform")

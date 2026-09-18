@@ -107,17 +107,24 @@ def resolve_lighting_options(cfg: Any, split: str | None = None) -> dict[str, An
     default_parent_path = "/World/VisualRandomization" if split else "/World"
     default_light_types = ["RectLight", "SphereLight"] if split else list(LIGHT_TYPE_NAMES)
     default_shared_exposure = not randomize_intensity if split else False
+    color_temp_candidates = merged("color_temp_candidates", None)
+    color_candidates = merged("color_candidates", None)
 
     return {
         "enabled": bool(_cfg_value(cfg, "enabled", False)),
         "scenario": str(scenario) if scenario else None,
         "num_lights": int(_cfg_value(cfg, "num_lights", 3)),
+        "num_additional_lights": int(_cfg_value(cfg, "num_additional_lights", 0)),
         "parent_path": str(_cfg_value(cfg, "parent_path", default_parent_path)),
         "light_types": list(merged("light_types", default_light_types)),
         "intensity_range": configured_intensity_range if randomize_intensity else None,
         "created_intensity_range": configured_intensity_range,
         "exposure_range": tuple(merged("exposure_range", (-2.0, 4.0))),
         "color_temp_range": tuple(color_temp_range),
+        "color_temp_candidates": (
+            [float(value) for value in color_temp_candidates] if color_temp_candidates is not None else []
+        ),
+        "color_candidates": [list(color) for color in color_candidates] if color_candidates is not None else [],
         "randomize_position": bool(_cfg_value(cfg, "randomize_position", False)),
         "position_range": axes("position_range", {"x": (-1.0, 1.0), "y": (-1.0, 1.0), "z": (1.5, 3.0)}),
         "randomize_rotation": bool(_cfg_value(cfg, "randomize_rotation", False)),
@@ -210,8 +217,14 @@ class LightingRandomizer:
         """
         light_paths: List[str] = []
         for prim in self.stage.Traverse():
-            if prim.GetTypeName() in LIGHT_TYPE_NAMES:
-                light_paths.append(prim.GetPath().pathString)
+            if prim.GetTypeName() not in LIGHT_TYPE_NAMES:
+                continue
+            # An explicitly hidden light is off on purpose (e.g. the duplicate key
+            # light a publication backdrop drags in). Re-authoring its intensity
+            # here would silently switch it back on every episode.
+            if UsdGeom.Imageable(prim).ComputeVisibility() == UsdGeom.Tokens.invisible:
+                continue
+            light_paths.append(prim.GetPath().pathString)
         return light_paths
 
     # ------------------------------------------------------------------
@@ -679,6 +692,8 @@ class LightingRandomizer:
                 self._set_float_attr(prim, "inputs:exposure", float(light["exposure"]))
             if "color_temperature" in light:
                 self._apply_color_temperature(prim, float(light["color_temperature"]))
+            if "color" in light:
+                self._set_color_attr(prim, "inputs:color", tuple(light["color"]))
             if "position" in light:
                 self._set_translate(prim, np.asarray(light["position"], dtype=float))
             if "rotation" in light:
