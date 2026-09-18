@@ -2,7 +2,8 @@ name: level2_stopper_to_flask
 task_type: stopper_flask
 controller_type: stopper_flask
 mode: collect
-usd_path: assets/chemistry_lab/lab_002/lab_002.usd
+# Original glass visuals, Blender-calibrated cork and an actually open neck collider.
+usd_path: assets/chemistry_lab/lab_002/stopper_insertion/lab_002_stopper_insertion.usda
 max_episodes: 50
 replay:
   dataset_path: ''
@@ -20,7 +21,16 @@ infer:
   timeout: 30
   max_retries: 3
 task:
+  physical_insertion: true
+  record_replay_physics_snapshot: true
   max_steps: 2000
+  gripper_distance: 0.016
+  insertion_depth: 0.0132
+  minimum_insertion_depth: 0.010
+  maximum_insertion_depth: 0.018
+  placement_xy_tolerance: 0.0025
+  placement_z_tolerance: 0.002
+  placement_tilt_tolerance_deg: 8.0
   obj_paths:
   - path: /World/rubber_stopper
     position_range:
@@ -31,8 +41,8 @@ task:
       - 0.1
       - 0.25
       z:
-      - 0.84
-      - 0.84
+      - 0.736
+      - 0.736
   - path: /World/round_bottom_flask_01
     position_range:
       x:
@@ -42,8 +52,14 @@ task:
       - -0.33
       - -0.18
       z:
-      - 0.84
-      - 0.84
+      # Reset sets the bottle height from the original cork ring's OpenFlaskSeat.
+      - 0.736
+      - 0.736
+  - path: /World/cork_ring
+    position_range:
+      x: [0.18, 0.30]
+      y: [-0.33, -0.18]
+      z: [0.734177190, 0.734177190]
 cameras:
 - prim_path: /World/Camera1
   name: image
@@ -94,6 +110,7 @@ robot:
     closing_speed: 0.15
     closing_force: 30.0
 collector:
+  record_precise_replay_actions: true
   type: default
   compression: gzip
 hydra:
