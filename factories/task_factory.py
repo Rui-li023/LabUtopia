@@ -57,3 +57,6 @@ register_task("stopper_flask", StopperFlaskTask)
 
 from tasks.pipette_rack_task import PipetteRackTask
 register_task("pipette_rack", PipetteRackTask)
+
+from tasks.pipette_rack_sequence_task import PipetteRackSequenceTask
+register_task("pipette_rack_sequence", PipetteRackSequenceTask)

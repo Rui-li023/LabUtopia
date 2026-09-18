@@ -1,0 +1,78 @@
+defaults:
+  - level2_pipette_to_rack
+  - _self_
+
+name: level4_four_pipettes_to_rack
+task_type: pipette_rack_sequence
+controller_type: pipette_rack_sequence
+usd_path: assets/chemistry_lab/lab_002/realistic_pipette_260mm_tall_four_guide36/lab_002_pipette.usda
+task:
+  max_steps: 18000
+  replay_restore_orientation: true
+  pipette_ik_pick: true
+  pipette_pick_yaw: 180
+  pipette_hold_during_close: true
+  gripper_opening_width: 0.040
+  gripper_pad_friction: true
+  pipette_axial_retreat: true
+  pipette_front_insertion: true
+  pipette_transit_position: [0.05, 0.05, 1.12]
+  pipette_return_to_transit: true
+  pipette_pregrasp_clearance: 0.08
+  pipette_lift_clearance: 0.18
+  pipette_grasp_height_offset: -0.003
+  # Cooked body COM is z=167.2 mm. Grasp the housing between the two
+  # rack guides, reducing the gravity lever arm from 57 to 13 mm.
+  pipette_grasp_local: [-0.007, 0.0, 0.180]
+  pipette_object_aligned_grasp: true
+  pipette_stable_close: true
+  pipette_cartesian_transfer: true
+  pipette_planned_grasp_branch: true
+  pipette_local_ik_recovery: true
+  # Keep the nominal grip when feasible. Only tilt about the closing axis
+  # if its full grasp-to-seat route has no continuous in-limit solution.
+  pipette_grasp_pitch_candidates_deg: [0, -15, 15]
+  gripper_force_servo_mode: velocity
+  gripper_solver_position_iterations: 128
+  gripper_solver_velocity_iterations: 32
+  pipette_transfer_time_scale: 2.0
+  pipette_paths:
+    - /World/pipette_01
+    - /World/sequence_pipette_02
+    - /World/sequence_pipette_03
+    - /World/sequence_pipette_04
+  slot_indices: [0, 1, 2, 3]
+  obj_paths:
+    - path: /World/pipette_01
+      position_range: {x: [0.10, 0.22], y: [0.10, 0.20], z: [0.77, 0.77]}
+    - path: /World/pipette_rack
+      position_range: {x: [0.18, 0.28], y: [-0.25, -0.10], z: [0.72, 0.72]}
+    - path: /World/sequence_pipette_02
+      position_range: {x: [0.03, 0.13], y: [0.30, 0.33], z: [0.77, 0.77]}
+    - path: /World/sequence_pipette_03
+      position_range: {x: [-0.05, 0.05], y: [0.44, 0.47], z: [0.77, 0.77]}
+    - path: /World/sequence_pipette_04
+      position_range: {x: [-0.15, -0.05], y: [0.58, 0.61], z: [0.77, 0.77]}
+
+# Four tools need finger/camera clearance, not four overlapping reach targets.
+# The original Level 2 source and rack ranges above remain unchanged. Additional
+# sources form a diagonal row within the measured [-1, 1] m bench footprint.
+cameras:
+  - prim_path: /World/Camera1
+    name: image
+    translation: [2, 0.18, 2]
+    resolution: [256, 256]
+    focal_length: 3.5
+    orientation: [0.61237, 0.35355, 0.35355, 0.61237]
+    image_type: rgb
+  - prim_path: /World/Camera2
+    name: image_2
+    translation: [0.1, 0.18, 2.5]
+    resolution: [256, 256]
+    focal_length: 3.5
+    orientation: [0.70711, 0, 0, -0.70711]
+    image_type: rgb
+  - prim_path: /World/Franka/panda_hand/arm_camera
+    name: wrist_image
+    resolution: [256, 256]
+    image_type: rgb

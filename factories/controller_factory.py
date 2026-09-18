@@ -68,3 +68,6 @@ register_controller("stopper_flask", StopperFlaskTaskController)
 
 from controllers.pipette_rack_controller import PipetteRackTaskController
 register_controller("pipette_rack", PipetteRackTaskController)
+
+from controllers.pipette_rack_sequence_controller import PipetteRackSequenceTaskController
+register_controller("pipette_rack_sequence", PipetteRackSequenceTaskController)

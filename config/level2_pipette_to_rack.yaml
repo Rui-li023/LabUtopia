@@ -2,8 +2,11 @@ name: level2_pipette_to_rack
 task_type: pipette_rack
 controller_type: pipette_rack
 mode: collect
-usd_path: assets/chemistry_lab/lab_002/lab_002.usd
+# 260 mm uniformly enlarged tool. The 220 mm scene remains available separately;
+# its previously recorded success/replay results do not validate this size.
+usd_path: assets/chemistry_lab/lab_002/realistic_pipette_260mm_tall_wide_guide36/lab_002_pipette.usda
 max_episodes: 50
+physics_substeps: 1
 replay:
   dataset_path: ''
 infer:
@@ -20,30 +23,75 @@ infer:
   timeout: 30
   max_retries: 3
 task:
-  max_steps: 2000
+  max_steps: 5000
+  # Force mode uses an explicit close command, not a position-width target.
+  gripper_distance: 0.0
+  reference_geometry: true
+  replay_restore_orientation: true
+  force_gripper_servo: true
+  gripper_opening_width: 0.040
+  gripper_pad_friction: true
+  gripper_force_servo_mode: velocity
+  gripper_pad_static_friction: 1.0
+  gripper_pad_dynamic_friction: 0.8
+  gripper_pad_contact_stiffness: 0.0
+  gripper_pad_contact_damping: 0.0
+  gripper_pad_contact_offset: 0.0 # retain authored contact offsets
+  # Engineering contact estimates, not a measured material calibration.
+  # Applied only to the four acrylic pieces, never the silicone feet.
+  rack_contact: {static_friction: 0.3, dynamic_friction: 0.3}
+  pipette_object_aligned_grasp: true
+  pipette_require_pick_orientation: false
+  pipette_preflight_joint_margin: 0.10
+  pipette_enforce_runtime_joint_margin: true
+  pipette_grasp_local: [-0.007, 0.0, 0.180]
+  pipette_hold_during_close: true
+  pipette_stable_close: true
+  pipette_front_insertion: true
+  pipette_axial_retreat: true
+  pipette_insertion_depth_offset: 0.002
+  pipette_pick_yaw: 180
+  pipette_ik_pick: true
+  pipette_cartesian_transfer: true
+  pipette_planned_grasp_branch: true
+  pipette_symmetric_grasp_search: true
+  pipette_scene_settle_steps: 60
+  pipette_slot_index: 2
+  pipette_transit_position: [0.05, 0.05, 1.12]
+  gripper_pad_min_torsional_radius: 0.004
+  pipette_pick_pitch: 180
+  max_grasp_rotation_deg: 8.0
+  pipette_release_clearance: 0.014
+  pipette_release_height_tolerance: 0.004
+  placement_x_tolerance: 0.018
+  placement_y_tolerance: 0.008
+  placement_z_tolerance: 0.012
+  settle_timeout_steps: 360
   obj_paths:
   - path: /World/pipette_01
     position_range:
       x:
-      - 0.15
-      - 0.3
+      - 0.10
+      - 0.22
       'y':
       - 0.1
-      - 0.25
+      - 0.20
       z:
       - 0.77
       - 0.77
   - path: /World/pipette_rack
     position_range:
       x:
-      - 0.25
-      - 0.35
+      - 0.18
+      - 0.28
       'y':
       - -0.25
       - -0.1
       z:
-      - 0.7
-      - 0.7
+      # The active bench collider tops out at 0.71983 m. The rebuilt rack's
+      # origin is its feet, not the old asset's offset pivot.
+      - 0.72
+      - 0.72
 cameras:
 - prim_path: /World/Camera1
   name: image
@@ -90,9 +138,10 @@ robot:
   - 0
   - 0.71
   gripper:
-    control_mode: position
-    closing_speed: 0.15
-    closing_force: 30.0
+    control_mode: force
+    closing_speed: 0.02
+    opening_speed: 0.05
+    closing_force: 35.0 # drive cap; passive mimic finger, not 35 N measured at each pad
 collector:
   type: default
   compression: gzip

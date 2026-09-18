@@ -1,0 +1,22 @@
+# Three-tool Level 4 variant. Keep the four-slot rack unchanged; slot 3 stays
+# empty. This is a separate task contract, not a relaxed four-tool success gate.
+defaults:
+  - level4_four_pipettes_to_rack
+  - _self_
+
+name: level4_three_pipettes_to_rack
+task:
+  pipette_paths:
+    - /World/pipette_01
+    - /World/sequence_pipette_02
+    - /World/sequence_pipette_03
+  slot_indices: [0, 1, 2]
+  obj_paths:
+    - path: /World/pipette_01
+      position_range: {x: [0.10, 0.22], y: [0.10, 0.20], z: [0.77, 0.77]}
+    - path: /World/pipette_rack
+      position_range: {x: [0.18, 0.28], y: [-0.25, -0.10], z: [0.72, 0.72]}
+    - path: /World/sequence_pipette_02
+      position_range: {x: [0.03, 0.13], y: [0.30, 0.33], z: [0.77, 0.77]}
+    - path: /World/sequence_pipette_03
+      position_range: {x: [-0.05, 0.05], y: [0.44, 0.47], z: [0.77, 0.77]}
