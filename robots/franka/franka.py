@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# Modified by the LabUtopia authors: adapted from Isaac Sim's Franka example: added the gripper control-mode, commanded-width and tool-frame plumbing BaseRobot requires.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -140,6 +141,12 @@ class Franka(BaseRobot):
         self._gripper_closing_speed = 0.2     # m/s for velocity mode
         self._current_gripper_effort = 0.0    # persistent effort (force mode)
         self._current_gripper_velocity = 0.0  # persistent velocity (velocity mode)
+        self._gripper_force_servo_speed = None
+        self._gripper_force_servo_opening_speed = None
+        self._gripper_solver_iterations = (64, 16)
+        self._gripper_force_servo_mode = "velocity"
+        self._gripper_servo_target = np.full(2, 0.04)
+        self._gripper_servo_opening = 0.04
 
         # Contact sensors for gripper fingers
         self.left_contact_sensor = ContactSensor(
@@ -300,28 +307,72 @@ class Franka(BaseRobot):
             self._articulation_controller.switch_dof_control_mode(
                 dof_index=idx, mode=mode
             )
+        if mode == "effort" and self._gripper_force_servo_speed is not None:
+            self.set_solver_position_iteration_count(self._gripper_solver_iterations[0])
+            self.set_solver_velocity_iteration_count(self._gripper_solver_iterations[1])
+            indices = np.asarray(self.gripper.joint_dof_indicies, dtype=int)
+            # Implicit PhysX velocity drive: bounded approach speed and bounded
+            # contact force. Raw large effort steps on the light mimic fingers
+            # can saturate the joint-limit solver even in an empty-hand test.
+            damping = self._gripper_closing_force / self._gripper_force_servo_speed
+            position_servo = self._gripper_force_servo_mode == "position"
+            self._articulation_view.set_gains(
+                kps=np.full((1, len(indices)), 6000.0 if position_servo else 0.0),
+                kds=np.full((1, len(indices)), 200.0 if position_servo else damping),
+                joint_indices=indices,
+            )
+            self._gripper_servo_target = np.asarray(self._default_joint_positions[indices]).copy()
+            self._articulation_controller.set_max_efforts(
+                np.full(len(indices), self._gripper_closing_force), joint_indices=indices
+            )
+
+    def enable_gripper_force_servo(self, speed: float = 0.05, position_iterations: int = 64, velocity_iterations: int = 16, drive_mode: str = "velocity", opening_width: float = 0.08, opening_speed: float | None = None) -> None:
+        """Opt into speed-limited, force-capped closure on the next reset."""
+        if not 0 < speed <= 0.05:
+            raise ValueError("Franka Hand servo speed must be in (0, 0.05] m/s")
+        if opening_speed is not None and not 0 < opening_speed <= 0.05:
+            raise ValueError("Franka Hand opening speed must be in (0, 0.05] m/s")
+        if not all(isinstance(value, int) and 1 <= value <= 255 for value in (position_iterations, velocity_iterations)):
+            raise ValueError("Gripper solver iteration counts must be integers in [1, 255]")
+        if drive_mode not in ("velocity", "position"):
+            raise ValueError("Force servo drive mode must be velocity or position")
+        if not 0 < opening_width <= 0.08:
+            raise ValueError("Franka Hand opening width must be in (0, 0.08] m")
+        self._gripper_force_servo_speed = float(speed)
+        self._gripper_force_servo_opening_speed = float(speed if opening_speed is None else opening_speed)
+        self._gripper_solver_iterations = (position_iterations, velocity_iterations)
+        self._gripper_force_servo_mode = drive_mode
+        self._gripper_servo_opening = float(opening_width) / 2
 
     # ── Gripper control methods ─────────────────────────────────────────────
 
     def open_gripper(self) -> None:
-        """Open the gripper."""
+        """Open to the absolute target encoded by the recorded gripper channel."""
         if self._gripper_control_mode == "force":
             self._current_gripper_effort = self._gripper_closing_force
         elif self._gripper_control_mode == "velocity":
             self._current_gripper_velocity = self._gripper_closing_speed
         else:
-            self._gripper.open()
+            # ParallelGripper.open() uses current_position + action_deltas.
+            # Recording that as the fixed open endpoint loses the actual drive
+            # target, so replay releases more slowly than collection. Use the
+            # same absolute endpoint as FrankaTrajectoryController instead.
+            self._gripper.apply_action(
+                ArticulationAction(joint_positions=np.asarray(self._gripper_open_position).copy())
+            )
         self._gripper_state = GRIPPER_OPEN
         self._gripper_cmd_opening = float(self._gripper_open_position[0])
 
     def close_gripper(self) -> None:
-        """Close the gripper."""
+        """Close to the absolute target encoded by the recorded gripper channel."""
         if self._gripper_control_mode == "force":
             self._current_gripper_effort = -self._gripper_closing_force
         elif self._gripper_control_mode == "velocity":
             self._current_gripper_velocity = -self._gripper_closing_speed
         else:
-            self._gripper.close()
+            self._gripper.apply_action(
+                ArticulationAction(joint_positions=np.asarray(self._gripper_closed_position).copy())
+            )
         self._gripper_state = GRIPPER_CLOSED
         self._gripper_cmd_opening = float(self._gripper_closed_position[0])
 
@@ -342,12 +393,15 @@ class Franka(BaseRobot):
             return
         gripper_pos = float(action.joint_positions[idx])
         threshold = (self._gripper_open_position[0] + self._gripper_closed_position[0]) / 2.0
+        # Reassert every encoded command, even if the state label agrees.
+        # On initialization/reset the label can be OPEN while persistent
+        # effort is zero (or stale). Skipping OPEN then leaves an 80 mm
+        # aperture during replay where collect commanded a bounded 40 mm
+        # aperture, changing contacts long before the first grasp.
         if gripper_pos < threshold:
-            if self._gripper_state != GRIPPER_CLOSED:
-                self.close_gripper()
+            self.close_gripper()
         else:
-            if self._gripper_state != GRIPPER_OPEN:
-                self.open_gripper()
+            self.open_gripper()
 
     def apply_gripper_effort(self) -> None:
         """Apply persistent gripper command every physics step.
@@ -358,6 +412,40 @@ class Franka(BaseRobot):
         """
         indices = np.array(self.gripper.joint_dof_indicies, dtype=int)
         if self._gripper_control_mode == "force":
+            if self._gripper_force_servo_speed is not None:
+                opening_speed = self._gripper_force_servo_opening_speed
+                speed = opening_speed if self._current_gripper_effort > 0 else self._gripper_force_servo_speed
+                velocity = np.sign(self._current_gripper_effort) * speed
+                if self._gripper_force_servo_mode == "position":
+                    # The pipette policy's observation/action clock is 60 Hz.
+                    # Ramp width, with an independent 30 N/finger effort cap;
+                    # do not position-slam the fingers onto the body.
+                    self._gripper_servo_target = np.clip(
+                        self._gripper_servo_target + velocity / 60, 0.0, self._gripper_servo_opening
+                    )
+                    self.apply_action(ArticulationAction(
+                        joint_positions=self._gripper_servo_target.copy(),
+                        joint_velocities=np.zeros(len(indices)),
+                        joint_efforts=np.zeros(len(indices)),
+                        joint_indices=indices,
+                    ))
+                    return
+                velocities = np.full(len(indices), velocity)
+                if self._current_gripper_effort > 0:
+                    # Limit the physical aperture, including during replay's
+                    # binary OPEN command. Full 80 mm opening can strike a
+                    # neighbouring pipette in a 45 mm-pitch rack.
+                    positions = np.asarray(self.get_joint_positions())[indices]
+                    velocities = np.clip(
+                        30 * (self._gripper_servo_opening - positions),
+                        -opening_speed, opening_speed,
+                    )
+                self.apply_action(ArticulationAction(
+                    joint_velocities=velocities,
+                    joint_efforts=np.zeros(len(indices)),
+                    joint_indices=indices,
+                ))
+                return
             efforts = np.full(len(indices), self._current_gripper_effort)
             self.apply_action(ArticulationAction(joint_efforts=efforts, joint_indices=indices))
         elif self._gripper_control_mode == "velocity":

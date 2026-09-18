@@ -1,8 +1,10 @@
+import os
 from typing import Any
 
 import numpy as np
 from isaacsim.core.utils.stage import get_stage_units
 from isaacsim.core.utils.types import ArticulationAction
+from loguru import logger
 from scipy.spatial.transform import Rotation as R
 
 from robots.base_robot import GRIPPER_CLOSED, GRIPPER_OPEN, BaseRobot
@@ -71,6 +73,20 @@ class PickController(AtomicBaseController):
         # object centre instead of chasing an object that contact already displaced.
         self.lock_final_approach_target = False
         self._locked_picking_position = None
+        # Optional physical close gate: total jaw gap must be in the object's
+        # expected contact range AND stationary before lifting. Empty closure
+        # cannot satisfy the positive lower bound. Other tasks keep timed close.
+        self.close_contact_gap_range = None
+        self.close_stable_steps = 10
+        self.close_timeout_steps = 240
+        self.close_command_step_m = None
+        self.close_ramp_requires_target = False
+        self._close_command_finished = False
+        self._close_command_target = None
+        self._close_steps = 0
+        self._close_stable = 0
+        self._jaw_contact_steps = 0
+        self._previous_close_gap = None
 
         # Per-episode noise (sampled lazily)
         self._pre_offset_z_noise = 0.0
@@ -186,7 +202,26 @@ class PickController(AtomicBaseController):
         self._last_target = target.copy()
         self._last_position_error = float(np.linalg.norm(gripper_position - target))
 
-        if not reached:
+        # One line per phase entry plus a slow heartbeat. A pick that fails silently
+        # (gripper closes on air) is otherwise indistinguishable from one that never
+        # reached the object: this reports the residual target error per phase, which
+        # is what localizes it.
+        if os.environ.get("LABUTOPIA_PICK_DEBUG"):
+            self._debug_steps = getattr(self, "_debug_steps", 0) + 1
+            if self._event != getattr(self, "_debug_event", None) or self._debug_steps % 200 == 0:
+                self._debug_event = self._event
+                logger.info(
+                    f"[PICK-PHASE] event={self._event} "
+                    f"({self.PHASE_NAMES.get(self._event, '?')}) "
+                    f"err={self._last_position_error:.4f} reached={bool(reached)} "
+                    f"target={np.round(target, 3).tolist()} "
+                    f"tcp={np.round(gripper_position, 3).tolist()}"
+                )
+
+        # Position alone is insufficient for a precision grasp: the TCP can
+        # arrive while a wrist joint is still rotating or rebounding. Tasks
+        # may provide an orientation gate without changing generic defaults.
+        if not reached or not getattr(self, "arrival_orientation_ok", True):
             self._arrival_steps = 0
             return
         self._arrival_steps += 1
@@ -195,6 +230,36 @@ class PickController(AtomicBaseController):
             self._next_event()
 
     def _advance_state(self):
+        if self._event == 4 and getattr(self, "close_contact_gap_range", None) is not None:
+            self._close_steps += 1
+            indices = np.asarray(self._robot.gripper.joint_dof_indicies, dtype=int)
+            gap = float(np.sum(self._robot.get_joint_positions()[indices]))
+            low, high = self.close_contact_gap_range
+            stable = self._previous_close_gap is not None and abs(gap - self._previous_close_gap) < 0.0001
+            self._jaw_contact_steps = getattr(self, "_jaw_contact_steps", 0) + 1 if low <= gap <= high and stable else 0
+            stable = stable and getattr(self, "close_contact_stable", True)
+            if getattr(self, "close_ramp_requires_target", False) and self.close_command_step_m is not None:
+                stable = stable and getattr(self, "_close_command_finished", False)
+            self._close_stable = self._close_stable + 1 if low <= gap <= high and stable else 0
+            self._previous_close_gap = gap
+            if os.environ.get("LABUTOPIA_PIPETTE_GRASP_DEBUG") == "1" and self._close_steps % 60 == 1:
+                logger.info(
+                    "Gripper close contact: step={}, gap={}, stable={}, effort={}, gains={}",
+                    self._close_steps,
+                    gap,
+                    self._close_stable,
+                    getattr(self._robot, "_current_gripper_effort", None),
+                    self._robot._articulation_view.get_gains(),
+                )
+                logger.info("Gripper applied: {}", self._robot.get_articulation_controller().get_applied_action())
+            if self._close_stable >= self.close_stable_steps:
+                self._next_event()
+            elif self._close_steps >= self.close_timeout_steps:
+                self._phase_failure_reason = (
+                    f"Gripper did not establish stable contact before lift: jaw gap={gap:.5f} m"
+                )
+                self._is_done = True
+            return
         if not self.adaptive_phase_completion:
             super()._advance_state()
             return
@@ -253,26 +318,43 @@ class PickController(AtomicBaseController):
     require_pregrasp_xyz: bool = False
     pregrasp_position_threshold: float | None = None
     grasp_position_threshold: float | None = None
+    # Hand the caller's quaternion to RMPFlow unpermuted (see _to_isaac_quat).
+    # Default True so every task tuned before the grasp-frame work keeps the
+    # orientation convention it was calibrated against; the multi-arm / grasp-frame
+    # configs turn it off in PickTaskController.
+    legacy_orientation_handoff: bool = True
 
-    @staticmethod
-    def _to_isaac_quat(orient) -> np.ndarray:
-        """scipy xyzw -> Isaac wxyz, for handoff to the motion policy.
+    def _to_isaac_quat(self, orient) -> np.ndarray:
+        """Hand the target orientation to the motion policy in the caller's convention.
 
         RMPFlow runs the target orientation through ``quats_to_rot_matrices``, which
         reads (w, x, y, z); ``GraspFrame.quat`` and this class's quaternion helpers
-        produce scipy's (x, y, z, w). Passing one for the other is not a small error --
-        it is a different rotation entirely, and it silently replaced the configured
-        grasp pose on every pick.
+        produce scipy's (x, y, z, w). Permuting to (w, x, y, z) is therefore the
+        arithmetically correct handoff, and an arm with a tight wrist needs it: the
+        ARX X5 was driven into a joint-limit attractor 0.28 m off target and failed
+        every episode without it.
 
-        It went unnoticed because RMPFlow weights position roughly 250x above
-        orientation (target_rmp.min_metric_scalar 2500 vs axis_target_rmp.metric_scalar
-        10), so a roomy arm still reaches the point and grasps: the Franka scores 90-100%
-        either way. An arm with a +/-1.57 wrist does not get that slack -- the ARX X5 was
-        driven into a joint-limit attractor 0.28 m off target and failed every episode.
-        ``open_controller``/``close_controller`` already convert (``[:, [3,0,1,2]]``);
-        this path did not.
+        But the permutation cannot be applied unconditionally, because it is not a
+        small error -- it is a different rotation, so it silently re-poses every
+        grasp that was tuned without it. Everything authored before 2026-08-24 was
+        tuned that way, and still is: ``place`` / ``pour`` / ``press`` / ``move`` /
+        ``shake`` / ``stir`` all hand their (x, y, z, w) target to RMPFlow
+        unpermuted, so permuting only here also splits the convention *within* one
+        task -- its pick would use one wrist pose and its place another.
+
+        Applying it to everything cost the whole legacy suite: the wrist ended up
+        rolled 180 deg about the approach axis, RMPFlow traded position away to chase
+        the unreachable pose, and the final descent stalled ~9 cm above the object,
+        so the gripper closed on air (level-3 pour-liquid measured: phase-2 error
+        0.090 m and never converging, vs 0.012 m and converging without it).
+
+        So it is opt-in, and the opt-in lives with the tuning: a config that declares
+        ``grasp.ee_euler_deg`` was authored against the permuted handoff and asks for
+        it; everything else keeps the convention it was calibrated against.
         """
         q = np.asarray(orient, dtype=np.float64)
+        if self.legacy_orientation_handoff:
+            return q
         return q[[3, 0, 1, 2]]
 
     def _execute_phase(self, pos, orient, jpos, obj_name, grip_ctrl, grip_pos, pre_z, after_z, pre_x, grip_dist):
@@ -285,7 +367,7 @@ class PickController(AtomicBaseController):
 
         if self._event == 0:
             target = pos + approach * (pre_x / su)
-            target[2] += self.object_size[2] + pre_z
+            target[2] += getattr(self, "approach_height_override", self.object_size[2]) + pre_z
             action = self._cspace_controller.forward(
                 target_end_effector_position=target, target_end_effector_orientation=orient_wxyz
             )
@@ -333,6 +415,11 @@ class PickController(AtomicBaseController):
             return action
 
         elif self._event == 3:
+            if getattr(self, "hold_pose_during_close", False) and self._last_target is not None:
+                return self._cspace_controller.forward(
+                    target_end_effector_position=self._last_target,
+                    target_end_effector_orientation=orient_wxyz,
+                )
             return self._null_action(n)
 
         elif self._event == 4:
@@ -340,11 +427,19 @@ class PickController(AtomicBaseController):
             # fingers on contact instead of slamming to 0 (which ejects light/
             # round objects). Falls back to the binary close otherwise.
             if grip_dist is not None and grip_dist > 0:
-                self._robot.close_gripper_to_distance(grip_dist)
+                command = grip_dist
+                if self.close_command_step_m is not None:
+                    if self._close_command_target is None:
+                        index = self._robot.gripper.joint_dof_indicies[0]
+                        self._close_command_target = float(jpos[index])
+                    command = max(grip_dist, self._close_command_target - self.close_command_step_m)
+                    self._close_command_target = command
+                    self._close_command_finished = command <= grip_dist + 1e-9
+                self._robot.close_gripper_to_distance(command)
                 self._current_gripper_state = GRIPPER_CLOSED
                 # Record the commanded grip width so replay reproduces this exact
                 # (firm) grasp via the normalized gripper channel.
-                self._last_gripper_target_m = grip_dist
+                self._last_gripper_target_m = command
             else:
                 self._close_gripper()
             self._lift_target = pos.copy()
@@ -370,6 +465,11 @@ class PickController(AtomicBaseController):
                 # moves the rod by ~scale x too little and it never reaches the
                 # beaker (rod stayed at the pick spot, xy≈0.5 vs <0.04 needed).
                 grip_ctrl.add_object_to_gripper("/World/glass_rod", self._robot.gripper_center_prim_path)
+            if getattr(self, "hold_pose_during_close", False) and self._last_target is not None:
+                return self._cspace_controller.forward(
+                    target_end_effector_position=self._last_target,
+                    target_end_effector_orientation=orient_wxyz,
+                )
             return self._null_action(n)
 
         elif self._event == 5:
@@ -444,6 +544,8 @@ class PickController(AtomicBaseController):
         return self.object_size[2] * 2 / 5
 
     def get_pickprez_offset(self, item_name):
+        if getattr(self, "pregrasp_z_offset_override", None) is not None:
+            return self.pregrasp_z_offset_override
         table = {
             "volume_flask": 0,
             "beaker2": 0.05,
@@ -469,6 +571,8 @@ class PickController(AtomicBaseController):
 
     def reset(self, events_dt=None):
         super().reset(events_dt)
+        self._close_command_target = None
+        self._close_command_finished = False
         if hasattr(self, "_is_done"):
             del self._is_done
         self.object_size = None
@@ -480,6 +584,12 @@ class PickController(AtomicBaseController):
         self._last_gripper_position = None
         self._last_position_error = None
         self._locked_picking_position = None
+        self._debug_event = None
+        self._close_steps = 0
+        self._close_stable = 0
+        self._jaw_contact_steps = 0
+        self.close_contact_stable = True
+        self._previous_close_gap = None
         self._pre_offset_z_noise = 0.0
         self._after_offset_z_noise = 0.0
         self._orientation_angle_deg = 0.0
