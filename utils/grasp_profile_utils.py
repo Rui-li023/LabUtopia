@@ -7,7 +7,7 @@ angle, orientation, etc.) with inheritance resolution and default fallbacks.
 
 import copy
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List
 
 import numpy as np
 import yaml

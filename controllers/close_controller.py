@@ -4,10 +4,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 from controllers.atomic_actions.close_controller import CloseController
 from .base_controller import BaseController
-from .robot_controllers.trajectory_controller import FrankaTrajectoryController
 from isaacsim.core.utils.numpy.rotations import euler_angles_to_quats
 from isaacsim.core.utils.types import ArticulationAction
-from .inference_engines.inference_engine_factory import InferenceEngineFactory
 
 class CloseTaskController(BaseController):
     """Controller for managing the task of closing a door in collect or infer mode.

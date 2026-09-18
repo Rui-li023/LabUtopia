@@ -4,7 +4,6 @@ import numpy as np
 import typing
 
 from .atomic_base_controller import AtomicBaseController
-from robots.base_robot import GRIPPER_OPEN
 
 
 class MoveController(AtomicBaseController):

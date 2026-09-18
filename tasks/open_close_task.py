@@ -1,6 +1,5 @@
 from typing import Any, Dict, Optional
 
-from isaacsim.core.utils.prims import set_prim_visibility
 from .single_object_task import SingleObjectTask
 
 

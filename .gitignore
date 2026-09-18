@@ -238,6 +238,12 @@ scripts/patch_level1_infer.py
 # URDF source repos fetched for asset conversion (not committed)
 /third_party/
 
+# Local paper manuscript and figure-production workspace
+/labutopia-paper/
+
 # NVIDIA source assets fetched by experiments/urdf_to_usd/fetch_official.py.
 # LabUtopia commits only the converted runtime closure referenced by robot configs.
 /experiments/robots/assets/robots/official/
+
+# 本次代码整理的回收站，确认无误后可整个删除
+.cleanup_trash/

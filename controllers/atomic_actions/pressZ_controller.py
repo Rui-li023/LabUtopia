@@ -5,7 +5,7 @@ import numpy as np
 import typing
 
 from .atomic_base_controller import AtomicBaseController
-from robots.base_robot import BaseRobot, GRIPPER_OPEN, GRIPPER_CLOSED
+from robots.base_robot import BaseRobot
 
 
 class PressZController(AtomicBaseController):

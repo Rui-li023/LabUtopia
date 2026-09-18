@@ -36,7 +36,7 @@ import numpy as np
 from PIL import Image
 import argparse
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Optional
 import shutil
 
 # Default predefined instructions for common lab tasks

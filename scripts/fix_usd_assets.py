@@ -15,7 +15,6 @@ Usage:
 
 import os
 import re
-import sys
 import glob
 import shutil
 import argparse
@@ -208,7 +207,6 @@ def main():
     logging.disable(logging.WARNING)
     os.environ.setdefault("CARB_LOG_LEVEL", "error")
 
-    import isaacsim
     from isaacsim import SimulationApp
 
     app = SimulationApp({"headless": True})

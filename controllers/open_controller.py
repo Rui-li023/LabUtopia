@@ -4,9 +4,7 @@ import numpy as np
 
 from controllers.atomic_actions.open_controller import OpenController
 from .base_controller import BaseController
-from .robot_controllers.trajectory_controller import FrankaTrajectoryController
 from isaacsim.core.utils.numpy.rotations import euler_angles_to_quats
-from .inference_engines.inference_engine_factory import InferenceEngineFactory
 
 class OpenTaskController(BaseController):
     """Controller for managing the task of opening a door in collect or infer mode.

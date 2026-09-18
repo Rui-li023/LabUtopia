@@ -18,7 +18,6 @@ import re
 import sys
 import time
 import json
-import shutil
 import subprocess
 from pathlib import Path
 

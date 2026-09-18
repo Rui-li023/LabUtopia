@@ -1,6 +1,5 @@
 import heapq
 from PIL import Image
-import copy
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import Optional, Tuple, List

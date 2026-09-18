@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import torch
 import numpy as np
 from collections import deque
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 
 
 class BaseInferenceEngine(ABC):

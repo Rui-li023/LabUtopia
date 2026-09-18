@@ -2,8 +2,6 @@ from typing import Optional
 import numpy as np
 from loguru import logger
 
-from isaacsim.core.utils.types import ArticulationAction
-from robots.franka.rmpflow_controller import RMPFlowController
 from scipy.spatial.transform import Rotation as R
 
 from .base_controller import BaseController

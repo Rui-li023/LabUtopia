@@ -6,7 +6,6 @@ import typing
 from scipy.spatial.transform import Rotation as R, Slerp
 
 from .atomic_base_controller import AtomicBaseController
-from robots.base_robot import GRIPPER_OPEN, GRIPPER_CLOSED
 
 
 class CloseController(AtomicBaseController):

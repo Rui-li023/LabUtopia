@@ -3,7 +3,6 @@ import hydra
 import numpy as np
 from omegaconf import OmegaConf
 from typing import Dict
-import pandas as pd
 
 from .base_inference_engine import BaseInferenceEngine
 

@@ -30,7 +30,7 @@ import sys
 import h5py
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 import argparse
 from tqdm import tqdm
 import logging

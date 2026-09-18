@@ -9,3 +9,17 @@ from .shake_controller import ShakeController
 from .press_controller import PressController
 from .pressZ_controller import PressZController
 from .move_controller import MoveController
+
+__all__ = [
+    "AtomicBaseController",
+    "PickController",
+    "PlaceController",
+    "StirController",
+    "PourController",
+    "OpenController",
+    "CloseController",
+    "ShakeController",
+    "PressController",
+    "PressZController",
+    "MoveController",
+]

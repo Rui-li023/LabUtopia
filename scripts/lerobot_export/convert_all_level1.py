@@ -2,8 +2,6 @@
 
 Outputs to test_outputs/lerobot/{v21,v30}/<task>/.
 """
-import os
-import shutil
 import subprocess
 import sys
 import time

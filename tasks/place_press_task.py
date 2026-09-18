@@ -1,4 +1,3 @@
-import numpy as np
 from typing import Any, Dict, Optional
 from .base_task import BaseTask
 
