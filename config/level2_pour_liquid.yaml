@@ -1,4 +1,13 @@
 name: level2_pour_liquid
+liquid:
+  enabled: true
+  particle_spacing: 0.004
+  fill_height: 0.025
+  isosurface: true
+  min_target_fraction: 0.80
+  max_source_fraction: 0.15
+  max_outside_fraction: 0.05
+  settle_steps: 60
 task_type: pick_pour
 controller_type: pick_pour
 mode: collect
@@ -21,7 +30,7 @@ infer:
   timeout: 30
   max_retries: 3
 task:
-  max_steps: 2500
+  max_steps: 3200
   left_pos:
     x:
     - 0.17
@@ -92,6 +101,7 @@ robot:
 collector:
   type: default
   compression: gzip
+  record_precise_replay_actions: true
 hydra:
   run:
     dir: outputs/${mode}/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}

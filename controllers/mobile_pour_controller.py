@@ -7,6 +7,8 @@ from scipy.spatial.transform import Rotation as R
 
 from .mobile_base_controller import PHASE_PICK
 from .mobile_pick_controller import MobilePickController
+from .liquid_controller_mixin import LiquidControllerMixin
+from .atomic_actions.atomic_base_controller import GRIPPER_MAX_OPEN
 
 # Recorded phase id for the pour segment (navigate=0, pick=1 in the mobile layout).
 PHASE_POUR = 5
@@ -15,7 +17,7 @@ PHASE_POUR = 5
 _WRIST_LIMIT = 2.85
 
 
-class MobilePourController(MobilePickController):
+class _MobilePourController(MobilePickController):
     """Level-5 mobile pour: navigate, pick the source beaker, carry it ABOVE the
     target container, then pour by rotating ONLY the wrist joint.
 
@@ -186,7 +188,17 @@ class MobilePourController(MobilePickController):
                     f"target={np.round(self._pour_target_pos,3).tolist()} "
                     f"hover_ee={np.round(self._pour_hover_ee,3).tolist()})")
         self.pick_done = True
+        if self.liquid_monitor is not None:
+            self._record_liquid_hold(state, PHASE_PICK)
         return None, False, False
+
+    def _record_liquid_hold(self, state, phase):
+        targets = np.asarray(self.robot.get_applied_action().joint_positions, dtype=np.float64)
+        targets = targets[self.all_subset.joint_indices]
+        if targets.shape != (12,) or not np.isfinite(targets).all():
+            raise ValueError("Liquid mobile hold requires finite targets for all 12 joints")
+        record = np.concatenate([targets[:10], [np.clip(1 - targets[10] / GRIPPER_MAX_OPEN, 0, 1)]])
+        self._record_step(state, record, phase)
 
     def _plan_pour_hover(self, state: Dict[str, Any]) -> None:
         """Solve the EE hover point that puts the tilted MOUTH over the target.
@@ -230,7 +242,14 @@ class MobilePourController(MobilePickController):
 
         if s >= total:
             held = super()._check_success()
-            if held and self._pour_gate_met:
+            if self.liquid_monitor is not None and held and not self.liquid_success() and s < total + 240:
+                # The original trajectory ended immediately after returning
+                # upright, leaving no time for the 60-observation liquid gate.
+                # Hold existing drive targets, and record every settling step.
+                self._record_liquid_hold(state, PHASE_POUR)
+                self._pour_step += 1
+                return None, False, False
+            if held and self._pour_gate_met and self.liquid_success():
                 logger.info("Pour complete — poured into the target and source still held; success")
                 self._last_failure_reason = ""
                 self.data_collector.write_cached_data()
@@ -238,6 +257,8 @@ class MobilePourController(MobilePickController):
             else:
                 if not held:
                     self._last_failure_reason = "Pour failed: source dropped during pour"
+                elif not self.liquid_success():
+                    self._last_failure_reason = "Pour failed: insufficient liquid received, excessive spill, or unstable containers"
                 else:
                     self._last_failure_reason = (
                         f"Pour failed: mouth missed the target opening at peak tilt "
@@ -429,3 +450,7 @@ class MobilePourController(MobilePickController):
                 f"Hold the {object_name} over the target container and pour its contents",
             ),
         )
+
+
+class MobilePourController(LiquidControllerMixin, _MobilePourController):
+    """Mobile pouring with a real-liquid success gate in all three modes."""

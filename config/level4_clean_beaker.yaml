@@ -1,4 +1,13 @@
 name: level4_clean_beaker
+liquid:
+  enabled: true
+  particle_spacing: 0.004
+  fill_height: 0.025
+  isosurface: true
+  min_target_fraction: 0.8
+  max_source_fraction: 0.15
+  max_outside_fraction: 0.05
+  settle_steps: 60
 
 task_type: "clean_beaker"
 controller_type: "clean_beaker"
@@ -20,7 +29,7 @@ replay:
   # episode_indices: [0, 1, 2]
 
 task:
-  max_steps: 4000
+  max_steps: 7000
   # Position-controlled pour: 69 deg leaves the beaker lip below horizontal.
   position_pour: true
   pour_angle_rad: 1.91
@@ -87,6 +96,7 @@ robot:
   position: [-0.4, -0, 0.71]
 
 collector:
+  record_precise_replay_actions: true
   type: "default"
   compression: gzip
 

@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Dict, Any, Tuple, Optional
 from scipy.spatial.transform import Rotation as R
 from controllers.atomic_actions.pour_controller import PourController
+from controllers.liquid_controller_mixin import LiquidControllerMixin
 from controllers.atomic_actions.pressZ_controller import PressZController
 from controllers.base_controller import BaseController
 from controllers.atomic_actions.pick_controller import PickController
@@ -24,7 +25,7 @@ class TaskPhase(Enum):
     FINISHED = "finished"      # Task completed
     
 
-class LiquidMixingController(BaseController):
+class _LiquidMixingController(BaseController):
     def __init__(self, cfg, robot):
         super().__init__(cfg, robot)
         self.every_controller_index = 0
@@ -307,6 +308,9 @@ class LiquidMixingController(BaseController):
             cur_tilt = tu.rotation_angle_deg(qi, q) if (q is not None and qi is not None) else 0.0
 
             if phase in (TaskPhase.POURING1, TaskPhase.POURING2, TaskPhase.POURING3):
+                if self.liquid_monitor is not None:
+                    route = {TaskPhase.POURING1: "mix_5", TaskPhase.POURING2: "mix_4", TaskPhase.POURING3: "mix_3"}[phase]
+                    return self.liquid_monitor.transfer_complete(route, state)
                 # Actually tilted to pour NOW. LIVE (not cumulative peak) tilt so a
                 # pick/lift wobble earlier in the episode cannot pre-trip this on phase
                 # entry: right after the pick the beaker is upright -> cur_tilt ~0 deg.
@@ -446,23 +450,27 @@ class LiquidMixingController(BaseController):
         else:
             next_phase = self._get_next_phase()
             if next_phase:
+                self.record_liquid_handoff(state)
                 self.current_phase = next_phase
                 self._switch_active_controller()
                 return None, False, False
             else:
                 # All phases completed
-                print("All phases completed, task successful!")
+                print("All phases completed; checking task success.")
                 # DIAG: peak pour-tilt per beaker in COLLECT (compare vs the
                 # [liqmix replay] line — if collect ~94° but replay over-rotates
                 # to 130°+, the velocity-controlled pour isn't reproducing).
                 print(f"[liqmix collect] pour-tilt peaks: "
                       f"b05={self._tilt_peak_5:.0f} b04={self._tilt_peak_4:.0f} "
                       f"b03={self._tilt_peak_3:.0f}")
-                self._last_failure_reason = ""
-                self.data_collector.write_cached_data(state['joint_positions'][:-1])
-                self._last_success = True
+                self._last_success = self._check_success() if self.liquid_monitor is not None else True
+                self._last_failure_reason = "" if self._last_success else "Liquid transfer or terminal pose check failed"
+                if self._last_success:
+                    self.data_collector.write_cached_data(state['joint_positions'][:-1])
+                else:
+                    self.data_collector.clear_cache()
                 self.current_phase = TaskPhase.FINISHED
-                return None, True, True
+                return None, True, self._last_success
             
     def _step_infer(self, state: Dict[str, Any]) -> Tuple[Any, bool, bool]:
         """INFER-mode ORACLE phase advancement.
@@ -479,7 +487,7 @@ class LiquidMixingController(BaseController):
 
         if self.current_phase == TaskPhase.FINISHED:
             self.reset_needed = True
-            self._last_success = len(self.success_steps) == self.NUM_PHASES
+            self._last_success = len(self.success_steps) == self.NUM_PHASES and self.liquid_success()
             if self._last_success:
                 self._last_failure_reason = ""
             return None, True, self._last_success
@@ -710,3 +718,12 @@ class LiquidMixingController(BaseController):
     def is_success(self) -> bool:
         # All 10 oracle sub-goals certified -> task success (mirrors device_operate).
         return len(self.success_steps) == self.NUM_PHASES
+
+
+class LiquidMixingController(LiquidControllerMixin, _LiquidMixingController):
+    LIQUID_POUR_CONTROLLERS = {"pour_controller1": "mix_5", "pour_controller2": "mix_4", "pour_controller3": "mix_3"}
+
+    def is_success(self) -> bool:
+        if self.liquid_monitor is not None:
+            return self._last_success
+        return super().is_success()

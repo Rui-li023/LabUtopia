@@ -32,11 +32,27 @@ task:
   # Position-controlled pour, calibrated to about 107 deg of executed wrist motion.
   position_pour: true
   pour_angle_rad: 1.87
-  max_steps: 4000
+  max_steps: 6500
   # Realistic gripper<->glassware friction so the near-zero-squeeze grasp holds
   # the beaker/conical through transport+pour (and reproduces in open-loop replay)
   # without ejection. Applied to both grasped objects in collect AND replay.
   grasp_friction: 1.5
+  gripper_drive_force: 60.0
+  # Manufacturer travel speed PER finger; also constrain the passive mimic.
+  gripper_max_joint_velocity: 0.05
+  # Preserve the Panda's masses/COMs; recompute its anomalously tiny inertias
+  # from the original colliders. Fresh collection is required for replay.
+  robot_inertia_mode: collision_geometry
+  conical_grasp:
+    depth: 0.024
+    closed_finger_position: 0.010
+  gripper_contact:
+    min_torsional_radius: 0.004
+    stiffness: 60000.0
+    damping: 100.0
+    contact_offset: 0.0005
+    static_friction: 0.9
+    dynamic_friction: 0.7
   door_paths:
     - path: "/World/DryingBox_01"
       position_range:
@@ -93,6 +109,36 @@ robot:
 collector:
   type: "default"
   compression: gzip
+  record_precise_replay_actions: true
+
+liquid:
+  enabled: true
+  # Sixteen physics substeps per 60 Hz action; resolve neck/pad/mimic contacts.
+  # Fresh collection is required after changing this value.
+  physics_dt: 0.0010416666666666667
+  particle_spacing: 0.004
+  fill_height: 0.025
+  isosurface: true
+  min_target_fraction: 0.8
+  max_source_fraction: 0.15
+  max_outside_fraction: 0.05
+  settle_steps: 60
+  # Original flask is 16.45 cm tall; keep its base above the receiver before tilting.
+  pour_lip_height: 0.12
+  pour_upright_clearance: 0.08
+  # Empty flask: retreat towards the robot, clear of the receiver, before uprighting.
+  pour_return_lift: 0.04
+  pour_return_retreat: 0.12
+  pour_empty_threshold: 0.01
+  pour_max_angle_deg: 120
+  pour_drain_steps: 600
+  pour_min_drain_steps: 240
+  pour_approach_timeout: 600
+  max_grasp_separation_change: 0.04
+  max_target_tilt_deg: 20.0
+  axisymmetric_source: true
+  fixed_grasp_orientation: true
+  pour_approach_tolerance: 0.012
 
 hydra:
   run:

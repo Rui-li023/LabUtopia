@@ -4,9 +4,10 @@ import numpy as np
 from loguru import logger
 
 from .base_task import BaseTask
+from .liquid_task_mixin import LiquidTaskMixin
 
 
-class LiquidMixingTask(BaseTask):
+class _LiquidMixingScene(BaseTask):
     """Level-4 composite task: Open door → Transfer beaker → Stir.
 
     This task uses a fixed scene layout (paths hardcoded to the lab USD).
@@ -77,9 +78,13 @@ class LiquidMixingTask(BaseTask):
 
     def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1
-        if not self.check_frame_limits(max_steps=6000):
+        if not self.check_frame_limits(max_steps=self.cfg.task.max_steps):
             return None
         return self.get_basic_state_info(
             object_path=self.BEAKER_PATH,
             target_path=self.TARGET_PLAT_PATH,
         )
+
+
+class LiquidMixingTask(LiquidTaskMixin, _LiquidMixingScene):
+    """Three source cohorts interacting in one physical particle system."""

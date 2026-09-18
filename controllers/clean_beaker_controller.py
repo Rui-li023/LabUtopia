@@ -8,8 +8,9 @@ from .atomic_actions.place_controller import PlaceController
 from .atomic_actions.pour_controller import PourController
 from .atomic_actions.shake_controller import ShakeController
 from utils.task_utils import TaskUtils
+from .liquid_controller_mixin import LiquidControllerMixin
 
-class CleanBeakerTaskController(BaseController):
+class _CleanBeakerTaskController(BaseController):
     """
     Controller for clean beaker tasks with two operation modes:
     - Collection mode: Gathers training data through demonstrations
@@ -361,7 +362,10 @@ class CleanBeakerTaskController(BaseController):
                     self.data_collector.write_cached_data(state['joint_positions'][:-1])
                     self._last_success = True
                 else:
-                    self._last_failure_reason = "Beaker placement check failed: beakers not on target platforms"
+                    self._last_failure_reason = (
+                        "Liquid transfer incomplete or spilled; required rinse and drain were not both certified"
+                        if not self.liquid_success() else "Beaker placement check failed: beakers not on target platforms"
+                    )
                     self.data_collector.clear_cache()
                     self._last_success = False
                 done = True
@@ -422,6 +426,8 @@ class CleanBeakerTaskController(BaseController):
                 return False
             return float(b2[2]) - self._z_init_b2 > 0.05
         if step == 2:                    # pour beaker2 -> beaker1 (tilt then upright)
+            if self.liquid_monitor is not None:
+                return self.liquid_monitor.transfer_complete("rinse", state)
             return (self._tilt_peak_b2 > 30.0
                     and cur_tilt(self.cfg.beaker_2, self._quat_init_b2) < 25.0)
         if step == 3:                    # place beaker2 on plat2
@@ -436,6 +442,8 @@ class CleanBeakerTaskController(BaseController):
             aloft = float(b1[2]) - self._z_init_b1 > 0.05
             return aloft and self._shake_path > 0.15
         if step == 6:                    # pour beaker1 -> target (tilt then upright)
+            if self.liquid_monitor is not None:
+                return self.liquid_monitor.transfer_complete("drain", state)
             return (self._tilt_peak_b1 > 30.0
                     and cur_tilt(self.cfg.beaker_1, self._quat_init_b1) < 25.0)
         if step == 7:                    # place beaker1 on plat1 (terminal)
@@ -464,7 +472,7 @@ class CleanBeakerTaskController(BaseController):
         # 2) Terminal: all seven sub-goals reached in order.
         if self._current_step > 7:
             self.reset_needed = True
-            self._last_success = len(self.success_steps) == 7
+            self._last_success = len(self.success_steps) == 7 and self.liquid_success()
             if self._last_success:
                 self._last_failure_reason = ""
             else:
@@ -558,3 +566,7 @@ class CleanBeakerTaskController(BaseController):
             f"cleanbeaker:{self._current_step}",
             self._build_instruction_templates(direct, detailed),
         )
+
+
+class CleanBeakerTaskController(LiquidControllerMixin, _CleanBeakerTaskController):
+    LIQUID_POUR_CONTROLLERS = {"pour_beaker2": "rinse", "pour_beaker1": "drain"}

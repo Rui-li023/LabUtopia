@@ -4,9 +4,10 @@ from typing import Any, Dict, Optional
 from loguru import logger
 
 from .mobile_pick_task import MobilePickTask
+from .liquid_task_mixin import LiquidTaskMixin
 
 
-class MobilePourTask(MobilePickTask):
+class _MobilePourScene(MobilePickTask):
     """Navigate to the bench, pick the source beaker, and pour it into a nearby
     target container at the SAME dock (Level 5, no carry).
 
@@ -57,3 +58,7 @@ class MobilePourTask(MobilePickTask):
             "pour_target_path": self.pour_target_path,
         })
         return state
+
+
+class MobilePourTask(LiquidTaskMixin, _MobilePourScene):
+    """Mobile scene with liquid-filled source and a calibrated hollow receiver."""

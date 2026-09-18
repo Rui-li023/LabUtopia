@@ -1,4 +1,13 @@
 name: level2_pour_liquid_v2
+liquid:
+  enabled: true
+  particle_spacing: 0.004
+  fill_height: 0.025
+  isosurface: true
+  min_target_fraction: 0.80
+  max_source_fraction: 0.15
+  max_outside_fraction: 0.05
+  settle_steps: 60
 
 # level2/pour_liquid 的泛化增强采集（500 集）。同一套配方，见
 # config/level1_pick_v2.yaml 的头注释；这里只记与本任务有关的差别。
@@ -8,8 +17,8 @@ name: level2_pour_liquid_v2
 #
 # ⚠️ 倒的那一段本来就是 L2 里最脆的一环（docs/level23_inference_report.md：
 # 4 个 VLA 都抓得起来，没有一个能可靠复现「倒完回正」）。这一轮**只放宽摆放和
-# 外观**，不动倒液本身的动力学参数（position_pour / pour_angle_rad 全部留默认）
-# —— 一次只改一类变量，出了问题才分得清是谁。
+# 外观**。现在 liquid.enabled 开启真实液体、原 mesh 空心碰撞和杯口跟踪；
+# position_pour / pour_angle_rad 仅用于 liquid.enabled=false 时的旧控制器。
 
 task_type: pick_pour
 controller_type: pick_pour
@@ -42,7 +51,7 @@ grasp:
   pour_tilt_jitter_deg: 0.0
 
 task:
-  max_steps: 2500
+  max_steps: 3200
 
   # 接液的 beaker1（底座在 (-0.40, 0.00, 0.71)，yaw 0）
   # 旧: x [0.17, 0.32] y [-0.35, -0.20] = 15 x 15 cm，r 0.61~0.80
@@ -107,6 +116,7 @@ lighting:
 collector:
   type: default
   compression: gzip
+  record_precise_replay_actions: true
 
 replay:
   dataset_path: ''

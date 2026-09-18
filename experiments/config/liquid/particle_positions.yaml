@@ -1,0 +1,37 @@
+# Standalone tool demonstration, NOT a benchmark task or success-rate test.
+# No original laboratory asset is modified. All lengths are metres here.
+parameters:
+  spacing: 0.004
+  density: 1000.0
+  isosurface: true
+add_ground_plane: true
+volumes:
+  - root_path: /DemoLiquids/Left
+    shape: box
+    center: [-0.15, 0, 0.12]
+    size: [0.04, 0.04, 0.04]
+  - root_path: /DemoLiquids/Middle
+    shape: sphere
+    center: [0, 0, 0.15]
+    radius: 0.025
+    parameters:
+      color: [0.1, 0.55, 0.3]
+  - root_path: /DemoLiquids/Right
+    shape: cylinder
+    center: [0, 0, 0]
+    radius: 0.02
+    height: 0.04
+    # USD row-vector transform: a rotated seed frame translated to the right.
+    frame_matrix:
+      - [0, 1, 0, 0]
+      - [-1, 0, 0, 0]
+      - [0, 0, 1, 0]
+      - [0.15, 0, 0.18, 1]
+    velocity: [0.02, 0, 0]
+    parameters:
+      color: [0.65, 0.25, 0.1]
+preview:
+  eye: [0.35, -0.45, 0.4]
+  target: [0, 0, 0.10]
+  focal_length_mm: 35
+  sensor_width_mm: 36

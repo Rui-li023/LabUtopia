@@ -64,6 +64,9 @@ python -m isaacsim --generate-vscode-settings
 
 ## 代码结构
 
+通用液体生成工具见[使用说明](scripts/LIQUID_PARTICLES.md)：支持世界坐标、场景局部坐标系和已校准容器，
+可独立运行，也可在其他任务中调用。
+
 ```
 LabUtopia/
 ├── main.py                  # 入口：配置 → 工厂构建 → 仿真循环

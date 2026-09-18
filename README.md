@@ -63,6 +63,9 @@ python -m isaacsim --generate-vscode-settings
 
 ## Code Structure
 
+Reusable liquid generation: see [the particle tool guide](scripts/LIQUID_PARTICLES.md)
+for spawning GPU PBD liquid at world positions, relative to scene frames, or inside calibrated containers.
+
 ```
 LabUtopia/
 ├── main.py                  # Entry point: config → factory → simulation loop

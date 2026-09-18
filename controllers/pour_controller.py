@@ -1,19 +1,24 @@
-from typing import Optional
-from scipy.spatial.transform import Rotation as R
-import numpy as np
 from enum import Enum
+
+import numpy as np
 from isaacsim.core.utils.types import ArticulationAction
+from scipy.spatial.transform import Rotation as R
+
 from robots.franka.rmpflow_controller import RMPFlowController
+from utils.liquid_metrics import StableLiquidGate, liquid_enabled
 from utils.task_utils import TaskUtils
 
+from .atomic_actions.liquid_pour_controller import LiquidPourController, configure_liquid_pick, forward_liquid_pick
 from .atomic_actions.pick_controller import PickController
 from .atomic_actions.pour_controller import PourController
 from .base_controller import BaseController
+
 
 class Phase(Enum):
     PICKING = "picking"
     POURING = "pouring"
     FINISHED = "finished"
+
 
 class PourTaskController(BaseController):
     def __init__(self, cfg, robot):
@@ -32,6 +37,11 @@ class PourTaskController(BaseController):
         self._post_done_wait = 0
         self._POST_DONE_MAX = 240
         self._replay_initial_quaternion = None
+        self._liquid_gate = StableLiquidGate()
+        if liquid_enabled(cfg):
+            # Level 1 records pour only: its scripted hand-off must match replay.
+            self.pick_controller.randomization_enabled = False
+            configure_liquid_pick(self.pick_controller)
 
     def _init_collect_mode(self, cfg, robot):
         super()._init_collect_mode(cfg, robot)
@@ -39,7 +49,7 @@ class PourTaskController(BaseController):
         self.pick_controller = PickController(
             name="pick_controller",
             cspace_controller=self.rmp_controller,
-            events_dt=[0.002, 0.002, 0.005, 0.02, 0.05, 0.01, 0.02]
+            events_dt=[0.002, 0.002, 0.005, 0.02, 0.05, 0.01, 0.02],
         )
 
         # Position-controlled pour (see pick_pour_controller for the full
@@ -51,22 +61,22 @@ class PourTaskController(BaseController):
         self.pour_controller = PourController(
             name="pour_controller",
             cspace_controller=RMPFlowController(
-                name="target_follower_controller",
-                robot_articulation=robot,
-                use_default_config=False
+                name="target_follower_controller", robot_articulation=robot, use_default_config=False
             ),
             events_dt=[0.006, 0.002, 0.012, 0.01, 0.008, 0.01],
             position_pour=bool(getattr(getattr(cfg, "task", None), "position_pour", True)),
             pour_angle_rad=float(getattr(getattr(cfg, "task", None), "pour_angle_rad", 1.2)),
         )
         self.active_controller = self.pick_controller
+        if liquid_enabled(cfg):
+            self.pour_controller = LiquidPourController("liquid_pour", self.rmp_controller, cfg)
 
     def _init_infer_mode(self, cfg, robot=None):
         super()._init_infer_mode(cfg, robot)
         self.pick_controller = PickController(
             name="pick_controller",
             cspace_controller=self.rmp_controller,
-            events_dt=[0.002, 0.002, 0.005, 0.02, 0.05, 0.01, 0.02]
+            events_dt=[0.002, 0.002, 0.005, 0.02, 0.05, 0.01, 0.02],
         )
 
     def _init_replay_mode(self, cfg, robot=None):
@@ -80,10 +90,12 @@ class PourTaskController(BaseController):
             cspace_controller=self.rmp_controller,
             events_dt=[0.002, 0.002, 0.005, 0.02, 0.05, 0.01, 0.02],
         )
-        self.pick_controller._sample_randomization = lambda: None
+        if not liquid_enabled(cfg):
+            self.pick_controller._sample_randomization = lambda: None
 
     def reset(self):
         super().reset()
+        self._liquid_gate.reset()
         self.current_phase = Phase.PICKING
         self.initial_position = None
         self.initial_size = None
@@ -127,17 +139,20 @@ class PourTaskController(BaseController):
         This avoids fighting the strict pour state-machine which can stall on
         PD jitter when the recorded tilt comes a hair short of 50°.
         """
+        if liquid_enabled(self.cfg):
+            return self._check_phase_success()
         if self.mode == "replay":
             if self._replay_initial_quaternion is None:
-                self._replay_initial_quaternion = self.state['object_quaternion']
+                self._replay_initial_quaternion = self.state["object_quaternion"]
                 return False
             # check_rotation_angle returns True when current orientation has
             # diverged from initial by more than the threshold. The recorded
             # pour trajectory ends with the bottle back to roughly upright;
             # accept it as success once orientation is within 40° of the
             # post-pick reference (loose enough to tolerate PD lag).
-            angle = float(self.task_utils.rotation_angle_deg(
-                self._replay_initial_quaternion, self.state['object_quaternion']))
+            angle = float(
+                self.task_utils.rotation_angle_deg(self._replay_initial_quaternion, self.state["object_quaternion"])
+            )
             # Require the pour to have HAPPENED before accepting "upright again".
             # Without this the criterion is trivially true from the first frame
             # (the source is still at the reference pose), so the 60-frame success
@@ -159,18 +174,26 @@ class PourTaskController(BaseController):
         hand-off pose IS the policy's first observation: a hard distribution
         shift, not a detail. One helper keeps the three paths from drifting again.
         """
+        if liquid_enabled(self.cfg):
+            return forward_liquid_pick(
+                self.pick_controller,
+                state,
+                self.gripper_control,
+                R.from_euler("xyz", [0, 90, 30], degrees=True).as_quat(),
+                self._source_grip_distance(state["object_name"]),
+            )
         return self.pick_controller.forward(
-            picking_position=state['object_position'],
-            current_joint_positions=state['joint_positions'],
-            object_size=state['object_size'],
-            object_name=state['object_name'],
+            picking_position=state["object_position"],
+            current_joint_positions=state["joint_positions"],
+            object_size=state["object_size"],
+            object_name=state["object_name"],
             gripper_control=self.gripper_control,
-            gripper_position=state['gripper_position'],
-            end_effector_orientation=R.from_euler('xyz', np.radians([0, 90, 30])).as_quat(),
+            gripper_position=state["gripper_position"],
+            end_effector_orientation=R.from_euler("xyz", np.radians([0, 90, 30])).as_quat(),
             pre_offset_x=0.05,
             pre_offset_z=0.05,
             after_offset_z=0.5,
-            gripper_distances=self._source_grip_distance(state['object_name']),
+            gripper_distances=self._source_grip_distance(state["object_name"]),
         )
 
     def _step_replay(self, state):
@@ -184,67 +207,87 @@ class PourTaskController(BaseController):
             return action, False, False
         if self.current_phase != Phase.POURING:
             self.current_phase = Phase.POURING
+            if liquid_enabled(self.cfg):
+                # Collection has one no-action pick->pour hand-off frame too.
+                return None, False, False
         return super()._step_replay(state)
 
     def _check_phase_success(self):
         """Check if current phase is successful."""
-        object_pos = self.state['object_position']
-        self.last_error_info = None 
-        
+        object_pos = self.state["object_position"]
+        self.last_error_info = None
+
         if self.initial_position is None:
             raise ValueError("initial_position not set")
 
         if self.current_phase == Phase.PICKING:
             required_height = self.initial_position[2] + 0.12
             success = object_pos[2] > required_height
+            if liquid_enabled(self.cfg):
+                success = success and self.pick_controller.is_done()
             if not success:
                 self.last_error_info = {
-                    'phase': 'PICKING',
-                    'current_height': object_pos[2],
-                    'required_height': required_height,
-                    'height_diff': object_pos[2] - required_height
+                    "phase": "PICKING",
+                    "current_height": object_pos[2],
+                    "required_height": required_height,
+                    "height_diff": object_pos[2] - required_height,
                 }
             return success
-            
+
         elif self.current_phase == Phase.POURING:
+            if liquid_enabled(self.cfg):
+                success = self._liquid_gate.check(
+                    self.state,
+                    self.cfg,
+                    object_pos[2] > self.initial_position[2] + 0.05,
+                )
+                self.last_error_info = (
+                    None
+                    if success
+                    else {
+                        "phase": "POURING",
+                        "error": "Liquid transfer/upright/settling pending",
+                        "target_fraction": self.state.get("liquid", {}).get("target_fraction", 0.0),
+                        "outside_fraction": self.state.get("liquid", {}).get("outside_fraction", 1.0),
+                        "settle_steps": self._liquid_gate.steps,
+                    }
+                )
+                return success
             if self.initial_quaternion is None:
-                self.initial_quaternion = self.state['object_quaternion']
-                self.last_error_info = {
-                    'phase': 'POURING',
-                    'error': 'Initial quaternion not set yet'
-                }
+                self.initial_quaternion = self.state["object_quaternion"]
+                self.last_error_info = {"phase": "POURING", "error": "Initial quaternion not set yet"}
                 return False
-                
-            current_quat = self.state['object_quaternion']
-            
+
+            current_quat = self.state["object_quaternion"]
+
             # First check if we're close enough to target for pouring
-            xy_dist = np.linalg.norm(object_pos[:2] - self.state['target_position'][:2])
-            pour_threshold = self.task_utils.get_pour_threshold(self.state['object_name'], self.state['object_size']) + 0.05
-            
+            xy_dist = np.linalg.norm(object_pos[:2] - self.state["target_position"][:2])
+            pour_threshold = (
+                self.task_utils.get_pour_threshold(self.state["object_name"], self.state["object_size"]) + 0.05
+            )
+
             if xy_dist > pour_threshold:
                 self.last_error_info = {
-                    'phase': 'POURING',
-                    'current_distance': xy_dist,
-                    'required_distance': pour_threshold,
-                    'distance_diff': xy_dist - pour_threshold
+                    "phase": "POURING",
+                    "current_distance": xy_dist,
+                    "required_distance": pour_threshold,
+                    "distance_diff": xy_dist - pour_threshold,
                 }
                 return False
-            
+
             if not self.pour_complete:
                 # print(self.initial_quaternion, current_quat)
                 self.pour_complete = self.task_utils.check_rotation_angle(
-                    self.initial_quaternion, 
-                    current_quat,
-                    threshold_degrees=50
+                    self.initial_quaternion, current_quat, threshold_degrees=50
                 )
                 if not self.pour_complete:
                     self.last_error_info = {
-                        'phase': 'POURING',
-                        'error': 'Pour rotation not complete yet',
-                        'pour_complete': self.pour_complete
+                        "phase": "POURING",
+                        "error": "Pour rotation not complete yet",
+                        "pour_complete": self.pour_complete,
                     }
                 return False
-                
+
             # After pour complete, check if returned to original orientation.
             #
             # The reference is captured at the pick->pour switch, BEFORE the atomic
@@ -259,44 +302,43 @@ class PourTaskController(BaseController):
             # source sits ~93 deg out and is still rejected.
             if not self.return_complete:
                 rotation_diff = self.task_utils.check_rotation_angle(
-                    self.initial_quaternion,
-                    current_quat,
-                    threshold_degrees=40
+                    self.initial_quaternion, current_quat, threshold_degrees=40
                 )
                 if not rotation_diff:
                     self.return_complete = True
                     self.return_timer = 0
                 else:
                     self.last_error_info = {
-                        'phase': 'POURING',
-                        'error': 'Return rotation not complete yet',
-                        'return_complete': self.return_complete
+                        "phase": "POURING",
+                        "error": "Return rotation not complete yet",
+                        "return_complete": self.return_complete,
                     }
                 return False
-                
+
             # Wait for 2 seconds in return position
             if self.return_complete and object_pos[2] > self.initial_position[2] + 0.05:
                 self.return_timer += 0.012
                 success = self.return_timer >= 1.0
                 if not success:
                     self.last_error_info = {
-                        'phase': 'POURING',
-                        'error': 'Waiting for return timer',
-                        'return_timer': self.return_timer,
-                        'required_time': 1.0
+                        "phase": "POURING",
+                        "error": "Waiting for return timer",
+                        "return_timer": self.return_timer,
+                        "required_time": 1.0,
                     }
                 return success
             else:
                 self.last_error_info = {
-                    'phase': 'POURING',
-                    'error': 'Object not in correct position for return timer',
-                    'current_height': object_pos[2],
-                    'required_height': self.initial_position[2] + 0.05,
-                    'return_complete': self.return_complete
+                    "phase": "POURING",
+                    "error": "Object not in correct position for return timer",
+                    "current_height": object_pos[2],
+                    "required_height": self.initial_position[2] + 0.05,
+                    "return_complete": self.return_complete,
                 }
                 return False
-        
+
         return False
+
     def step(self, state):
         """Execute one step of control.
 
@@ -307,9 +349,9 @@ class PourTaskController(BaseController):
             Tuple containing action, done flag, and success flag
         """
         if self.initial_position is None:
-            self.initial_position = state['object_position']
+            self.initial_position = state["object_position"]
         if self.initial_size is None:
-            self.initial_size = state['object_size']
+            self.initial_size = state["object_size"]
         return super().step(state)
 
     def _step_collect(self, state):
@@ -324,11 +366,11 @@ class PourTaskController(BaseController):
             elif self.current_phase == Phase.POURING:
                 print("Pour task success!")
                 self._last_failure_reason = ""
-                self.data_collector.write_cached_data(state['joint_positions'][:-1])
+                self.data_collector.write_cached_data(state["joint_positions"][:-1])
                 self._last_success = True
                 self.current_phase = Phase.FINISHED
                 return None, True, True
-        
+
         if self.current_phase == Phase.FINISHED:
             self.reset_needed = True
             return None, True, self._last_success
@@ -338,25 +380,28 @@ class PourTaskController(BaseController):
             if self.current_phase == Phase.PICKING:
                 action, _ = self._scripted_pick(state)
             else:
-                action, record_array = self.pour_controller.forward(
-                    articulation_controller=self.robot.get_articulation_controller(),
-                    source_size=self.initial_size,
-                    target_position=state['target_position'],
-                    current_joint_velocities=self.robot.get_joint_velocities(),
-                    pour_speed=-1,
-                    source_name=state['object_name'],
-                    gripper_position=state['gripper_position'],
-                    current_joint_positions=state['joint_positions'],
-                )
-                
-                if 'camera_data' in state:
-                    self.data_collector.cache_step(
-                        camera_images=state['camera_data'],
-                        joint_angles=state['joint_positions'][:-1],
-                        action=record_array,
-                        language_instruction=self.get_language_instruction()
+                if liquid_enabled(self.cfg):
+                    action, record_array = self.pour_controller.forward(state)
+                else:
+                    action, record_array = self.pour_controller.forward(
+                        articulation_controller=self.robot.get_articulation_controller(),
+                        source_size=self.initial_size,
+                        target_position=state["target_position"],
+                        current_joint_velocities=self.robot.get_joint_velocities(),
+                        pour_speed=-1,
+                        source_name=state["object_name"],
+                        gripper_position=state["gripper_position"],
+                        current_joint_positions=state["joint_positions"],
                     )
-            
+
+                if "camera_data" in state:
+                    self.data_collector.cache_step(
+                        camera_images=state["camera_data"],
+                        joint_angles=state["joint_positions"][:-1],
+                        action=record_array,
+                        language_instruction=self.get_language_instruction(),
+                    )
+
             return action, False, False
 
         # Atomic state machine finished but success not yet satisfied (typically
@@ -365,18 +410,20 @@ class PourTaskController(BaseController):
         # frames so physics can settle, re-checking success each frame.
         if self.current_phase == Phase.POURING and self._post_done_wait < self._POST_DONE_MAX:
             self._post_done_wait += 1
-            n_joints = len(state['joint_positions'])
+            n_joints = len(state["joint_positions"])
             null_action = ArticulationAction(joint_positions=[None] * n_joints)
-            if 'camera_data' in state:
+            if "camera_data" in state:
                 self.data_collector.cache_step(
-                    camera_images=state['camera_data'],
-                    joint_angles=state['joint_positions'][:-1],
-                    action=np.concatenate([state['joint_positions'][:7], [0.0]]),
+                    camera_images=state["camera_data"],
+                    joint_angles=state["joint_positions"][:-1],
+                    action=np.concatenate([state["joint_positions"][:7], [0.0]]),
                     language_instruction=self.get_language_instruction(),
                 )
             return null_action, False, False
 
-        self._last_failure_reason = f"Pour {self.current_phase.value} failed" + (f": {self.last_error_info}" if self.last_error_info else "")
+        self._last_failure_reason = f"Pour {self.current_phase.value} failed" + (
+            f": {self.last_error_info}" if self.last_error_info else ""
+        )
         print(f"{self.current_phase.value} task failed!")
         if self.last_error_info is not None:
             print(f"Phase failure details: {self.last_error_info}")
@@ -393,9 +440,9 @@ class PourTaskController(BaseController):
 
         if not self.pick_controller.is_done():
             action, _ = self._scripted_pick(state)
-            
+
         else:
-            state['language_instruction'] = self.get_language_instruction()
+            state["language_instruction"] = self.get_language_instruction()
 
             action = self.inference_engine.step_inference(state)
         success = self._check_phase_success()
@@ -407,21 +454,21 @@ class PourTaskController(BaseController):
             self._last_success = True
             self.current_phase = Phase.FINISHED
             return None, True, True
-               
+
         return action, False, False
 
-    def get_language_instruction(self) -> Optional[str]:
-        object_name = self.clean_object_name(self.state['object_name'])
+    def get_language_instruction(self) -> str | None:
+        object_name = self.clean_object_name(self.state["object_name"])
         if self.current_phase == Phase.PICKING:
             return self._get_cached_instruction(
-                'pour:picking',
+                "pour:picking",
                 self._build_instruction_templates(
                     f"Pick up the {object_name}",
                     f"Pick up the {object_name} from the table and prepare it for pouring",
                 ),
             )
         return self._get_cached_instruction(
-            'pour:pouring',
+            "pour:pouring",
             self._build_instruction_templates(
                 f"Pour the contents of the {object_name} into the target",
                 f"Move the {object_name} over the target container and pour its contents carefully",

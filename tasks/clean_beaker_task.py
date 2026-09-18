@@ -1,9 +1,10 @@
 import numpy as np
 from typing import Any, Dict, Optional
 from .base_task import BaseTask
+from .liquid_task_mixin import LiquidTaskMixin
 
 
-class CleanBeakerTask(BaseTask):
+class _CleanBeakerScene(BaseTask):
     """Multi-object beaker cleaning task.
 
     Fixed scene objects (paths are hardcoded to match the lab USD):
@@ -86,7 +87,7 @@ class CleanBeakerTask(BaseTask):
 
     def step(self) -> Optional[Dict[str, Any]]:
         self.frame_idx += 1
-        if not self.check_frame_limits(max_steps=4000):
+        if not self.check_frame_limits(max_steps=self.cfg.task.max_steps):
             return None
 
         return self.get_basic_state_info(
@@ -104,3 +105,11 @@ class CleanBeakerTask(BaseTask):
                 "target_beaker":     self.TARGET_BEAKER,
             },
         )
+
+
+class CleanBeakerTask(LiquidTaskMixin, _CleanBeakerScene):
+    """Cleaning scene with an optional persistent rinse → drain liquid cohort."""
+
+    # Preserve native translations of the randomized static supports too:
+    # rounding their contact surfaces to float32 can alter settled cup poses.
+    LIQUID_REPLAY_SUPPORTS = (_CleanBeakerScene.PLAT_1, _CleanBeakerScene.PLAT_2)

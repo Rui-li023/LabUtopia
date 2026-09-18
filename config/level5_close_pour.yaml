@@ -1,4 +1,13 @@
 name: level5_close_pour
+liquid:
+  enabled: true
+  particle_spacing: 0.004
+  fill_height: 0.025
+  isosurface: true
+  min_target_fraction: 0.8
+  max_source_fraction: 0.15
+  max_outside_fraction: 0.05
+  settle_steps: 60
 
 task_type: "mobile_pour"
 controller_type: "mobile_pour"
@@ -99,6 +108,7 @@ robot:
   position: [0.0, 0.0, 0.0]
 
 collector:
+  record_precise_replay_actions: true
   type: "mobile"
   compression: gzip
 
