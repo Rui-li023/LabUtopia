@@ -35,6 +35,14 @@ class Intrinsics:
     coeffs: tuple[float, ...] = ()  # OpenCV order k1 k2 p1 p2 k3 k4 k5 k6
     serial: str = ""
     borrowed_from: str = ""  # non-empty => not this camera's own calibration
+    # The frame these intrinsics are DEFINED at. Carried per camera because the
+    # rig's two third-person cameras run different modes -- and because a mode
+    # change is not a rescale: 640x480 (4:3) -> 1280x800 (8:5) widens the Orbbec's
+    # horizontal FOV 82.2 -> 92.6 deg while leaving the vertical alone, and
+    # 640x480 -> 1920x1080 (16:9) CROPS the RealSense vertically 54 -> 42.6 deg.
+    # Scaling fx/fy/cx/cy by a resolution ratio would silently get both wrong.
+    width: int = RES_W
+    height: int = RES_H
 
 
 # MEASURED 2026-08-07 off the real rig, colour streams at 640x480.
@@ -120,14 +128,55 @@ def vfov_deg(fy: float, h: int = RES_H) -> float:
 
 def describe(name: str) -> str:
     intr = INTRINSICS[name]
-    a = usd_projection(intr.fx, intr.fy, intr.cx, intr.cy)
+    a = usd_projection(intr.fx, intr.fy, intr.cx, intr.cy, intr.width, intr.height)
     src = f"borrowed from {intr.borrowed_from}" if intr.borrowed_from else f"SN {intr.serial}"
     return (
-        f"{name}: fx/fy {intr.fx:.3f}/{intr.fy:.3f} c {intr.cx:.3f},{intr.cy:.3f} -> "
+        f"{name}: {intr.width}x{intr.height} fx/fy {intr.fx:.3f}/{intr.fy:.3f} c {intr.cx:.3f},{intr.cy:.3f} -> "
         f"focal {a['focalLength']:.5f} vAp {a['verticalAperture']:.5f} "
         f"off {a['horizontalApertureOffset']:+.6f}/{a['verticalApertureOffset']:+.6f} "
-        f"FOV {hfov_deg(intr.fx):.2f}x{vfov_deg(intr.fy):.2f} deg [{intr.model}] {src}"
+        f"FOV {hfov_deg(intr.fx, intr.width):.2f}x{vfov_deg(intr.fy, intr.height):.2f} deg [{intr.model}] {src}"
     )
+
+
+# ── high-resolution capture modes ────────────────────────────────────────────
+# READ OFF THE CAMERAS THEMSELVES on 2026-08-28 (GET /cameras/<n>/intrinsics)
+# after rebinding them, i.e. the vendor SDK's own numbers for that mode -- NOT
+# the 2026-08-07 checkerboard calibration rescaled, which would be wrong (see
+# the note on Intrinsics.width).
+#
+# The Gemini 335L refuses 1920x1080 and 1280x960: the bind returns ok/"connected"
+# but the camera never streams a frame (snapshot 404, watchdog reports it dead).
+# 1280x800 is its highest working colour mode here.
+HIRES: dict[str, Intrinsics] = {
+    "third_view_orbbec335L": Intrinsics(
+        611.630,
+        611.560,
+        642.030,
+        402.760,
+        model="rational",
+        coeffs=(-0.033379, 0.036421, 0.000303, 0.000059, -0.012734, 0.0, 0.0, 0.0),
+        serial="CP2R5530009H",
+        width=1280,
+        height=800,
+    ),
+    "second_third_realsense435i": Intrinsics(
+        1386.050,
+        1386.390,
+        984.820,
+        541.160,
+        model="inverse_brown_conrady",
+        coeffs=(0.0,) * 8,
+        serial="040322071795",
+        width=1920,
+        height=1080,
+    ),
+}
+
+
+def use_hires() -> list[str]:
+    """Swap the calibrated cameras over to their high-resolution modes, in place."""
+    INTRINSICS.update(HIRES)
+    return sorted(HIRES)
 
 
 if __name__ == "__main__":

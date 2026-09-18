@@ -210,7 +210,26 @@ parser.add_argument("--render", action="store_true", help="also write preview PN
 parser.add_argument("--render-dir", default="/home/ubuntu/Downloads/sim2real_renders")
 parser.add_argument("--width", type=int, default=1280)
 parser.add_argument("--height", type=int, default=960)
+# Pose the arms at a MEASURED rig pose instead of the home pose, so a sim render
+# can be put next to a real frame taken at the same instant. Degrees, joint 1..7,
+# exactly as /robot/live-state reports them in joint_position_deg.
+parser.add_argument("--joints", type=float, nargs=7, metavar="DEG", default=None)
+# Per-finger opening in metres. The rig reports gripper_m as the TOTAL width, so
+# this is half of it.
+parser.add_argument("--finger", type=float, default=None)
+# Restrict the capture to these camera names (substring match) to skip the dozen
+# free-look previews when only the calibrated views matter.
+parser.add_argument("--only", nargs="*", default=None)
+# Render the calibrated cameras in the rig's high-resolution modes instead of
+# the 640x480 the checkerboard calibration was shot at.
+parser.add_argument("--hires", action="store_true")
 args = parser.parse_args()
+
+if args.hires:
+    # mutates INTRINSICS in place, so the name imported above sees it
+    from usd_intrinsics import use_hires  # noqa: E402
+
+    print("hires mode: " + ", ".join(use_hires()))
 
 from isaacsim import SimulationApp  # noqa: E402
 
@@ -329,7 +348,7 @@ def make_camera(stage, path, intr, xform=None, distortion=True):
             f"{path}: inverse_brown_conrady coefficients must be inverted to OpenCV forward "
             "form before they can go into OmniLensDistortionOpenCvPinholeAPI"
         )
-    a = usd_projection(intr.fx, intr.fy, intr.cx, intr.cy, RES_W, RES_H, APERTURE)
+    a = usd_projection(intr.fx, intr.fy, intr.cx, intr.cy, intr.width, intr.height, APERTURE)
     if distortion and PRINCIPAL_POINT_MODE == "schema":
         a["horizontalApertureOffset"] = 0.0
         a["verticalApertureOffset"] = 0.0
@@ -352,7 +371,7 @@ def make_camera(stage, path, intr, xform=None, distortion=True):
         ns = "omni:lensdistortion:opencvPinhole:"
         # imageSize MUST be authored: the schema default is (2048, 1024), which
         # would reinterpret fx/fy/cx/cy against the wrong frame.
-        prim.CreateAttribute(ns + "imageSize", Sdf.ValueTypeNames.Int2).Set(Gf.Vec2i(RES_W, RES_H))
+        prim.CreateAttribute(ns + "imageSize", Sdf.ValueTypeNames.Int2).Set(Gf.Vec2i(intr.width, intr.height))
         for attr_name, value in (("fx", intr.fx), ("fy", intr.fy), ("cx", intr.cx), ("cy", intr.cy)):
             prim.CreateAttribute(ns + attr_name, Sdf.ValueTypeNames.Float).Set(float(value))
         padded = tuple(intr.coeffs) + (0.0,) * (len(OPENCV_PINHOLE_COEFFS) - len(intr.coeffs))
@@ -735,16 +754,26 @@ if args.render:
     # so drive both articulations to the home pose before capturing
     sim_world = World(stage_units_in_meters=1.0)
     sim_world.reset()
-    q = np.deg2rad(np.array([*FRANKA_HOME_DEG, 0.0, 0.0]))
-    q[7:] = FRANKA_FINGER
+    pose_deg = list(args.joints) if args.joints is not None else FRANKA_HOME_DEG
+    finger = args.finger if args.finger is not None else FRANKA_FINGER
+    q = np.deg2rad(np.array([*pose_deg, 0.0, 0.0]))
+    q[7:] = finger
+    arts = []
     for root, _ in arm_roots:
         art = SingleArticulation(root, name=root.split("/")[-1])
         art.initialize()
         art.set_joint_positions(q)
         art.set_joint_velocities(np.zeros_like(q))
+        arts.append(art)
     for _ in range(30):
         sim_world.step(render=True)
-    print("  posed both arms", flush=True)
+    # Read the pose BACK off the articulation: set_joint_positions is a request,
+    # and a commanded angle outside a joint limit is silently clamped. Anything
+    # that drifted here would look like a calibration error in the comparison.
+    reached_q = np.asarray(arts[0].get_joint_positions(), dtype=float)
+    reached_deg = np.degrees(reached_q[:7])  # fingers are PRISMATIC, keep them in metres
+    print(f"  posed both arms, cmd={[round(v, 2) for v in pose_deg]} finger={finger:.4f}", flush=True)
+    print(f"  reached={reached_deg.round(2).tolist()} deg, fingers={reached_q[7:].round(4).tolist()} m", flush=True)
 
     previews = {
         "preview_front": look_at_xform((TABLE_CX, -3.0, 1.9), (TABLE_CX, -0.2, 0.85)),
@@ -773,15 +802,26 @@ if args.render:
     shots = [f"/World/Cameras/{n}" for n in previews]
     shots += [f"/World/Cameras/{n}" for n in STATIC_CAMERAS]
     shots += wrist_paths
+    if args.only:
+        kept = [p for p in shots if any(k in p.split("/")[-1] for k in args.only)]
+        if not kept:
+            sys.exit(f"--only {args.only} matched no camera; available: {[p.split('/')[-1] for p in shots]}")
+        shots = kept
 
     vp = get_active_viewport()
     calibrated = set(INTRINSICS)
     for cam_path in shots:
         cam_name = cam_path.split("/")[-1]
         out_png = os.path.join(args.render_dir, cam_name + ".png")
-        # a calibrated camera renders at the resolution its intrinsics were
-        # measured at; anything else would reinterpret cx/cy and the lens schema
-        vp.resolution = (RES_W, RES_H) if cam_name in calibrated else (args.width, args.height)
+        # A calibrated camera renders at the resolution its intrinsics were
+        # measured at; anything else reinterprets cx/cy and the lens schema.
+        # Per camera, because the rig runs the two third-person cameras in
+        # different modes (1280x800 Orbbec vs 1920x1080 RealSense).
+        if cam_name in calibrated:
+            _i = INTRINSICS[cam_name]
+            vp.resolution = (_i.width, _i.height)
+        else:
+            vp.resolution = (args.width, args.height)
         vp.camera_path = cam_path
         for _ in range(70):
             sim_world.step(render=True)
